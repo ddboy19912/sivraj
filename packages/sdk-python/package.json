@@ -1,0 +1,12 @@
+{
+  "name": "@sivraj/sdk-python",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo \"python sdk build not configured yet\"",
+    "check": "echo \"python sdk check not configured yet\"",
+    "lint": "echo \"python sdk lint not configured yet\"",
+    "test": "echo \"python sdk tests not configured yet\"",
+    "typecheck": "echo \"python sdk typecheck not configured yet\""
+  }
+}

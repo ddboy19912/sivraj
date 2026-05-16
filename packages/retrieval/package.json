@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/retrieval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"retrieval build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"retrieval lint not configured yet\"",
+    "test": "echo \"retrieval tests not configured yet\"",
+    "typecheck": "echo \"retrieval typecheck not configured yet\""
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "sivraj",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres redis",
+    "db:migrate": "pnpm --filter @sivraj/db migrate",
+    "db:generate": "pnpm --filter @sivraj/db generate",
+    "db:studio": "pnpm --filter @sivraj/db studio",
+    "dev": "pnpm --filter @sivraj/web dev",
+    "dev:api": "pnpm --filter @sivraj/api dev",
+    "dev:worker": "pnpm --filter @sivraj/worker dev",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

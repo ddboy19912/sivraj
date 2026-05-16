@@ -1,67 +1,111 @@
 # Development Setup
 
+## Local Postgres and Redis (Docker)
+
+Start Postgres and Redis for Drizzle migrations, the API, and upcoming worker jobs:
+
+```bash
+pnpm db:up
+```
+
+Apply database migrations (requires containers running and `DATABASE_URL` in `.env` matching `.env.example`):
+
+```bash
+pnpm db:migrate
+```
+
+Stop containers (data persists in named volumes until removed):
+
+```bash
+pnpm db:down
+```
+
+Other helpers: `pnpm db:logs`, `pnpm db:generate` (Drizzle SQL from schema), `pnpm db:studio` (Drizzle Studio).
+
+If Compose cannot bind **`5432`**, something else is using that port (common: a local Postgres install). Stop that process or service so the container can use **`5432`**, matching `.env.example`, then run **`pnpm db:up`** again.
+
 ## Current Status
 
-This repository currently contains product and planning documentation. The application stack still needs to be selected and scaffolded.
+This repository has:
 
-## Recommended First Technical Milestones
+- Vite + React web app in `apps/web`.
+- Hono API service in `apps/api`.
+- TypeScript worker in `apps/worker`.
+- Drizzle + Postgres schema in `packages/db`.
+- Docker Compose Postgres and Redis for local development.
+- Shared packages for config, auth, queue, observability, LLM, graph, retrieval, synthesis, permissions, Walrus, Seal, Sui, and SDKs.
+
+## Current Technical Milestones
 
 1. Initialize Git.
-2. Select stack.
-3. Scaffold app.
-4. Add database.
-5. Implement ingestion.
-6. Implement retrieval.
-7. Implement synthesis.
-8. Implement agent context API.
+2. Scaffold pnpm monorepo.
+3. Scaffold Vite React app.
+4. Scaffold standalone API service.
+5. Scaffold worker service.
+6. Add database package.
+7. Set up local Postgres and Redis.
+8. Implement ingestion.
+9. Implement retrieval.
+10. Implement synthesis.
+11. Implement external agent context API.
 
-## Suggested Stack
-
-Recommended default:
+## Stack
 
 - TypeScript.
-- Next.js or Vite.
-- Node.js API.
+- Vite + React.
+- Hono API service.
+- Dedicated worker service.
 - Postgres.
-- Queue worker for ingestion.
+- Redis-backed queue worker for ingestion.
 - LLM provider abstraction.
 - Walrus storage adapter.
 - MemWal retrieval adapter.
 - Seal permission/encryption adapter.
+- Sui identity adapter.
+
+## Why Not Next.js
+
+Next.js is unnecessary for Sivraj's chosen architecture because the API is a separate platform service.
+
+Sivraj needs speed and low framework overhead:
+
+- Fast local development.
+- Simple client-side dashboard.
+- Clean separation from the external API.
+- No server-rendering requirement for the core product.
+- No framework coupling between app UI and agent API.
+
+Vite React is the better fit for the web app because the app should be a focused client for the Sivraj platform, not the platform itself.
 
 ## Environment Variables
 
-Likely variables:
+Root `.env.example` is the source of truth. See [Environment Contract](./ENVIRONMENT.md).
 
-```bash
-DATABASE_URL=
-LLM_PROVIDER=
-LLM_API_KEY=
-EMBEDDING_MODEL=
-WALRUS_ENDPOINT=
-WALRUS_API_KEY=
-MEMWAL_ENDPOINT=
-MEMWAL_API_KEY=
-SEAL_PROJECT_ID=
-SEAL_API_KEY=
-SUI_NETWORK=
-SUI_PRIVATE_KEY=
-APP_URL=
-```
-
-## Repository Structure Proposal
+## Repository Structure
 
 ```text
 apps/
   web/
   api/
+  worker/
 packages/
   core/
+  config/
+  auth/
+  db/
+  queue/
+  observability/
+  llm/
   ingestion/
   graph/
   retrieval/
   synthesis/
   permissions/
+  storage-walrus/
+  crypto-seal/
+  identity-sui/
+  sdk-js/
+  sdk-python/
 docs/
 ```
 
@@ -74,9 +118,9 @@ docs/
 - Prefer small adapters for Walrus, MemWal, Seal, and LLM providers.
 - Design for replacement of infrastructure components during early iteration.
 
-## First Implementation Slice
+## First Platform Slice
 
-Build a narrow vertical slice:
+Build first end-to-end slice:
 
 1. User creates Twin.
 2. User adds manual memory.
@@ -86,5 +130,4 @@ Build a narrow vertical slice:
 6. Retrieval returns relevant memory with citation.
 7. Synthesis answers using retrieved context.
 
-This proves the core product loop before broad integrations.
-
+This proves core product loop before broad integrations.

@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"queue build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"queue lint not configured yet\"",
+    "test": "echo \"queue tests not configured yet\"",
+    "typecheck": "echo \"queue typecheck not configured yet\""
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/permissions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"permissions build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"permissions lint not configured yet\"",
+    "test": "echo \"permissions tests not configured yet\"",
+    "typecheck": "echo \"permissions typecheck not configured yet\""
+  }
+}

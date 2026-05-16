@@ -4,6 +4,8 @@
 
 Sivraj stores a user's most sensitive long-term context. Trust is not a feature. It is the foundation of the product.
 
+The user's Sui wallet is the root identity. API sessions are temporary access tokens, not the ownership source.
+
 The user must own:
 
 - Memory.
@@ -14,6 +16,8 @@ The user must own:
 ## Permission Principles
 
 - Default private.
+- Wallet ownership first.
+- Short-lived API sessions.
 - Least privilege for every agent.
 - User-visible access grants.
 - Revocable access.
@@ -113,6 +117,57 @@ Data written to Walrus should be treated as long-lived and portable. Therefore:
 - Agents should receive scoped context packets, not direct unrestricted Walrus blob access.
 - Walrus object references should be considered sensitive when they point to private memory.
 
+### Current Implementation Status
+
+The current manual note endpoint is a development foundation. It writes the first memory fragment into Postgres so the product loop can be tested.
+
+This is not the final private-memory storage model.
+
+Legacy dev-only labels:
+
+- `storageMode: "dev_plaintext"`
+- `sensitivity: "private"` by default
+- `source_artifacts.raw_storage_ref: null`
+
+That path may create `source_artifacts`, `memory_fragments`, and `audit_events` only for local testing. It is unsafe for real user data.
+
+Current private manual memory writes:
+
+- Encrypt raw content with Seal before durable storage.
+- Store ciphertext on Walrus.
+- Store `source_artifacts.raw_storage_ref` and encryption/storage metadata in Postgres.
+- Do not create plaintext `memory_fragments.content` at upload time.
+- Fail closed when Seal, Sui, or Walrus config is missing.
+
+### Private Memory Storage Boundary
+
+Dev path:
+
+- Manual note ingestion may store plaintext in Postgres for local testing only.
+- The route must return and persist dev labels so clients cannot mistake it for production-safe storage.
+- Manual memory UI should wait for encrypted storage or display a clear dev-only warning.
+
+Production path:
+
+- Raw private memory must be encrypted before durable storage.
+- Ciphertext must be persisted through Walrus.
+- `source_artifacts.raw_storage_ref` must point to the encrypted Walrus blob or reference metadata.
+- Postgres stores metadata, references, audit, processing state, graph records, and index records.
+- Postgres is not the primary private raw-memory vault.
+
+Retrieval rule:
+
+- No memory content leaves Sivraj without authentication and permission policy checks.
+- Agents receive scoped context packets, not unrestricted memory blob access.
+
+Before any real user/private beta:
+
+- Raw manual memory content must be encrypted before durable storage.
+- Encrypted raw content must be stored through the Walrus adapter.
+- Postgres should store metadata, processing state, memory fragments, audit records, and Walrus references.
+- Sensitive memory fragments and summaries must be treated as scoped data and reviewed before being stored in plaintext.
+- Retrieval must apply permission policy before returning any memory content.
+
 ### Walrus and Seal
 
 Walrus and Seal work together:
@@ -192,13 +247,15 @@ Users must be able to:
 - Model provider data retention.
 - Compromised API keys.
 
-## MVP Security Requirements
+## Baseline Security Requirements
 
 - Require authentication.
+- Verify Sui wallet ownership before issuing user sessions.
 - Store secrets outside source control.
 - Add per-memory access scope.
 - Apply permission filters before retrieval.
 - Log every context packet.
+- Treat the current plaintext manual-memory path as development-only.
 - Encrypt sensitive blobs before Walrus persistence.
 - Store Walrus references separately from decrypted memory text.
 - Never give agents unrestricted direct access to private Walrus objects.

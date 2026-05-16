@@ -1,0 +1,29 @@
+{
+  "name": "@sivraj/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm typecheck",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "studio": "drizzle-kit studio",
+    "lint": "echo \"db lint not configured yet\"",
+    "test": "echo \"db tests not configured yet\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.drizzle.json --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.41.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@sivraj/config": "workspace:*",
+    "@types/node": "^24.12.4",
+    "@types/pg": "^8.15.4",
+    "drizzle-kit": "^0.31.1",
+    "typescript": "~6.0.3"
+  }
+}

@@ -2,12 +2,21 @@
 
 ## Immediate
 
-- [ ] Initialize Git repository.
-- [ ] Choose application stack.
-- [ ] Create project scaffold.
-- [ ] Define environment variable contract.
-- [ ] Create initial database schema.
-- [ ] Build first ingestion endpoint.
+- [x] Initialize Git repository.
+- [x] Choose application stack: Vite React + standalone TypeScript API + worker.
+- [x] Create pnpm workspace scaffold.
+- [x] Add platform packages for config, auth, queue, observability, and LLM providers.
+- [x] Scaffold `apps/web` with Vite React.
+- [x] Scaffold `apps/api` with Hono.
+- [x] Scaffold `apps/worker`.
+- [x] Define environment variable contract.
+- [x] Create initial database schema.
+- [x] Set up local Postgres and Redis with Docker Compose.
+- [x] Build Sui wallet auth foundation.
+- [x] Build first ingestion endpoint.
+- [x] Define private memory storage boundary for current plaintext dev path.
+- [x] Implement encrypted Walrus storage path for manual memory.
+- [x] Store only ciphertext refs/raw storage refs for private memory.
 - [ ] Build manual memory entry UI.
 - [ ] Build PDF/text upload flow.
 - [ ] Create first memory processing worker.
@@ -24,16 +33,17 @@
 
 ## Data
 
-- [ ] Define source artifact schema.
-- [ ] Define memory fragment schema.
-- [ ] Define graph node schema.
-- [ ] Define graph edge schema.
-- [ ] Define insight schema.
-- [ ] Define context packet schema.
-- [ ] Define access policy schema.
+- [x] Define source artifact schema.
+- [x] Define memory fragment schema.
+- [x] Define graph node schema.
+- [x] Define graph edge schema.
+- [x] Define insight schema.
+- [x] Define context packet schema.
+- [x] Define access policy schema.
 
 ## Ingestion
 
+- [x] Mark current manual note ingestion as dev-only until encrypted storage lands.
 - [ ] Markdown parser.
 - [ ] Plain text parser.
 - [ ] PDF parser.
@@ -65,11 +75,14 @@
 
 ## Security
 
-- [ ] Define encryption boundary.
+- [x] Define encryption boundary.
+- [x] Implement Seal encryption adapter.
+- [x] Implement Walrus storage adapter.
+- [x] Enforce encrypted-at-rest raw memory for private artifacts.
 - [ ] Add audit logs.
 - [ ] Add access revocation.
 - [ ] Design Seal integration.
-- [ ] Design Sui identity integration.
+- [x] Design Sui identity integration.
 - [ ] Add data export.
 - [ ] Add data deletion.
 
@@ -82,4 +95,3 @@
 - [ ] Create demo identity graph.
 - [ ] Create wow-moment query flow.
 - [ ] Create multi-agent context demo.
-

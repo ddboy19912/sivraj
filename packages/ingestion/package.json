@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/ingestion",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"ingestion build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"ingestion lint not configured yet\"",
+    "test": "echo \"ingestion tests not configured yet\"",
+    "typecheck": "echo \"ingestion typecheck not configured yet\""
+  }
+}

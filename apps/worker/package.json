@@ -1,0 +1,19 @@
+{
+  "name": "@sivraj/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm typecheck",
+    "dev": "tsx watch src/index.ts",
+    "lint": "echo \"worker lint not configured yet\"",
+    "test": "echo \"worker tests not configured yet\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "tsx": "^4.22.0",
+    "typescript": "~6.0.3"
+  }
+}

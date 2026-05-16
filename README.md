@@ -58,13 +58,15 @@ The strongest wedge is **Founder OS**: an AI chief-of-staff that remembers start
 ## Documentation
 
 - [Product Requirements](./docs/PRD.md)
-- [MVP Scope](./docs/MVP.md)
+- [Build Scope](./docs/BUILD_SCOPE.md)
 - [Architecture](./docs/ARCHITECTURE.md)
+- [Application Stack](./docs/STACK.md)
 - [Roadmap](./docs/ROADMAP.md)
 - [Backlog](./docs/TODO.md)
 - [API Design](./docs/API.md)
 - [Data Model](./docs/DATA_MODEL.md)
 - [Security and Permissions](./docs/SECURITY.md)
+- [Environment Contract](./docs/ENVIRONMENT.md)
 - [Demo Plan](./docs/DEMO.md)
 - [User Stories](./docs/USER_STORIES.md)
 - [Development Setup](./docs/DEVELOPMENT.md)

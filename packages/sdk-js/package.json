@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/sdk-js",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"js sdk build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"js sdk lint not configured yet\"",
+    "test": "echo \"js sdk tests not configured yet\"",
+    "typecheck": "echo \"js sdk typecheck not configured yet\""
+  }
+}

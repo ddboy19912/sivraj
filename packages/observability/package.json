@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"observability build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"observability lint not configured yet\"",
+    "test": "echo \"observability tests not configured yet\"",
+    "typecheck": "echo \"observability typecheck not configured yet\""
+  }
+}

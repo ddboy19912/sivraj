@@ -1,0 +1,31 @@
+{
+  "name": "@sivraj/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.2",
+    "@sivraj/auth": "workspace:*",
+    "@sivraj/config": "workspace:*",
+    "@sivraj/core": "workspace:*",
+    "@sivraj/crypto-seal": "workspace:*",
+    "@sivraj/db": "workspace:*",
+    "@sivraj/storage-walrus": "workspace:*",
+    "@mysten/sui": "^2.16.3",
+    "drizzle-orm": "^0.41.0",
+    "hono": "^4.12.18",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "tsx": "^4.22.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

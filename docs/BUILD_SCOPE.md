@@ -1,22 +1,22 @@
-# MVP Scope
+# Build Scope
 
-## MVP Goal
+## Foundation Goal
 
 Prove that Sivraj can turn fragmented personal and professional context into high-value strategic synthesis.
 
-The MVP should make users feel:
+The first working product should make users feel:
 
 > This system understands patterns across my life and work that no single AI app can see.
 
-## Target MVP User
+## Target User
 
 Founder or operator using multiple AI tools and managing active work across product, engineering, fundraising, research, and personal planning.
 
-## MVP Promise
+## Product Promise
 
 Upload or connect meaningful work context, then ask strategic questions and receive personalized, cross-domain insight.
 
-## MVP Must Have
+## Foundation Must Have
 
 ### 1. User Identity and Workspace
 
@@ -47,6 +47,9 @@ Nice to have:
 For each ingested artifact:
 
 - Store raw source metadata.
+- Encrypt private raw content.
+- Store encrypted raw content through Walrus.
+- Save raw storage references.
 - Extract text.
 - Chunk content.
 - Generate embeddings.
@@ -99,7 +102,7 @@ Generate periodic reports:
 
 ### 8. Permission Scopes
 
-MVP scopes:
+Initial scopes:
 
 - Private to user.
 - Coding agent.
@@ -119,7 +122,7 @@ Simulate or implement three agent clients:
 
 Each receives different context based on scope.
 
-## MVP Should Not Include
+## Foundation Should Not Include
 
 - Full enterprise admin.
 - Complex org graph.
@@ -128,10 +131,11 @@ Each receives different context based on scope.
 - Marketplace.
 - Advanced payments.
 - Complete Web3 decentralization for every object.
+- Private beta usage while raw private memory is still stored only as plaintext Postgres content.
 
 ## Success Criteria
 
-The MVP succeeds if:
+The foundation succeeds if:
 
 - A user can ingest at least 50 meaningful artifacts.
 - The system builds a usable graph of projects, people, goals, and decisions.
@@ -148,4 +152,3 @@ The demo should show:
 3. Asking a cross-domain strategic question.
 4. Receiving a personal, emotionally real, and strategically useful synthesis.
 5. Routing different context to different agents.
-

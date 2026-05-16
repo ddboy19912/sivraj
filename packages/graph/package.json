@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/graph",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"graph build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"graph lint not configured yet\"",
+    "test": "echo \"graph tests not configured yet\"",
+    "typecheck": "echo \"graph typecheck not configured yet\""
+  }
+}

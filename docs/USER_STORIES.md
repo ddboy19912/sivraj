@@ -28,7 +28,7 @@
 - As a user, I want to revoke access at any time.
 - As a user, I want sensitive memories encrypted and private by default.
 
-## MVP Acceptance Criteria
+## Foundation Acceptance Criteria
 
 - A user can create a Twin.
 - A user can add or upload memory sources.
@@ -36,4 +36,3 @@
 - Sivraj builds a basic graph of goals, projects, people, and decisions.
 - A user can ask a synthesis question and receive an evidence-backed answer.
 - Different agent scopes produce different context packets.
-

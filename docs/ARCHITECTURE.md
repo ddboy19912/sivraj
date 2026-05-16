@@ -39,6 +39,9 @@ Responsibilities:
 
 - Accept uploads and connected-source imports.
 - Normalize file metadata.
+- Classify source sensitivity.
+- Encrypt private raw content before durable blob storage.
+- Persist encrypted raw content through Walrus.
 - Extract text from supported formats.
 - Track provenance and source authority.
 - Queue processing jobs.
@@ -165,23 +168,53 @@ It should not include:
 
 ## Recommended Initial Stack
 
-This can change during implementation, but a reasonable starting stack is:
+Sivraj should optimize for speed, low framework overhead, and a clean separation between the product UI and the external API platform.
 
 - TypeScript.
-- Next.js or Vite for the app.
-- Node.js backend API.
+- Vite + React for the web app.
+- Standalone TypeScript API service.
+- Hono or Fastify for the API runtime.
 - Postgres for relational metadata and graph edges.
 - pgvector or MemWal for early semantic retrieval if MemWal is not fully integrated yet.
 - Queue worker for ingestion jobs.
 - Object storage abstraction with Walrus adapter.
 - LLM provider abstraction.
 
+Recommended app boundaries:
+
+```text
+apps/
+  web/      # Vite React dashboard and user app
+  api/      # External Sivraj API platform
+  worker/   # Ingestion, graph, retrieval, and synthesis jobs
+packages/
+  core/
+  config/
+  auth/
+  db/
+  queue/
+  observability/
+  llm/
+  ingestion/
+  graph/
+  retrieval/
+  synthesis/
+  permissions/
+  storage-walrus/
+  crypto-seal/
+  identity-sui/
+  sdk-js/
+  sdk-python/
+```
+
+The web app should be only one client of the Sivraj platform. External agents and third-party apps should use the same API layer.
+
 ## Architectural Principles
 
 - Store raw source, processed memories, and synthesized insights separately.
+- Store raw private source content as encrypted Walrus blobs, not plaintext app database rows.
 - Every memory should be traceable to evidence.
 - The graph should support uncertainty and revision.
 - Retrieval should be scoped by permission before context leaves the system.
 - Synthesis should update assumptions, not overwrite reality.
 - Agents should receive least-privilege context packets.
-

@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/identity-sui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"sui identity adapter build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"sui identity adapter lint not configured yet\"",
+    "test": "echo \"sui identity adapter tests not configured yet\"",
+    "typecheck": "echo \"sui identity adapter typecheck not configured yet\""
+  }
+}

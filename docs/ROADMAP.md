@@ -5,7 +5,7 @@
 Goal: Align thesis, scope, and technical direction.
 
 - Finalize PRD.
-- Define MVP user and demo path.
+- Define first target user and demo path.
 - Choose initial stack.
 - Create architecture plan.
 - Define data model.
@@ -15,22 +15,26 @@ Exit criteria:
 
 - Team can start implementation without re-litigating product identity.
 
-## Phase 1: Memory Ingestion MVP
+## Phase 1: Memory Ingestion Foundation
 
 Goal: Users can import meaningful context.
 
 - Implement account and Twin creation.
+- Implement Sui wallet auth.
+- Define private-memory storage boundary. (done)
+- Integrate Seal encryption for raw private memory.
+- Integrate Walrus storage for encrypted raw memory blobs.
 - Build manual memory entry.
 - Add markdown/text upload.
 - Add PDF ingestion.
 - Add chat export ingestion.
 - Add GitHub source import.
-- Store raw source metadata.
+- Store raw source metadata and encrypted raw storage refs.
 - Build processing queue.
 
 Exit criteria:
 
-- User can import at least 50 artifacts into a Twin.
+- User can import at least 50 artifacts into a Twin without relying on plaintext raw memory storage.
 
 ## Phase 2: Cognitive Graph V1
 
@@ -86,7 +90,6 @@ Goal: Users own and control memory access.
 - Define access scopes.
 - Add per-memory policies.
 - Add agent authorization.
-- Integrate Seal encryption.
 - Add audit log.
 - Add permission management UI.
 
@@ -98,9 +101,7 @@ Exit criteria:
 
 Goal: Make Sivraj portable, verifiable, and sovereign.
 
-- Integrate Walrus for persistent memory blobs.
 - Add identity state snapshots.
-- Add Sui identity primitives.
 - Add portable export.
 - Add verifiable memory references.
 
@@ -122,4 +123,3 @@ Goal: Package the strongest wedge into a paid workflow.
 Exit criteria:
 
 - Founder users are willing to pay $100-500/month for leverage.
-

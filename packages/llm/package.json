@@ -1,0 +1,15 @@
+{
+  "name": "@sivraj/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "echo \"llm build not configured yet\"",
+    "check": "pnpm typecheck",
+    "lint": "echo \"llm lint not configured yet\"",
+    "test": "echo \"llm tests not configured yet\"",
+    "typecheck": "echo \"llm typecheck not configured yet\""
+  }
+}
