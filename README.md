@@ -1,8 +1,8 @@
 # Sivraj
 
-**Persistent Intelligence for the AI Era**
+**Your memory. Your intelligence. Yours.**
 
-Sivraj is a sovereign cognitive layer that allows every AI system a person uses to continuously understand, remember, and evolve with them over time.
+Sivraj builds and protects your sovereign AI Twin: a private, encrypted intelligence layer that remembers your work, recovers forgotten context, and helps every AI system you use understand you with permission.
 
 It is not a chatbot, notes app, memory vault, or vector database. Sivraj is a persistent intelligence and identity layer for the AI-native world.
 
@@ -17,7 +17,7 @@ Today, a user's context is fragmented:
 - Cursor knows another.
 - Productivity tools hold still more fragments.
 
-Sivraj becomes the persistent intelligence layer beneath all of them.
+Sivraj becomes the persistent intelligence layer beneath all of them. The Twin is the user's sovereign context; Sivraj is the system that creates, protects, updates, retrieves from, and exposes that Twin to approved AI systems.
 
 ## Core Value
 
@@ -53,11 +53,14 @@ The more the system learns, the more useful it becomes. The more useful it becom
 
 ## Initial Market
 
-The strongest wedge is **Founder OS**: an AI chief-of-staff that remembers startup strategy, architecture decisions, investor conversations, hiring plans, GTM evolution, and execution bottlenecks.
+The first wedge is **high-leverage independent operators**: consultants, founders, solo builders, researchers, creators, and expert knowledge workers whose advantage comes from compounding personal and professional context.
+
+Founder OS remains an important expansion path for packaging Sivraj around startup strategy, architecture decisions, investor conversations, hiring plans, GTM evolution, and execution bottlenecks.
 
 ## Documentation
 
 - [Product Requirements](./docs/PRD.md)
+- [Product Foundation](./docs/PRODUCT_FOUNDATION.md)
 - [Build Scope](./docs/BUILD_SCOPE.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Application Stack](./docs/STACK.md)

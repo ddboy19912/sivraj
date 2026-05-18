@@ -6,25 +6,44 @@ Do not pitch Sivraj as AI memory.
 
 Pitch:
 
-> A persistent intelligence layer across all AI systems.
+> Sivraj builds and protects your sovereign AI Twin.
 
 ## Demo Goal
 
-Make the user feel that Sivraj understands personal and strategic patterns across their work better than any single AI tool could.
+Make the user feel that Sivraj can recover useful context from their own history better than any single AI tool could.
 
-## Demo Flow
+The activation moment is:
+
+> The user asks a real work question and Sivraj returns something specific they forgot they knew.
+
+## Current Demo Capability
+
+The current demo can show:
+
+- Sui wallet sign-in.
+- Encrypted manual memory upload.
+- Text, Markdown, and PDF upload.
+- Walrus encrypted storage receipt.
+- Worker processing.
+- Memory fragment creation.
+- Basic retrieval over processed memory.
+- Database and audit verification.
+
+Do not claim live graph construction, multi-agent routing, or advanced pattern synthesis as already implemented in the current app.
+
+## Target Demo Flow
 
 ### 1. Upload Life and Work Data
 
-Use a prepared founder dataset containing:
+Use a prepared high-leverage operator dataset containing:
 
-- GitHub project history.
-- Product notes.
-- Investor notes.
+- Client/project notes.
+- Strategy docs.
+- Proposals.
 - PDFs.
-- Voice note transcript.
-- Chat export.
-- Weekly planning notes.
+- AI chat exports.
+- Research notes.
+- Optional founder-specific assets such as GitHub project history or investor notes.
 
 Show that Sivraj accepts messy real-world context.
 
@@ -69,6 +88,10 @@ Example response:
 
 > You repeatedly delay launches by over-optimizing UI polish after core functionality is already working. This appeared across the wallet dashboard, investor portal, and onboarding redesign. The pattern usually begins after external feedback creates ambiguity, then shifts your effort from shipping to polishing.
 
+For the near-term demo, prefer a simpler source-backed retrieval moment:
+
+> In March 2024 you worked through a similar positioning problem for a fintech client. You concluded that leading with compliance reduced procurement friction. Here is the framework you built then.
+
 ### 5. Close the Loop
 
 Show that the insight can become:
@@ -81,6 +104,7 @@ Show that the insight can become:
 ## Demo Assets Needed
 
 - Sample founder dataset.
+- Sample independent-operator dataset.
 - Sample identity graph.
 - Three simulated agent clients.
 - One excellent synthesis response.
@@ -96,4 +120,3 @@ Avoid showing:
 - Raw embeddings.
 - Storage pricing.
 - A notes app interface.
-

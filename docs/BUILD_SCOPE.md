@@ -10,11 +10,17 @@ The first working product should make users feel:
 
 ## Target User
 
-Founder or operator using multiple AI tools and managing active work across product, engineering, fundraising, research, and personal planning.
+High-leverage independent operator using multiple AI tools and managing valuable context across client work, product, engineering, research, writing, strategy, and personal planning.
+
+The primary named persona is Tunde, an independent consultant whose expertise is scattered across documents, proposals, AI chats, email, notes, and drives. Founder OS remains an expansion path for founders and operators once synthesis, graph, and reporting capabilities mature.
 
 ## Product Promise
 
-Upload or connect meaningful work context, then ask strategic questions and receive personalized, cross-domain insight.
+Upload or connect meaningful work context, then ask a real work question and receive specific, source-backed context or insight from the user's own history.
+
+The activation event is:
+
+> Sivraj returns something useful from the user's past that they forgot they knew.
 
 ## Foundation Must Have
 
@@ -147,8 +153,9 @@ The foundation succeeds if:
 
 The demo should show:
 
-1. Uploading startup/life/work data.
-2. Building an identity graph.
-3. Asking a cross-domain strategic question.
-4. Receiving a personal, emotionally real, and strategically useful synthesis.
-5. Routing different context to different agents.
+1. Uploading meaningful life/work data.
+2. Encrypting private raw memory and storing a Walrus-backed receipt.
+3. Processing artifacts into retrievable memory.
+4. Asking a real work question.
+5. Receiving a specific, source-backed remembered insight.
+6. Showing the target graph/synthesis/agent-routing path without implying those target surfaces are fully built.

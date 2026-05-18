@@ -1,5 +1,12 @@
 # User Stories
 
+## Independent Operator OS
+
+- As an independent consultant, I want to upload proposals, client notes, research, PDFs, and AI chat exports so Sivraj can recover context I have already created.
+- As an independent consultant, I want to ask a real client question and receive source-backed context from prior work so I do not start from scratch.
+- As an independent consultant, I want Sivraj to surface forgotten frameworks and decisions so my expertise compounds across engagements.
+- As an independent consultant, I want to see where a memory came from so I can trust and reuse it in client work.
+
 ## Founder OS
 
 - As a founder, I want to upload product notes, GitHub history, investor notes, and planning docs so Sivraj can understand my operating context.

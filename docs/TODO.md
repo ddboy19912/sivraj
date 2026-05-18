@@ -32,12 +32,12 @@
 
 ## Product
 
-- [ ] Finalize brand language: Sivraj vs Sovereign naming relationship.
-- [ ] Define the first user persona in detail.
-- [ ] Write demo script.
-- [ ] Define activation event.
-- [ ] Define insight quality rubric.
-- [ ] Define pricing test plan.
+- [x] Finalize brand language: Sivraj vs Sovereign naming relationship.
+- [x] Define the first user persona in detail.
+- [x] Write demo script.
+- [x] Define activation event.
+- [x] Define insight quality rubric.
+- [x] Define pricing test plan.
 
 ## Data
 
@@ -106,6 +106,7 @@
 
 ## Demo
 
+- [ ] Create sample independent-operator dataset.
 - [ ] Create sample founder dataset.
 - [ ] Create sample GitHub project import.
 - [ ] Create sample investor notes.

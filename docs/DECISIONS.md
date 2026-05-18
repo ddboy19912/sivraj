@@ -16,11 +16,23 @@ The durable value is compounding cognitive continuity across AI systems.
 
 Decision:
 
-Prioritize Founder OS as the initial market.
+Prioritize Founder OS as the initial market. Superseded by the 2026-05-18 decision that broadens the first wedge to high-leverage independent operators and keeps Founder OS as an expansion path.
 
 Reason:
 
 Founders have high context fragmentation, high willingness to pay, and immediate need for strategic synthesis across product, engineering, fundraising, hiring, and execution.
+
+## 2026-05-18: Product Language and First Persona
+
+Decision:
+
+Sivraj builds and protects the user's sovereign AI Twin. Sivraj is the product and system; the Twin is the user-owned context and intelligence inside it.
+
+The first wedge is high-leverage independent operators. Tunde, an independent consultant, is the first named persona. Founder OS remains an expansion path and premium packaging once graph, synthesis, and reporting capabilities mature.
+
+Reason:
+
+The Twin language matches the existing domain model and API while keeping Sivraj as the clear product brand. Tunde makes the activation moment sharper: Sivraj should recover specific, useful context from the user's own past that they forgot they knew. Founder OS remains valuable, but it asks for broader company/team intelligence than the current product foundation needs to prove first.
 
 ## 2026-05-14: Product Moat
 

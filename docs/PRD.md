@@ -6,11 +6,11 @@ Sivraj
 
 ## Tagline
 
-Persistent Intelligence for the AI Era
+Your memory. Your intelligence. Yours.
 
 ## One-Line Pitch
 
-A sovereign cognitive layer that allows every AI system you use to continuously understand, remember, and evolve with you across your lifetime.
+Sivraj builds and protects your sovereign AI Twin: a private, encrypted intelligence layer that remembers your work, recovers forgotten context, and helps every AI system you use understand you with permission.
 
 ## Core Product Insight
 
@@ -23,6 +23,8 @@ The future problem is:
 > AI systems do not share a continuous understanding of humans.
 
 Modern users are split across tools, agents, models, and ecosystems. Each system has a partial memory, partial preferences, and partial context. Sivraj exists to unify that fragmented intelligence into a user-owned layer that can serve any AI system.
+
+Sivraj is the product and system. The Twin is the user's sovereign context: the living memory, graph, preferences, goals, permissions, and synthesis that Sivraj builds and protects.
 
 ## What Sivraj Is Not
 
@@ -50,13 +52,15 @@ It:
 
 ## Target Users
 
-### Primary: Founders and Operators
+### Primary: High-Leverage Independent Operators
 
-Users running companies, products, research, or creative organizations who need continuity across strategy, execution, fundraising, hiring, product, engineering, and personal decision-making.
+Consultants, founders, solo builders, researchers, creators, and expert knowledge workers whose advantage comes from compounding personal and professional context.
 
-### Secondary: AI-Native Knowledge Workers
+The first named persona is Tunde: an independent consultant who has solved valuable client problems before, but whose frameworks, notes, proposals, and insights are scattered across old documents, AI chats, email, and drives.
 
-Power users who work across coding, writing, research, meetings, planning, and learning, and who rely on multiple AI tools.
+### Secondary: Founder OS
+
+Founders and operators who need continuity across startup strategy, execution, fundraising, hiring, product, engineering, and personal decision-making.
 
 ### Future: Agent Builders and AI Apps
 
@@ -225,6 +229,8 @@ Implemented through:
 - Seal encryption.
 - Programmable permissions.
 
+Consumer-facing copy should describe this as private, encrypted, user-controlled intelligence. Developer and infrastructure docs should explicitly document Sui identity, Seal encryption, Walrus storage, policy checks, and storage proofs.
+
 ## Web3 Infrastructure Roles
 
 ### Walrus
@@ -244,6 +250,8 @@ It provides:
 - Permanence.
 - Verifiability.
 - Portability.
+
+Walrus should not be described to users as ordinary storage. It provides durable, portable references for encrypted cognitive state. Claims about permanence, deletion, and control must remain precise: private memory is encrypted before durable storage, access is scoped, and account deletion/export/revocation semantics must be explicit.
 
 ### MemWal
 
@@ -274,6 +282,25 @@ Examples:
 - No agent sees everything by default.
 
 ## Key Use Cases
+
+### Independent Operator OS
+
+Tracks:
+
+- Client strategy.
+- Frameworks.
+- Proposals.
+- Past project decisions.
+- Research notes.
+- Personal goals.
+
+Synthesizes:
+
+- Reusable expertise.
+- Forgotten prior work.
+- Patterns across successful engagements.
+- Execution bottlenecks.
+- Source-backed insight for current decisions.
 
 ### Founder OS
 
@@ -341,7 +368,7 @@ These are commodity surfaces.
 
 #### Tier 1: Sivraj Pro
 
-Price: $20-50/month
+Price: around $29/month
 
 Includes:
 
@@ -379,6 +406,8 @@ Companies deploy:
 - Employee intelligence graphs.
 - Cross-team continuity.
 
+Future pricing research should include legacy preservation, estate access, family sharing, and permanent Twin preservation only after security, recovery, deletion, and long-term storage semantics are designed.
+
 ## Product Loop
 
 1. More interactions.
@@ -395,4 +424,3 @@ Sivraj should not replace ChatGPT, Claude, Cursor, or future AI systems.
 Sivraj should enhance all of them simultaneously.
 
 That is the strategic unlock.
-

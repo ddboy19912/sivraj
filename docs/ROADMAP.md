@@ -6,6 +6,7 @@ Goal: Align thesis, scope, and technical direction.
 
 - Finalize PRD.
 - Define first target user and demo path.
+- Lock Sivraj/Twin brand language.
 - Choose initial stack.
 - Create architecture plan.
 - Define data model.
@@ -113,11 +114,14 @@ Exit criteria:
 
 - User can prove and port long-term identity state across systems.
 
-## Phase 7: Founder Intelligence Product
+## Phase 7: Operator Intelligence Product
 
-Goal: Package the strongest wedge into a paid workflow.
+Goal: Package the strongest wedge into paid workflows for high-leverage independent operators.
 
-- Build founder dashboard.
+- Build independent-operator dashboard.
+- Add recovered expertise and reusable-framework flows.
+- Add client/project context tracking.
+- Add founder-specific dashboard views.
 - Add investor conversation tracking.
 - Add roadmap and execution bottleneck synthesis.
 - Add weekly chief-of-staff report.
@@ -126,4 +130,4 @@ Goal: Package the strongest wedge into a paid workflow.
 
 Exit criteria:
 
-- Founder users are willing to pay $100-500/month for leverage.
+- Independent operators convert to Pro after reaching the activation moment, and founder/operator users show willingness to pay for premium intelligence workflows.

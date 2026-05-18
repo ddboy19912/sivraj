@@ -2,11 +2,15 @@
 
 ## Sivraj
 
-The product: a persistent intelligence and identity layer for the AI-native world.
+The product, platform, app, API, encryption/storage system, and coordination layer that builds and protects a user's sovereign AI Twin.
 
 ## Twin
 
-The user's evolving cognitive model. It contains memory, graph structure, synthesis, preferences, goals, and permissions.
+The user's sovereign context and evolving cognitive model. It contains memory, graph structure, synthesis, preferences, goals, permissions, and access rules.
+
+## Sovereign AI Twin
+
+The formal product concept for the Twin: user-owned, encrypted, portable intelligence that is designed to survive across models, apps, and agents.
 
 ## Memory Fragment
 
@@ -47,4 +51,3 @@ Encryption and scoped access layer for private memory and confidential agent coo
 ## Sui
 
 Identity and programmable ownership layer for user-controlled memory and access rights.
-
