@@ -17,10 +17,18 @@
 - [x] Define private memory storage boundary for current plaintext dev path.
 - [x] Implement encrypted Walrus storage path for manual memory.
 - [x] Store only ciphertext refs/raw storage refs for private memory.
-- [ ] Build manual memory entry UI.
-- [ ] Build PDF/text upload flow.
-- [ ] Create first memory processing worker.
-- [ ] Add basic semantic retrieval.
+- [x] Build manual memory entry UI.
+- [x] Test wallet auth + manual memory UI against local API.
+- [x] Create Seal policy package for Sivraj testnet.
+- [x] Deploy Seal policy package for Sivraj testnet.
+- [x] Configure live Sui/Walrus/Seal testnet env.
+- [x] Run first live encrypted memory upload and verify Postgres/Walrus/audit records.
+- [x] Add upload/storage health check.
+- [x] Build text/Markdown upload flow.
+- [x] Build PDF upload flow.
+- [x] Create first memory processing worker.
+- [x] Add scoped Seal/Walrus decrypt path for worker.
+- [x] Add basic semantic retrieval.
 
 ## Product
 
@@ -46,10 +54,15 @@
 - [x] Mark current manual note ingestion as dev-only until encrypted storage lands.
 - [ ] Markdown parser.
 - [ ] Plain text parser.
-- [ ] PDF parser.
+- [x] PDF text extraction parser.
 - [ ] Chat export parser.
 - [ ] GitHub import adapter.
-- [ ] Manual memory form.
+- [x] Manual memory form.
+- [x] Text/Markdown file upload form.
+- [x] Live encrypted manual memory smoke test with DB/audit/no-plaintext verification.
+- [x] First queued artifact worker with encrypted-memory pending state.
+- [x] Redis/BullMQ ingestion queue from API to worker.
+- [x] Live encrypted artifact decrypt smoke test with memory fragment creation.
 - [ ] Upload progress state.
 - [ ] Failed ingestion retry.
 
@@ -57,6 +70,7 @@
 
 - [ ] Entity extraction.
 - [ ] Memory extraction.
+- [x] Basic memory retrieval ranking.
 - [ ] Project clustering.
 - [ ] Goal inference.
 - [ ] Decision extraction.
@@ -79,6 +93,10 @@
 - [x] Implement Seal encryption adapter.
 - [x] Implement Walrus storage adapter.
 - [x] Enforce encrypted-at-rest raw memory for private artifacts.
+- [x] Create Seal access-control policy package.
+- [x] Deploy Seal access-control policy package on Sui testnet.
+- [x] Configure testnet Seal policy IDs and key servers.
+- [x] Use Seal policy approval for worker decryption.
 - [ ] Add audit logs.
 - [ ] Add access revocation.
 - [ ] Design Seal integration.

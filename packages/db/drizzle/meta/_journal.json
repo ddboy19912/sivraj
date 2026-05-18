@@ -15,6 +15,20 @@
       "when": 1778884570243,
       "tag": "0001_medical_lyja",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779137249195,
+      "tag": "0002_cultured_blur",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779139394044,
+      "tag": "0003_good_cerebro",
+      "breakpoints": true
     }
   ]
 }

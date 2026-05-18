@@ -106,6 +106,8 @@ packages/
   identity-sui/
   sdk-js/
   sdk-python/
+contracts/
+  sivraj_seal_policy/
 docs/
 ```
 
@@ -131,3 +133,19 @@ Build first end-to-end slice:
 7. Synthesis answers using retrieved context.
 
 This proves core product loop before broad integrations.
+
+Current worker boundary:
+
+- `pnpm dev:worker` starts the Redis/BullMQ artifact processing worker.
+- The API enqueues one `process-artifact` job after each encrypted artifact upload.
+- Encrypted private artifacts are claimed from queue jobs and, when Seal/Walrus config is present, decrypted through the deployed Seal policy before memory fragments are created.
+- Worker boot drains existing queued/pending/processing artifacts once for restart recovery; the main runtime path is queue-driven, not database polling.
+- If decrypt config is missing, encrypted private artifacts are marked `pending` and audited with `artifact.processing_pending`.
+- Non-private artifacts may create `memory_fragments` only when explicit plaintext `metadata.processingInput.content` exists.
+
+Current retrieval boundary:
+
+- `POST /v1/twins/:twinId/memories/search` is the first memory retrieval endpoint.
+- It requires `memory:read`.
+- It searches processed `memory_fragments`, not raw Walrus artifacts.
+- The current scorer is local and deterministic for development; MemWal/vector retrieval should replace the scoring layer without changing the API contract.

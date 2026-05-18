@@ -8,12 +8,23 @@
     "check": "pnpm typecheck",
     "dev": "tsx watch src/index.ts",
     "lint": "echo \"worker lint not configured yet\"",
-    "test": "echo \"worker tests not configured yet\"",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sivraj/config": "workspace:*",
+    "@sivraj/crypto-seal": "workspace:*",
+    "@sivraj/db": "workspace:*",
+    "@sivraj/queue": "workspace:*",
+    "@sivraj/storage-walrus": "workspace:*",
+    "@mysten/sui": "^2.16.3",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.41.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
     "tsx": "^4.22.0",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
   }
 }

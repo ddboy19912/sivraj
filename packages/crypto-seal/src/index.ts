@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import {
+  EncryptedObject,
   SealClient,
+  SessionKey,
   type KeyServerConfig,
   type SealCompatibleClient,
 } from "@mysten/seal";
+import { Transaction } from "@mysten/sui/transactions";
+import { fromHex } from "@mysten/sui/utils";
+import type { Signer } from "@mysten/sui/cryptography";
 
 export type SealPolicyConfig = {
   packageId: string;
@@ -30,7 +35,22 @@ export type SealEncryptor = {
   encrypt(input: SealEncryptInput): Promise<SealEncryptOutput>;
 };
 
-type SealClientLike = {
+export type SealDecryptInput = {
+  encryptedBytes: Uint8Array;
+};
+
+export type SealDecryptOutput = {
+  plaintext: Uint8Array;
+  packageId: string;
+  policyId: string;
+  sealId: string;
+};
+
+export type SealDecryptor = {
+  decrypt(input: SealDecryptInput): Promise<SealDecryptOutput>;
+};
+
+type SealEncryptClientLike = {
   encrypt(input: {
     threshold: number;
     packageId: string;
@@ -40,10 +60,18 @@ type SealClientLike = {
   }): Promise<{ encryptedObject: Uint8Array }>;
 };
 
+type SealDecryptClientLike = {
+  decrypt(input: {
+    data: Uint8Array;
+    sessionKey: SessionKey;
+    txBytes: Uint8Array;
+  }): Promise<Uint8Array>;
+};
+
 export function createSealEncryptor(params: {
   suiClient: SealCompatibleClient;
   policy: SealPolicyConfig;
-  client?: SealClientLike;
+  client?: SealEncryptClientLike;
 }): SealEncryptor {
   const client =
     params.client ??
@@ -74,6 +102,77 @@ export function createSealEncryptor(params: {
       };
     },
   };
+}
+
+export function createSealDecryptor(params: {
+  suiClient: SealCompatibleClient;
+  signer: Signer;
+  policy: SealPolicyConfig;
+  client?: SealDecryptClientLike;
+  ttlMin?: number;
+}): SealDecryptor {
+  assertSealPolicyConfig(params.policy);
+
+  const client =
+    params.client ??
+    new SealClient({
+      suiClient: params.suiClient,
+      serverConfigs: params.policy.keyServers,
+    });
+
+  return {
+    async decrypt(input) {
+      const encryptedObject = EncryptedObject.parse(input.encryptedBytes);
+      const sealId = normalizeHex(encryptedObject.id);
+      const sessionKey = await SessionKey.create({
+        address: params.signer.getPublicKey().toSuiAddress(),
+        packageId: params.policy.packageId,
+        ttlMin: params.ttlMin ?? 10,
+        signer: params.signer,
+        suiClient: params.suiClient,
+      });
+      const txBytes = await buildSealApprovalTxBytes({
+        suiClient: params.suiClient,
+        packageId: params.policy.packageId,
+        policyId: params.policy.policyId,
+        sealId,
+      });
+      const plaintext = await client.decrypt({
+        data: input.encryptedBytes,
+        sessionKey,
+        txBytes,
+      });
+
+      return {
+        plaintext,
+        packageId: encryptedObject.packageId,
+        policyId: params.policy.policyId,
+        sealId,
+      };
+    },
+  };
+}
+
+export async function buildSealApprovalTxBytes(params: {
+  suiClient: SealCompatibleClient;
+  packageId: string;
+  policyId: string;
+  sealId: string;
+}): Promise<Uint8Array> {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${params.packageId}::owner_policy::seal_approve`,
+    arguments: [
+      tx.pure.vector("u8", fromHex(normalizeHex(params.sealId))),
+      tx.object(params.policyId),
+    ],
+  });
+
+  return tx.build({
+    client: params.suiClient,
+    onlyTransactionKind: true,
+  });
 }
 
 export function parseSealKeyServers(value: string): KeyServerConfig[] {
@@ -190,4 +289,8 @@ function numberField(
 
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function normalizeHex(value: string): string {
+  return value.startsWith("0x") ? value : `0x${value}`;
 }

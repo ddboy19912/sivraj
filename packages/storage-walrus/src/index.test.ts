@@ -1,6 +1,11 @@
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { describe, expect, it } from "vitest";
-import { assertWalrusStorageConfig, createWalrusStorage } from "./index";
+import {
+  assertWalrusStorageConfig,
+  createWalrusReader,
+  createWalrusStorage,
+  parseWalrusBlobId,
+} from "./index";
 
 describe("Walrus storage adapter", () => {
   it("stores encrypted bytes and returns a durable ref", async () => {
@@ -63,5 +68,33 @@ describe("Walrus storage adapter", () => {
         deletable: false,
       }),
     ).toThrow("Missing required Sui RPC URL for Walrus storage");
+  });
+
+  it("reads encrypted bytes from a Walrus blob ref", async () => {
+    const calls: unknown[] = [];
+    const reader = createWalrusReader({
+      config: {
+        network: "testnet",
+        rpcUrl: "https://fullnode.testnet.sui.io:443",
+      },
+      client: {
+        async readBlob(input) {
+          calls.push(input);
+          return new Uint8Array([4, 5, 6]);
+        },
+      },
+    });
+
+    await expect(reader.read({ rawStorageRef: "walrus://blob/blob-id" })).resolves.toEqual(
+      new Uint8Array([4, 5, 6]),
+    );
+    expect(calls).toEqual([{ blobId: "blob-id" }]);
+  });
+
+  it("parses Walrus blob refs", () => {
+    expect(parseWalrusBlobId("walrus://blob/blob-id")).toBe("blob-id");
+    expect(() => parseWalrusBlobId("https://example.com/blob-id")).toThrow(
+      "Invalid Walrus blob reference",
+    );
   });
 });

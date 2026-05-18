@@ -25,12 +25,16 @@ Goal: Users can import meaningful context.
 - Integrate Seal encryption for raw private memory.
 - Integrate Walrus storage for encrypted raw memory blobs.
 - Build manual memory entry.
+- Test wallet authentication and manual memory UI against the local API.
+- Deploy Sivraj Seal access-control policy on Sui testnet.
+- Configure live Sui, Walrus, and Seal testnet environment.
+- Run first live encrypted manual memory upload.
 - Add markdown/text upload.
-- Add PDF ingestion.
+- Add PDF text extraction ingestion. (done)
 - Add chat export ingestion.
 - Add GitHub source import.
 - Store raw source metadata and encrypted raw storage refs.
-- Build processing queue.
+- Build Redis/BullMQ processing queue. (done)
 
 Exit criteria:
 

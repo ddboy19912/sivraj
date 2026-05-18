@@ -27,6 +27,7 @@ Root `.env.example` is source of truth.
 
 - `APP_URL`
 - `API_URL`
+- `VITE_API_URL`
 
 ### API
 
@@ -66,12 +67,13 @@ Root `.env.example` is source of truth.
 - `NODE_ENV`: `development`, `test`, or `production`.
 - `APP_URL`: Web app URL.
 - `API_URL`: API base URL.
+- `VITE_API_URL`: Browser-facing API base URL for the Vite app.
 
 ### API
 
 - `API_HOST`: Bind host.
 - `API_PORT`: Bind port.
-- `CORS_ORIGINS`: Comma-separated allowed origins.
+- `CORS_ORIGINS`: Comma-separated allowed browser origins. Local dev should include both `http://localhost:5173` and `http://127.0.0.1:5173` if you use either host in the browser.
 
 ### Database
 
@@ -94,6 +96,8 @@ Root `.env.example` is source of truth.
 - `WALRUS_NETWORK`: Target network.
 - `WALRUS_EPOCHS`: Number of Walrus epochs to store encrypted private memory.
 - `WALRUS_DELETABLE`: Whether Walrus blobs should be deletable.
+- `WALRUS_UPLOAD_RELAY_URL`: Optional upload relay URL. Recommended on testnet to avoid direct storage-node confirmation failures.
+- `WALRUS_UPLOAD_RELAY_TIP_MAX_MIST`: Optional max relay tip in MIST.
 
 ### Seal
 
@@ -114,6 +118,7 @@ Root `.env.example` is source of truth.
 - `TOKEN_ISSUER`: Expected issuer.
 
 JWTs are API session tokens issued after Sui wallet verification. They are not the source of user ownership.
+Access tokens are short-lived. Refresh sessions are stored in Postgres as hashed opaque tokens and rotate through `/v1/auth/refresh`.
 
 ### Observability
 

@@ -1,0 +1,6 @@
+[package]
+name = "sivraj_seal_policy"
+edition = "2024"
+
+[addresses]
+sivraj_seal_policy = "0x0"

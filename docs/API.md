@@ -201,6 +201,7 @@ Endpoints:
 ```http
 POST /v1/auth/challenge
 POST /v1/auth/verify
+POST /v1/auth/refresh
 ```
 
 Challenge request:
@@ -227,13 +228,35 @@ Verify response:
 ```json
 {
   "token": "...",
+  "refreshToken": "...",
+  "expiresAt": "2026-05-18T12:00:00.000Z",
   "userId": "...",
   "twinId": "...",
   "walletAddress": "0x..."
 }
 ```
 
-The JWT is a short-lived API session token. It is not the source of ownership.
+Refresh request:
+
+```json
+{
+  "refreshToken": "...",
+  "walletAddress": "0x..."
+}
+```
+
+Refresh response has the same shape as verify response and rotates the refresh token.
+
+The JWT is a short-lived API session token. It is not the source of ownership. First-party wallet sessions use a short access token plus a 30-day refresh session, so normal uploads/retrieval can refresh without asking the wallet to sign again.
+
+Current first-party wallet sessions include:
+
+- `artifact:upload`
+- `memory:read`
+
+Existing browser sessions minted before this scope change must sign in again to receive `memory:read`.
+
+Existing browser sessions minted before refresh tokens existed must sign in once to receive `refreshToken`.
 
 ## Permission Scopes
 
@@ -335,7 +358,16 @@ Initial JSON body:
 }
 ```
 
-The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, encrypts private note content with Seal, stores ciphertext on Walrus, creates a queued source artifact, and writes an audit event. It does not create a plaintext memory fragment for private manual memory.
+Supported first-slice source types:
+
+- `note` for manual text entry.
+- `markdown` for `.md` / `.markdown` file content.
+- `upload` for plain text file content.
+- `pdf` for extracted PDF text.
+
+The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, encrypts private content with Seal, stores ciphertext on Walrus, creates a queued source artifact, writes an audit event, and publishes a Redis/BullMQ processing job. It does not create a plaintext memory fragment for private memory.
+
+Current PDF behavior: the web client extracts PDF text and submits that extracted text through the encrypted artifact path. The original PDF binary is not yet stored as a separate encrypted raw file object.
 
 Initial response:
 
@@ -347,6 +379,7 @@ Initial response:
   "storageMode": "encrypted_walrus",
   "sensitivity": "private",
   "rawStorageRef": "walrus://blob/...",
+  "processingJobId": "...",
   "warning": null
 }
 ```
@@ -354,6 +387,29 @@ Initial response:
 Current implementation note:
 
 The manual note endpoint now fails closed unless Seal, Sui, and Walrus config is present. The current write path stores private raw memory as Seal-encrypted Walrus ciphertext and persists `source_artifacts.raw_storage_ref` plus metadata in Postgres. Retrieval/decryption is a separate future path and must apply permission policy before returning memory content.
+
+Worker behavior:
+
+- New encrypted private artifacts start as `queued`.
+- The API publishes a `process-artifact` job to the Redis-backed `sivraj-artifact-processing` queue.
+- The worker consumes queue jobs immediately and claims the corresponding artifact.
+- On boot, the worker drains existing queued/pending/processing artifacts once so recoverable rows are not stranded after a restart.
+- If Seal/Walrus decrypt config is unavailable, encrypted private artifacts are marked `pending` with `metadata.processing.reason = encrypted_decryption_required`.
+- If decrypt config is available, the worker reads ciphertext from Walrus, requests Seal key shares through the `owner_policy::seal_approve` Move policy, decrypts locally, creates a `memory_fragments` row, marks the artifact `completed`, and writes `artifact.processed`.
+- Audit metadata records storage refs and fragment IDs, but not decrypted content.
+
+Live upload acceptance is not complete on UI success alone. Confirm:
+
+- `source_artifacts.id` matches response `artifactId`.
+- `source_artifacts.raw_storage_ref` matches response `rawStorageRef`.
+- `source_artifacts.metadata.storageMode = encrypted_walrus`.
+- `source_artifacts.metadata.sensitivity = private`.
+- `source_artifacts.metadata.ciphertextSha256` exists.
+- `audit_events` has `event_type = artifact.created` for the artifact.
+- `memory_fragments` has exactly one row for this artifact after worker processing completes.
+- plaintext note content does not appear in `source_artifacts.metadata`.
+
+See [Seal policy smoke test](./SEAL_POLICY.md#live-manual-memory-smoke-test).
 
 ### Memory Fragment
 
@@ -366,9 +422,37 @@ GET /v1/twins/:twinId/memories
 GET /v1/twins/:twinId/memories/:memoryId
 POST /v1/twins/:twinId/memories
 PATCH /v1/twins/:twinId/memories/:memoryId
+POST /v1/twins/:twinId/memories/search
 ```
 
 External clients should prefer context packets over direct memory reads.
+
+First retrieval endpoint:
+
+```http
+POST /v1/twins/:twinId/memories/search
+Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "query": "launch UI polish",
+  "limit": 5
+}
+```
+
+Rules:
+
+- Requires `memory:read`.
+- Requires token `twinId` to match path `twinId` unless token type is `service`.
+- Searches processed `memory_fragments`.
+- Returns ranked memory fragments with citations.
+- Does not return raw Walrus artifacts.
+- Writes `memory.search` audit event.
+
+Current ranking is local lexical-semantic scoring over terms, summaries, confidence, importance, and recency. MemWal/vector ranking can replace the scorer behind the same API contract later.
 
 ### Cognitive Graph
 

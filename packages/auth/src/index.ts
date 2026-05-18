@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
+import type { ClientWithCoreApi } from "@mysten/sui/client";
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify";
 
 export type AuthSubjectType = "user" | "client" | "agent" | "service";
@@ -130,6 +131,7 @@ export async function verifyWalletChallenge(params: {
   message: string;
   signature: string;
   walletAddress: string;
+  suiClient?: ClientWithCoreApi;
 }): Promise<VerifiedWallet> {
   const { payload } = await jwtVerify(params.challengeToken, secretKey(params.config.jwtSecret), {
     issuer: params.config.tokenIssuer,
@@ -142,6 +144,10 @@ export async function verifyWalletChallenge(params: {
   const publicKey = await verifyPersonalMessageSignature(
     textEncoder.encode(params.message),
     params.signature,
+    {
+      address: params.walletAddress,
+      client: params.suiClient,
+    },
   );
 
   const address = publicKey.toSuiAddress();

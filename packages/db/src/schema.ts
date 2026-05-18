@@ -117,6 +117,34 @@ export const twins = pgTable(
   (t) => [index("twins_user_id_idx").on(t.userId)],
 );
 
+export const refreshSessions = pgTable(
+  "refresh_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    walletAddress: text("wallet_address").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    scopes: text("scopes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("refresh_sessions_user_id_idx").on(t.userId),
+    index("refresh_sessions_twin_id_idx").on(t.twinId),
+    uniqueIndex("refresh_sessions_token_hash_idx").on(t.tokenHash),
+  ],
+);
+
 export const apiClients = pgTable("api_clients", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -232,7 +260,7 @@ export const memoryFragments = pgTable(
   },
   (t) => [
     index("memory_fragments_twin_id_idx").on(t.twinId),
-    index("memory_fragments_source_artifact_id_idx").on(t.sourceArtifactId),
+    uniqueIndex("memory_fragments_source_artifact_id_idx").on(t.sourceArtifactId),
     index("memory_fragments_occurred_at_idx").on(t.occurredAt),
   ],
 );

@@ -11,13 +11,16 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.2",
+    "@mysten/sui": "^2.16.3",
     "@sivraj/auth": "workspace:*",
     "@sivraj/config": "workspace:*",
     "@sivraj/core": "workspace:*",
     "@sivraj/crypto-seal": "workspace:*",
     "@sivraj/db": "workspace:*",
+    "@sivraj/queue": "workspace:*",
+    "@sivraj/retrieval": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",
-    "@mysten/sui": "^2.16.3",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.41.0",
     "hono": "^4.12.18",
     "pg": "^8.20.0"

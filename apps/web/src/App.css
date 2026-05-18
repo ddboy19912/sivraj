@@ -191,6 +191,46 @@ input {
   padding: 0 12px;
 }
 
+input[type="file"] {
+  height: auto;
+  padding: 10px 12px;
+}
+
+.file-upload {
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--input);
+}
+
+.upload-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input);
+}
+
+.upload-summary strong,
+.upload-summary span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-summary strong {
+  color: var(--text-h);
+}
+
+.upload-summary span {
+  color: var(--muted);
+}
+
 textarea {
   min-height: 260px;
   resize: vertical;
@@ -219,7 +259,8 @@ textarea {
 
 .notice,
 .receipt,
-.empty-receipt {
+.empty-receipt,
+.storage-health {
   padding: 18px;
   text-align: left;
 }
@@ -242,16 +283,58 @@ textarea {
 
 .notice h2,
 .receipt h2,
-.empty-receipt h2 {
+.empty-receipt h2,
+.storage-health h2 {
   font-size: 17px;
   line-height: 1.25;
 }
 
 .notice p,
-.empty-receipt p {
+.empty-receipt p,
+.storage-health p {
   margin: 8px 0 0;
   color: var(--text);
   font-size: 14px;
+}
+
+.storage-health {
+  border-left: 4px solid var(--danger);
+}
+
+.storage-health.ready {
+  border-left-color: var(--success);
+}
+
+.storage-health ul {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.storage-health li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.dot.ok {
+  background: var(--success);
+}
+
+.dot.fail {
+  background: var(--danger);
 }
 
 .receipt dl {

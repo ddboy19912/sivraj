@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createPrivateMemoryStorageService } from "./private-memory-storage";
+import {
+  createPrivateMemoryStorage,
+  createPrivateMemoryStorageService,
+} from "./private-memory-storage";
 
 describe("private memory storage service", () => {
   it("encrypts content before storing it on Walrus", async () => {
@@ -57,5 +60,25 @@ describe("private memory storage service", () => {
       data: new TextEncoder().encode("Raw text memory"),
     });
     expect(result.rawStorageRef).toBe("walrus://blob/blob-id");
+  });
+
+  it("does not require worker or LLM env to build storage config", async () => {
+    const service = createPrivateMemoryStorage({
+      SEAL_PACKAGE_ID: "0xpackage",
+      SEAL_POLICY_ID: "0xpolicy",
+      SEAL_KEY_SERVERS: "0xkeyserver",
+      SUI_RPC_URL: "https://fullnode.testnet.sui.io:443",
+      SUI_PRIVATE_KEY: "invalid-key",
+    });
+
+    await expect(
+      service.storePrivateMemory({
+        twinId: "twin-id",
+        sourceType: "note",
+        title: null,
+        content: "Raw text memory",
+        metadata: {},
+      }),
+    ).rejects.not.toThrow(/REDIS_URL|LLM_API_KEY/);
   });
 });

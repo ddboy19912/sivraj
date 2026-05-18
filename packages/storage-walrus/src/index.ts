@@ -8,6 +8,8 @@ export type WalrusStorageConfig = {
   privateKey: string;
   epochs: number;
   deletable: boolean;
+  uploadRelayUrl?: string;
+  uploadRelayTipMaxMist?: number;
 };
 
 export type WalrusStoreInput = {
@@ -28,7 +30,11 @@ export type WalrusStorage = {
   store(input: WalrusStoreInput): Promise<WalrusStoreOutput>;
 };
 
-type WalrusClientLike = {
+export type WalrusReader = {
+  read(input: { rawStorageRef: string }): Promise<Uint8Array>;
+};
+
+type WalrusWriteClientLike = {
   writeBlob(input: {
     blob: Uint8Array;
     deletable: boolean;
@@ -48,9 +54,13 @@ type WalrusClientLike = {
   }>;
 };
 
+type WalrusReadClientLike = {
+  readBlob(input: { blobId: string }): Promise<Uint8Array>;
+};
+
 export function createWalrusStorage(params: {
   config: WalrusStorageConfig;
-  client?: WalrusClientLike;
+  client?: WalrusWriteClientLike;
   signer?: Ed25519Keypair;
 }): WalrusStorage {
   assertWalrusStorageConfig(params.config);
@@ -80,6 +90,28 @@ export function createWalrusStorage(params: {
   };
 }
 
+export function createWalrusReader(params: {
+  config: Pick<WalrusStorageConfig, "network" | "rpcUrl">;
+  client?: WalrusReadClientLike;
+}): WalrusReader {
+  if (!params.config.rpcUrl) {
+    throw new Error("Missing required Sui RPC URL for Walrus reader");
+  }
+
+  const client = params.client ?? createWalrusClient({
+    ...params.config,
+    privateKey: "unused-for-read",
+    epochs: 1,
+    deletable: false,
+  });
+
+  return {
+    async read(input) {
+      return client.readBlob({ blobId: parseWalrusBlobId(input.rawStorageRef) });
+    },
+  };
+}
+
 export function assertWalrusStorageConfig(config: WalrusStorageConfig): void {
   if (!config.rpcUrl) {
     throw new Error("Missing required Sui RPC URL for Walrus storage");
@@ -94,9 +126,38 @@ export function assertWalrusStorageConfig(config: WalrusStorageConfig): void {
   }
 }
 
-function createWalrusClient(config: WalrusStorageConfig): WalrusClientLike {
+function createWalrusClient(config: WalrusStorageConfig): WalrusWriteClientLike & WalrusReadClientLike {
   return new SuiGrpcClient({
     network: config.network,
     baseUrl: config.rpcUrl,
-  }).$extend(walrus()).walrus;
+  }).$extend(
+    walrus({
+      ...(config.uploadRelayUrl
+        ? {
+            uploadRelay: {
+              host: config.uploadRelayUrl,
+              ...(config.uploadRelayTipMaxMist
+                ? { sendTip: { max: config.uploadRelayTipMaxMist } }
+                : {}),
+            },
+          }
+        : {}),
+    }),
+  ).walrus;
+}
+
+export function parseWalrusBlobId(rawStorageRef: string): string {
+  const prefix = "walrus://blob/";
+
+  if (!rawStorageRef.startsWith(prefix)) {
+    throw new Error("Invalid Walrus blob reference");
+  }
+
+  const blobId = rawStorageRef.slice(prefix.length);
+
+  if (!blobId) {
+    throw new Error("Missing Walrus blob ID");
+  }
+
+  return blobId;
 }
