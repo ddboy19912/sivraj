@@ -56,8 +56,13 @@ describe("private memory storage service", () => {
         ciphertextSha256: "ciphertext-hash",
       },
     });
-    expect(sealInputs[0]).toMatchObject({
-      data: new TextEncoder().encode("Raw text memory"),
+    const sealedPayload = JSON.parse(new TextDecoder().decode((sealInputs[0] as { data: Uint8Array }).data));
+    expect(sealedPayload).toMatchObject({
+      kind: "source_artifact",
+      version: 1,
+      title: "Founder note",
+      content: "Raw text memory",
+      metadata: {},
     });
     expect(result.rawStorageRef).toBe("walrus://blob/blob-id");
   });

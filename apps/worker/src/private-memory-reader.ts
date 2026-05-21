@@ -21,19 +21,103 @@ type PrivateMemoryReaderConfig = {
 export function createPrivateMemoryReader(params: {
   walrus: WalrusReader;
   seal: SealDecryptor;
+  logger?: Pick<Console, "warn">;
 }): PrivateMemoryReader {
   const decoder = new TextDecoder();
+  const logger = params.logger ?? console;
 
   return {
     async readPrivateMemory(input) {
-      const encryptedBytes = await params.walrus.read({
+      const encryptedBytes = await retryPrivateMemoryStage({
+        stage: "walrus_read",
+        artifactId: input.artifactId,
         rawStorageRef: input.rawStorageRef,
+        logger,
+        operation: () =>
+          params.walrus.read({
+            rawStorageRef: input.rawStorageRef,
+          }),
       });
-      const decrypted = await params.seal.decrypt({ encryptedBytes });
+      const decrypted = await retryPrivateMemoryStage({
+        stage: "seal_decrypt",
+        artifactId: input.artifactId,
+        rawStorageRef: input.rawStorageRef,
+        logger,
+        operation: () => params.seal.decrypt({ encryptedBytes }),
+      });
 
       return decoder.decode(decrypted.plaintext);
     },
   };
+}
+
+async function retryPrivateMemoryStage<T>(params: {
+  stage: "walrus_read" | "seal_decrypt";
+  artifactId: string;
+  rawStorageRef: string;
+  operation: () => Promise<T>;
+  logger: Pick<Console, "warn">;
+}): Promise<T> {
+  const maxAttempts = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await params.operation();
+    } catch (error) {
+      lastError = error;
+
+      params.logger.warn("private memory read stage failed", {
+        stage: params.stage,
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        attempt,
+        maxAttempts,
+        retryable: isRetryableError(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: errorMessage(error),
+      });
+
+      if (attempt === maxAttempts || !isRetryableError(error)) {
+        break;
+      }
+
+      await sleep(250 * 2 ** (attempt - 1));
+    }
+  }
+
+  throw new Error(`${params.stage} failed: ${errorMessage(lastError)}`, {
+    cause: lastError,
+  });
+}
+
+function isRetryableError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+
+  return [
+    "fetch failed",
+    "network",
+    "timeout",
+    "timed out",
+    "econnreset",
+    "econnrefused",
+    "socket",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+  ].some((fragment) => message.includes(fragment));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown private memory read error";
 }
 
 export function createConfiguredPrivateMemoryReader(

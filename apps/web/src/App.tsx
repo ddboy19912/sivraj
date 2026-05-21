@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useCurrentAccount,
   useCurrentNetwork,
@@ -36,15 +36,57 @@ type ArtifactReceipt = {
   rawStorageRef: string | null
   processingJobId?: string | null
   warning: string | null
+  github?: {
+    repoUrl: string
+    owner: string
+    repo: string
+    fileCount: number
+  }
 }
 
-type SourceType = 'note' | 'markdown' | 'upload' | 'pdf'
+type ArtifactStatusEvent = {
+  artifactId: string
+  twinId: string
+  sourceType: string
+  status: ArtifactReceipt['status']
+  reason?: string
+  occurredAt: string
+}
+
+type ArtifactRetryResponse = {
+  artifactId: string
+  status: string
+  processingJobId?: string | null
+  warning?: string | null
+}
+
+type SourceType =
+  | 'note'
+  | 'markdown'
+  | 'upload'
+  | 'pdf'
+  | 'ocr_pdf'
+  | 'image'
+  | 'voice_note'
+  | 'voice_conversation'
+  | 'browser_history'
 
 type UploadMetadata = {
   fileName: string
   fileType: string
   fileSize: number
-  uploadKind: 'file'
+  uploadKind: 'file' | 'recording'
+  importer?: 'browser_history_export'
+  encoding?: 'base64'
+  audio?: {
+    kind: 'voice_note' | 'voice_conversation'
+    durationMs?: number
+    recordedAt?: string
+  }
+  ocr?: {
+    requested: boolean
+    reason: string
+  }
 }
 
 type Notice = {
@@ -62,6 +104,20 @@ type StorageHealth = {
   }
 }
 
+type RecordingState = 'idle' | 'requesting_permission' | 'recording' | 'recorded' | 'saving' | 'error'
+type UploadPhase =
+  | 'idle'
+  | 'reading_file'
+  | 'extracting_pdf'
+  | 'encoding_binary'
+  | 'ready'
+  | 'encrypting_uploading'
+  | 'queued'
+  | 'processing'
+  | 'pending'
+  | 'completed'
+  | 'failed'
+
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
 const SESSION_STORAGE_KEY = 'sivraj.session.v1'
 const textEncoder = new TextEncoder()
@@ -77,6 +133,7 @@ function App() {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [sourceType, setSourceType] = useState<SourceType>('note')
+  const [githubRepoUrl, setGithubRepoUrl] = useState('')
   const [uploadMetadata, setUploadMetadata] = useState<UploadMetadata | null>(null)
   const [receipt, setReceipt] = useState<ArtifactReceipt | null>(null)
   const [notice, setNotice] = useState<Notice>({
@@ -86,8 +143,22 @@ function App() {
   })
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isImportingGitHub, setIsImportingGitHub] = useState(false)
+  const [isRetryingArtifact, setIsRetryingArtifact] = useState(false)
+  const [recordingState, setRecordingState] = useState<RecordingState>('idle')
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [recordingPreviewUrl, setRecordingPreviewUrl] = useState<string | null>(null)
+  const [recordedVoiceBlob, setRecordedVoiceBlob] = useState<Blob | null>(null)
+  const [uploadPhase, setUploadPhase] = useState<UploadPhase>('idle')
+  const [uploadPhaseDetail, setUploadPhaseDetail] = useState('Waiting for private memory input.')
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null)
   const [storageHealthError, setStorageHealthError] = useState<string | null>(null)
+  const [statusStreamNonce, setStatusStreamNonce] = useState(0)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const recordingChunksRef = useRef<Blob[]>([])
+  const recordingStartedAtRef = useRef<number | null>(null)
+  const recordingTimerRef = useRef<number | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
 
   const isSessionForWallet = Boolean(
     account &&
@@ -95,6 +166,9 @@ function App() {
       session.walletAddress.toLowerCase() === account.address.toLowerCase(),
   )
   const canSubmit = isSessionForWallet && content.trim().length > 0 && !isSubmitting
+  const canImportGitHub = isSessionForWallet && githubRepoUrl.trim().length > 0 && !isImportingGitHub
+  const canStartRecording = isSessionForWallet && recordingState !== 'recording' && recordingState !== 'requesting_permission' && recordingState !== 'saving'
+  const canSaveRecording = isSessionForWallet && recordingState === 'recorded' && Boolean(recordedVoiceBlob)
   const trimmedWallet = useMemo(
     () => (account ? shortenAddress(account.address) : 'No wallet connected'),
     [account],
@@ -138,6 +212,75 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!receipt || !session || !isSessionForWallet) {
+      return
+    }
+
+    const controller = new AbortController()
+
+    streamArtifactStatusAuthed(
+      session.twinId,
+      receipt.artifactId,
+      session,
+      controller.signal,
+      (refreshed) => {
+        storeSession(refreshed)
+        setSession(refreshed)
+      },
+      (event) => {
+        setReceipt((current) => {
+          if (!current || current.artifactId !== event.artifactId) {
+            return current
+          }
+
+          return {
+            ...current,
+            status: event.status,
+          }
+        })
+
+        if (event.status === 'failed') {
+          const detail = event.reason ? `Processing failed: ${event.reason}.` : 'Artifact processing failed.'
+          setUploadProgress('failed', detail)
+          setNotice({
+            tone: 'error',
+            title: 'Processing failed.',
+            body: detail,
+          })
+        } else if (event.status === 'completed') {
+          setUploadProgress('completed', 'Worker completed processing and created retrievable memory.')
+        } else if (event.status === 'pending') {
+          const detail = event.reason ? `Processing pending: ${event.reason}.` : 'Worker marked this artifact pending.'
+          setUploadProgress('pending', detail)
+        } else if (event.status === 'processing') {
+          setUploadProgress('processing', 'Worker is processing this encrypted artifact.')
+        } else if (event.status === 'queued') {
+          setUploadProgress('queued', 'Encrypted artifact stored and queued for worker processing.')
+        }
+      },
+    ).catch((error) => {
+      if (!controller.signal.aborted) {
+        setUploadProgress('failed', `Status stream failed: ${errorMessage(error)}`)
+      }
+    })
+
+    return () => {
+      controller.abort()
+    }
+  }, [receipt?.artifactId, session?.twinId, isSessionForWallet, statusStreamNonce])
+
+  useEffect(() => {
+    return () => {
+      stopRecordingTimer()
+      stopRecordingStream()
+
+      if (recordingPreviewUrl) {
+        URL.revokeObjectURL(recordingPreviewUrl)
+      }
+    }
+  }, [recordingPreviewUrl])
 
   async function handleSignIn() {
     if (!account) {
@@ -207,6 +350,7 @@ function App() {
     setReceipt(null)
 
     try {
+      setUploadProgress('encrypting_uploading', 'Encrypting private memory and storing ciphertext on Walrus.')
       const result = await postAuthedJson<ArtifactReceipt>(
         `/v1/twins/${session.twinId}/artifacts`,
         {
@@ -223,10 +367,12 @@ function App() {
       )
 
       setReceipt(result)
+      setStatusStreamNonce((value) => value + 1)
       setContent('')
       setTitle('')
       setSourceType('note')
       setUploadMetadata(null)
+      setUploadProgress('queued', 'Encrypted artifact stored and queued for worker processing.')
       setNotice({
         tone: 'success',
         title: 'Encrypted memory queued.',
@@ -234,6 +380,7 @@ function App() {
       })
     } catch (error) {
       const message = errorMessage(error)
+      setUploadProgress('failed', message)
       setNotice({
         tone: 'error',
         title: message.toLowerCase().includes('encrypted storage')
@@ -246,6 +393,249 @@ function App() {
     }
   }
 
+  async function handleStartRecording() {
+    if (!isSessionForWallet) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before recording a private voice conversation.',
+      })
+      return
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setRecordingState('error')
+      setNotice({
+        tone: 'error',
+        title: 'Recording is not supported.',
+        body: 'This browser does not expose microphone recording APIs required for voice conversation capture.',
+      })
+      return
+    }
+
+    discardRecording()
+    setRecordingState('requesting_permission')
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = preferredRecordingMimeType()
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+
+      recordingStreamRef.current = stream
+      recordingChunksRef.current = []
+      recorderRef.current = recorder
+      recordingStartedAtRef.current = Date.now()
+
+      recorder.addEventListener('dataavailable', (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data)
+        }
+      })
+      recorder.addEventListener('stop', () => {
+        const type = recorder.mimeType || mimeType || 'audio/webm'
+        const blob = new Blob(recordingChunksRef.current, { type })
+        const previewUrl = URL.createObjectURL(blob)
+
+        stopRecordingTimer()
+        stopRecordingStream()
+        setRecordedVoiceBlob(blob)
+        setRecordingPreviewUrl((previous) => {
+          if (previous) {
+            URL.revokeObjectURL(previous)
+          }
+
+          return previewUrl
+        })
+        setRecordingState('recorded')
+      })
+
+      recorder.start()
+      setRecordingSeconds(0)
+      setRecordingState('recording')
+      recordingTimerRef.current = window.setInterval(() => {
+        const startedAt = recordingStartedAtRef.current
+        setRecordingSeconds(startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0)
+      }, 250)
+    } catch (error) {
+      stopRecordingTimer()
+      stopRecordingStream()
+      setRecordingState('error')
+      setNotice({
+        tone: 'error',
+        title: 'Microphone permission failed.',
+        body: errorMessage(error),
+      })
+    }
+  }
+
+  function handleStopRecording() {
+    const recorder = recorderRef.current
+
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop()
+    }
+  }
+
+  async function handleSaveRecording() {
+    if (!session || !isSessionForWallet) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before saving a private voice conversation.',
+      })
+      return
+    }
+
+    if (!recordedVoiceBlob) {
+      return
+    }
+
+    const recordedAt = new Date().toISOString()
+    const durationMs = Math.max(1000, Math.round(recordingSeconds * 1000))
+    const extension = recordedVoiceBlob.type.includes('mp4') ? 'm4a' : 'webm'
+    const fileName = `voice-conversation-${recordedAt.replace(/[:.]/g, '-')}.${extension}`
+    const metadata: UploadMetadata = {
+      fileName,
+      fileType: recordedVoiceBlob.type || 'audio/webm',
+      fileSize: recordedVoiceBlob.size,
+      uploadKind: 'recording',
+      encoding: 'base64',
+      audio: {
+        kind: 'voice_conversation',
+        durationMs,
+        recordedAt,
+      },
+    }
+
+    setRecordingState('saving')
+    setReceipt(null)
+
+    try {
+      setUploadProgress('encoding_binary', 'Encoding recorded audio for encrypted storage.')
+      const audioBase64 = await blobToBase64(recordedVoiceBlob)
+      setUploadProgress('encrypting_uploading', 'Encrypting recorded conversation and storing ciphertext on Walrus.')
+      const result = await postAuthedJson<ArtifactReceipt>(
+        `/v1/twins/${session.twinId}/artifacts`,
+        {
+          sourceType: 'voice_conversation',
+          title: fileName,
+          content: audioBase64,
+          metadata,
+        },
+        session,
+        (refreshed) => {
+          setSession(refreshed)
+          storeSession(refreshed)
+        },
+      )
+
+      setReceipt(result)
+      setStatusStreamNonce((value) => value + 1)
+      discardRecording()
+      setUploadProgress('queued', 'Encrypted voice conversation stored and queued for transcription.')
+      setNotice({
+        tone: 'success',
+        title: 'Voice conversation queued.',
+        body: 'The recorded audio was encrypted, stored on Walrus, and queued for transcription.',
+      })
+    } catch (error) {
+      const message = errorMessage(error)
+      setRecordingState('recorded')
+      setUploadProgress('failed', message)
+      setNotice({
+        tone: 'error',
+        title: message.toLowerCase().includes('encrypted storage')
+          ? 'Encrypted storage is not configured.'
+          : 'Voice conversation upload failed.',
+        body: message,
+      })
+    }
+  }
+
+  function discardRecording() {
+    stopRecordingTimer()
+    stopRecordingStream()
+    recorderRef.current = null
+    recordingChunksRef.current = []
+    recordingStartedAtRef.current = null
+    setRecordingSeconds(0)
+    setRecordedVoiceBlob(null)
+    setRecordingState('idle')
+    setUploadProgress('idle', 'Waiting for private memory input.')
+    setRecordingPreviewUrl((previous) => {
+      if (previous) {
+        URL.revokeObjectURL(previous)
+      }
+
+      return null
+    })
+  }
+
+  function stopRecordingTimer() {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+  }
+
+  function stopRecordingStream() {
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop())
+    recordingStreamRef.current = null
+  }
+
+  function setUploadProgress(phase: UploadPhase, detail: string) {
+    setUploadPhase(phase)
+    setUploadPhaseDetail(detail)
+  }
+
+  async function handleGitHubImport() {
+    if (!session || !isSessionForWallet) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before importing a GitHub repository.',
+      })
+      return
+    }
+
+    setIsImportingGitHub(true)
+    setReceipt(null)
+
+    try {
+      setUploadProgress('encrypting_uploading', 'Bundling repository context, encrypting it, and storing ciphertext on Walrus.')
+      const result = await postAuthedJson<ArtifactReceipt>(
+        `/v1/twins/${session.twinId}/imports/github`,
+        {
+          repoUrl: githubRepoUrl.trim(),
+        },
+        session,
+        (refreshed) => {
+          setSession(refreshed)
+          storeSession(refreshed)
+        },
+      )
+
+      setReceipt(result)
+      setStatusStreamNonce((value) => value + 1)
+      setGithubRepoUrl('')
+      setUploadProgress('queued', 'Encrypted repository artifact stored and queued for worker processing.')
+      setNotice({
+        tone: 'success',
+        title: 'GitHub repository queued.',
+        body: 'Repository context was bundled, encrypted, stored on Walrus, and queued for memory processing.',
+      })
+    } catch (error) {
+      setUploadProgress('failed', errorMessage(error))
+      setNotice({
+        tone: 'error',
+        title: 'GitHub import failed.',
+        body: errorMessage(error),
+      })
+    } finally {
+      setIsImportingGitHub(false)
+    }
+  }
+
   async function handleFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
 
@@ -253,28 +643,104 @@ function App() {
       return
     }
 
-    if (!isTextLikeFile(file) && !isPdf(file)) {
+    if (!isTextLikeFile(file) && !isBrowserHistoryFile(file) && !isPdf(file) && !isImage(file) && !isAudio(file)) {
       event.target.value = ''
       setUploadMetadata(null)
       setSourceType('note')
+      setUploadProgress('failed', 'Unsupported file type.')
       setNotice({
         tone: 'error',
         title: 'Unsupported file type.',
-        body: 'Choose a .txt, .md, .markdown, or .pdf file for this upload step.',
+        body: 'Choose a .txt, .md, .markdown, .pdf, .png, .jpg, .jpeg, .webp, .mp3, .m4a, .wav, .webm, .json, .csv, or .html file for this upload step.',
       })
       return
     }
 
     let text: string
     let nextSourceType: SourceType
+    let nextMetadata: UploadMetadata
 
     try {
-      text = isPdf(file) ? await extractPdfText(file) : await file.text()
-      nextSourceType = isPdf(file) ? 'pdf' : isMarkdown(file) ? 'markdown' : 'upload'
+      if (isPdf(file)) {
+        setUploadProgress('extracting_pdf', 'Extracting readable text from PDF before encrypted storage.')
+        text = await extractPdfText(file)
+        nextSourceType = text.trim().length > 0 ? 'pdf' : 'ocr_pdf'
+        nextMetadata = {
+          fileName: file.name,
+          fileType: file.type || inferFileType(file.name),
+          fileSize: file.size,
+          uploadKind: 'file',
+          ...(nextSourceType === 'ocr_pdf'
+            ? {
+                encoding: 'base64',
+                ocr: {
+                  requested: true,
+                  reason: 'no_extractable_pdf_text',
+                },
+              }
+            : {}),
+        }
+
+        if (nextSourceType === 'ocr_pdf') {
+          setUploadProgress('encoding_binary', 'No readable PDF text found. Encoding scanned PDF for encrypted OCR processing.')
+          text = await fileToBase64(file)
+        }
+      } else if (isImage(file)) {
+        setUploadProgress('encoding_binary', 'Encoding image for encrypted OCR processing.')
+        text = await fileToBase64(file)
+        nextSourceType = 'image'
+        nextMetadata = {
+          fileName: file.name,
+          fileType: file.type || inferFileType(file.name),
+          fileSize: file.size,
+          uploadKind: 'file',
+          encoding: 'base64',
+          ocr: {
+            requested: true,
+            reason: 'image_upload',
+          },
+        }
+      } else if (isAudio(file)) {
+        setUploadProgress('encoding_binary', 'Encoding audio for encrypted transcription processing.')
+        text = await fileToBase64(file)
+        nextSourceType = 'voice_note'
+        nextMetadata = {
+          fileName: file.name,
+          fileType: file.type || inferFileType(file.name),
+          fileSize: file.size,
+          uploadKind: 'file',
+          encoding: 'base64',
+          audio: {
+            kind: 'voice_note',
+          },
+        }
+      } else if (isBrowserHistoryFile(file)) {
+        setUploadProgress('reading_file', 'Reading browser history export.')
+        text = await file.text()
+        nextSourceType = 'browser_history'
+        nextMetadata = {
+          fileName: file.name,
+          fileType: file.type || inferFileType(file.name),
+          fileSize: file.size,
+          uploadKind: 'file',
+          importer: 'browser_history_export',
+        }
+      } else {
+        setUploadProgress('reading_file', 'Reading text file.')
+        text = await file.text()
+        nextSourceType = isMarkdown(file) ? 'markdown' : 'upload'
+        nextMetadata = {
+          fileName: file.name,
+          fileType: file.type || inferFileType(file.name),
+          fileSize: file.size,
+          uploadKind: 'file',
+        }
+      }
     } catch (error) {
       event.target.value = ''
       setUploadMetadata(null)
       setSourceType('note')
+      setUploadProgress('failed', errorMessage(error))
       setNotice({
         tone: 'error',
         title: 'PDF text extraction failed.',
@@ -287,6 +753,7 @@ function App() {
       event.target.value = ''
       setUploadMetadata(null)
       setSourceType('note')
+      setUploadProgress('failed', 'This file did not produce processable content.')
       setNotice({
         tone: 'error',
         title: 'No text found.',
@@ -298,13 +765,9 @@ function App() {
     setTitle(file.name)
     setContent(text)
     setSourceType(nextSourceType)
-    setUploadMetadata({
-      fileName: file.name,
-      fileType: file.type || inferFileType(file.name),
-      fileSize: file.size,
-      uploadKind: 'file',
-    })
+    setUploadMetadata(nextMetadata)
     setReceipt(null)
+    setUploadProgress('ready', `${formatSourceType(nextSourceType)} is ready for encrypted upload.`)
     setNotice({
       tone: 'info',
       title: `${formatSourceType(nextSourceType)} file loaded.`,
@@ -325,6 +788,61 @@ function App() {
       title: 'Session cleared.',
       body: 'Connect and sign again when you are ready to write private memory.',
     })
+  }
+
+  async function handleRetryArtifact() {
+    if (!session || !isSessionForWallet || !receipt) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before retrying artifact processing.',
+      })
+      return
+    }
+
+    setIsRetryingArtifact(true)
+
+    try {
+      setUploadProgress('queued', 'Retry requested. Artifact queued for worker processing.')
+      const result = await postAuthedJson<ArtifactRetryResponse>(
+        `/v1/twins/${session.twinId}/artifacts/${receipt.artifactId}/retry`,
+        {},
+        session,
+        (refreshed) => {
+          setSession(refreshed)
+          storeSession(refreshed)
+        },
+      )
+
+      setReceipt((current) => {
+        if (!current || current.artifactId !== result.artifactId) {
+          return current
+        }
+
+        return {
+          ...current,
+          status: result.status,
+          processingJobId: result.processingJobId ?? current.processingJobId,
+          warning: result.warning ?? null,
+        }
+      })
+      setStatusStreamNonce((value) => value + 1)
+      setNotice({
+        tone: 'success',
+        title: 'Retry queued.',
+        body: 'The failed artifact was requeued for worker processing.',
+      })
+    } catch (error) {
+      const message = errorMessage(error)
+      setUploadProgress('failed', message)
+      setNotice({
+        tone: 'error',
+        title: 'Retry failed.',
+        body: message,
+      })
+    } finally {
+      setIsRetryingArtifact(false)
+    }
   }
 
   return (
@@ -363,14 +881,88 @@ function App() {
         <form className="memory-form" onSubmit={handleSubmit}>
           <div className="section-heading">
             <p className="eyebrow">Private memory</p>
-            <h2>Capture text, Markdown, or PDF</h2>
+            <h2>Capture text, files, or voice</h2>
           </div>
+
+          <section className="inline-source-panel" aria-label="Voice conversation">
+            <div className="section-heading compact">
+              <p className="eyebrow">Voice</p>
+              <h2>Record a private conversation</h2>
+            </div>
+            <div className="voice-recorder">
+              <div className="recording-meter" aria-live="polite">
+                <strong>{formatRecordingState(recordingState)}</strong>
+                <span>{formatDuration(recordingSeconds)}</span>
+              </div>
+              <div className="voice-actions">
+                {recordingState === 'recording' ? (
+                  <button className="secondary-action" type="button" onClick={handleStopRecording}>
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    className="secondary-action"
+                    type="button"
+                    onClick={handleStartRecording}
+                    disabled={!canStartRecording}
+                  >
+                    Record
+                  </button>
+                )}
+                <button
+                  className="primary-action"
+                  type="button"
+                  onClick={handleSaveRecording}
+                  disabled={!canSaveRecording}
+                >
+                  {recordingState === 'saving' ? 'Encrypting...' : 'Save conversation'}
+                </button>
+                <button
+                  className="text-action"
+                  type="button"
+                  onClick={discardRecording}
+                  disabled={recordingState === 'recording' || recordingState === 'saving'}
+                >
+                  Clear recording
+                </button>
+              </div>
+              {recordingPreviewUrl ? (
+                <audio className="voice-preview" src={recordingPreviewUrl} controls />
+              ) : null}
+            </div>
+          </section>
+
+          <section className="inline-source-panel" aria-label="GitHub import">
+            <div className="section-heading compact">
+              <p className="eyebrow">GitHub</p>
+              <h2>Import public repository context</h2>
+            </div>
+            <div className="inline-source-row">
+              <label>
+                <span>Repository URL</span>
+                <input
+                  value={githubRepoUrl}
+                  onChange={(event) => setGithubRepoUrl(event.target.value)}
+                  placeholder="https://github.com/owner/repo"
+                  autoComplete="off"
+                />
+              </label>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={handleGitHubImport}
+                disabled={!canImportGitHub}
+              >
+                {isImportingGitHub ? 'Importing...' : 'Import'}
+              </button>
+            </div>
+          </section>
 
           <label className="file-upload">
             <span>File upload</span>
             <input
               type="file"
-              accept=".txt,.md,.markdown,text/plain,text/markdown,text/x-markdown,application/pdf,.pdf"
+              accept=".txt,.md,.markdown,.json,.csv,.html,text/plain,text/markdown,text/x-markdown,text/csv,application/json,text/html,application/pdf,.pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,audio/mpeg,audio/mp4,audio/wav,audio/webm,.mp3,.m4a,.wav,.webm"
               onChange={handleFileSelected}
             />
           </label>
@@ -381,6 +973,20 @@ function App() {
               <span>{sourceType} · {uploadMetadata.fileSize} bytes</span>
             </div>
           ) : null}
+
+          <div className={`upload-progress ${uploadPhase}`} aria-live="polite">
+            <div>
+              <strong>{formatUploadPhase(uploadPhase)}</strong>
+              <span>{uploadPhaseDetail}</span>
+            </div>
+            {uploadPhase === 'reading_file' ||
+            uploadPhase === 'extracting_pdf' ||
+            uploadPhase === 'encoding_binary' ||
+            uploadPhase === 'encrypting_uploading' ||
+            uploadPhase === 'processing' ? (
+              <progress aria-label="Upload progress" />
+            ) : null}
+          </div>
 
           <label>
             <span>Title</span>
@@ -395,15 +1001,16 @@ function App() {
           <label>
             <span>Content</span>
             <textarea
-              value={content}
+              value={isOpaqueUploadSource(sourceType) ? opaqueUploadPreview(sourceType, content, uploadMetadata) : content}
               onChange={(event) => handleContentChanged(event.target.value)}
               placeholder="Write the raw memory text here."
+              readOnly={isOpaqueUploadSource(sourceType)}
               rows={11}
             />
           </label>
 
           <div className="form-footer">
-            <p>{content.trim().length} chars ready for encrypted {sourceType} upload</p>
+            <p>{formatReadyState(sourceType, content, uploadMetadata)}</p>
             <button className="primary-action" type="submit" disabled={!canSubmit}>
               {isSubmitting ? 'Encrypting...' : 'Save private memory'}
             </button>
@@ -413,7 +1020,16 @@ function App() {
         <aside className="inspector" aria-live="polite">
           <StorageHealthPanel health={storageHealth} error={storageHealthError} />
           <NoticePanel notice={notice} />
-          {receipt ? <ReceiptPanel receipt={receipt} /> : <EmptyReceipt />}
+          {receipt ? (
+            <ReceiptPanel
+              receipt={receipt}
+              canRetry={isSessionForWallet && receipt.status === 'failed' && !isRetryingArtifact}
+              isRetrying={isRetryingArtifact}
+              onRetry={handleRetryArtifact}
+            />
+          ) : (
+            <EmptyReceipt />
+          )}
         </aside>
       </section>
     </main>
@@ -470,7 +1086,17 @@ function StorageHealthPanel({
   )
 }
 
-function ReceiptPanel({ receipt }: { receipt: ArtifactReceipt }) {
+function ReceiptPanel({
+  receipt,
+  canRetry,
+  isRetrying,
+  onRetry,
+}: {
+  receipt: ArtifactReceipt
+  canRetry: boolean
+  isRetrying: boolean
+  onRetry: () => void
+}) {
   return (
     <section className="receipt">
       <div className="section-heading">
@@ -507,6 +1133,11 @@ function ReceiptPanel({ receipt }: { receipt: ArtifactReceipt }) {
           </div>
         ) : null}
       </dl>
+      {receipt.status === 'failed' ? (
+        <button className="secondary-action" type="button" onClick={onRetry} disabled={!canRetry}>
+          {isRetrying ? 'Retrying...' : 'Retry processing'}
+        </button>
+      ) : null}
     </section>
   )
 }
@@ -571,6 +1202,111 @@ async function getJson<TResponse>(path: string): Promise<TResponse> {
   }
 
   return payload as TResponse
+}
+
+async function streamArtifactStatus(
+  twinId: string,
+  artifactId: string,
+  token: string,
+  signal: AbortSignal,
+  onEvent: (event: ArtifactStatusEvent) => void,
+) {
+  const response = await fetch(`${API_URL}/v1/twins/${twinId}/artifacts/${artifactId}/events`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+    signal,
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  if (!response.body) {
+    throw new Error('Artifact status stream is not readable.')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (!signal.aborted) {
+    const { done, value } = await reader.read()
+
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const messages = buffer.split('\n\n')
+    buffer = messages.pop() ?? ''
+
+    for (const message of messages) {
+      const event = parseArtifactStatusSse(message)
+
+      if (event) {
+        onEvent(event)
+
+        if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {
+          await reader.cancel()
+          return
+        }
+      }
+    }
+  }
+}
+
+async function streamArtifactStatusAuthed(
+  twinId: string,
+  artifactId: string,
+  session: Session,
+  signal: AbortSignal,
+  onSessionRefreshed: (session: Session) => void,
+  onEvent: (event: ArtifactStatusEvent) => void,
+) {
+  try {
+    await streamArtifactStatus(twinId, artifactId, session.token, signal, onEvent)
+  } catch (error) {
+    if (!isAuthError(error) || signal.aborted) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+
+    await streamArtifactStatus(twinId, artifactId, refreshed.token, signal, onEvent)
+  }
+}
+
+function parseArtifactStatusSse(message: string): ArtifactStatusEvent | null {
+  const data = message
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+
+  if (!data) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(data) as Partial<ArtifactStatusEvent>
+
+    if (
+      typeof parsed.artifactId !== 'string' ||
+      typeof parsed.twinId !== 'string' ||
+      typeof parsed.sourceType !== 'string' ||
+      typeof parsed.status !== 'string' ||
+      typeof parsed.occurredAt !== 'string'
+    ) {
+      return null
+    }
+
+    return parsed as ArtifactStatusEvent
+  } catch {
+    return null
+  }
 }
 
 function apiErrorMessage(status: number, payload: unknown): string {
@@ -662,6 +1398,47 @@ function isPdf(file: File) {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 }
 
+function isImage(file: File) {
+  const name = file.name.toLowerCase()
+  return (
+    file.type.startsWith('image/') ||
+    name.endsWith('.png') ||
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.webp')
+  )
+}
+
+function isAudio(file: File) {
+  const name = file.name.toLowerCase()
+  return (
+    file.type.startsWith('audio/') ||
+    name.endsWith('.mp3') ||
+    name.endsWith('.m4a') ||
+    name.endsWith('.wav') ||
+    name.endsWith('.webm')
+  )
+}
+
+function isBrowserHistoryFile(file: File) {
+  const name = file.name.toLowerCase()
+  const hasHistoryName =
+    name.includes('history') ||
+    name.includes('browser') ||
+    name.includes('chrome') ||
+    name.includes('firefox') ||
+    name.includes('safari') ||
+    name.includes('edge')
+  const hasHistoryExtension =
+    name.endsWith('.json') ||
+    name.endsWith('.csv') ||
+    name.endsWith('.html') ||
+    name.endsWith('.htm') ||
+    name.endsWith('.txt')
+
+  return hasHistoryName && hasHistoryExtension
+}
+
 function isMarkdown(file: File) {
   const name = file.name.toLowerCase()
   return name.endsWith('.md') || name.endsWith('.markdown') || file.type.includes('markdown')
@@ -671,7 +1448,12 @@ function isTextLikeFile(file: File) {
   const name = file.name.toLowerCase()
   return (
     file.type.startsWith('text/') ||
+    file.type === 'application/json' ||
     name.endsWith('.txt') ||
+    name.endsWith('.json') ||
+    name.endsWith('.csv') ||
+    name.endsWith('.html') ||
+    name.endsWith('.htm') ||
     name.endsWith('.md') ||
     name.endsWith('.markdown')
   )
@@ -699,7 +1481,89 @@ async function extractPdfText(file: File): Promise<string> {
   return pages.join('\n\n')
 }
 
+async function fileToBase64(file: Blob): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  return btoa(binary)
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  return fileToBase64(blob)
+}
+
+function preferredRecordingMimeType(): string {
+  if (typeof MediaRecorder === 'undefined') {
+    return ''
+  }
+
+  if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+    return 'audio/webm;codecs=opus'
+  }
+
+  if (MediaRecorder.isTypeSupported('audio/webm')) {
+    return 'audio/webm'
+  }
+
+  if (MediaRecorder.isTypeSupported('audio/mp4')) {
+    return 'audio/mp4'
+  }
+
+  return ''
+}
+
 function inferFileType(name: string) {
+  const normalized = name.toLowerCase()
+
+  if (normalized.endsWith('.pdf')) {
+    return 'application/pdf'
+  }
+
+  if (normalized.endsWith('.png')) {
+    return 'image/png'
+  }
+
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) {
+    return 'image/jpeg'
+  }
+
+  if (normalized.endsWith('.webp')) {
+    return 'image/webp'
+  }
+
+  if (normalized.endsWith('.mp3')) {
+    return 'audio/mpeg'
+  }
+
+  if (normalized.endsWith('.m4a')) {
+    return 'audio/mp4'
+  }
+
+  if (normalized.endsWith('.wav')) {
+    return 'audio/wav'
+  }
+
+  if (normalized.endsWith('.webm')) {
+    return 'audio/webm'
+  }
+
+  if (normalized.endsWith('.json')) {
+    return 'application/json'
+  }
+
+  if (normalized.endsWith('.csv')) {
+    return 'text/csv'
+  }
+
+  if (normalized.endsWith('.html') || normalized.endsWith('.htm')) {
+    return 'text/html'
+  }
+
   return isMarkdown({ name, type: '' } as File) ? 'text/markdown' : 'text/plain'
 }
 
@@ -708,7 +1572,135 @@ function formatSourceType(value: SourceType) {
     return 'PDF'
   }
 
+  if (value === 'ocr_pdf') {
+    return 'Scanned PDF'
+  }
+
+  if (value === 'image') {
+    return 'Image'
+  }
+
+  if (value === 'voice_note') {
+    return 'Voice note'
+  }
+
+  if (value === 'voice_conversation') {
+    return 'Voice conversation'
+  }
+
+  if (value === 'browser_history') {
+    return 'Browser history'
+  }
+
   return value === 'markdown' ? 'Markdown' : 'Text'
+}
+
+function isOpaqueUploadSource(sourceType: SourceType) {
+  return sourceType === 'ocr_pdf' || sourceType === 'image' || sourceType === 'voice_note' || sourceType === 'voice_conversation'
+}
+
+function opaqueUploadPreview(sourceType: SourceType, content: string, metadata: UploadMetadata | null) {
+  const fileName = metadata?.fileName ?? (sourceType === 'image' ? 'Image' : sourceType === 'voice_note' ? 'Voice note' : sourceType === 'voice_conversation' ? 'Voice conversation' : 'PDF')
+  const size = metadata?.fileSize ? `${metadata.fileSize} bytes` : `${content.length} base64 chars`
+
+  if (sourceType === 'voice_note' || sourceType === 'voice_conversation') {
+    const label = sourceType === 'voice_conversation' ? 'voice conversation' : 'voice note'
+    return `${fileName} is ready for encrypted ${label} storage.\n\nSivraj will store the encrypted audio payload on Walrus. The worker will transcribe it before creating retrievable memory text when speech-to-text is configured.\n\nPayload: ${size}`
+  }
+
+  const label = sourceType === 'image' ? 'image' : 'PDF'
+
+  return `${fileName} is ready for encrypted OCR processing.\n\nSivraj will store the encrypted ${label} payload on Walrus, then the worker will decrypt it and run OCR before creating retrievable memory text.\n\nPayload: ${size}`
+}
+
+function formatReadyState(
+  sourceType: SourceType,
+  content: string,
+  metadata: UploadMetadata | null,
+) {
+  if (isOpaqueUploadSource(sourceType)) {
+    const size = metadata?.fileSize ? `${metadata.fileSize} bytes` : `${content.length} base64 chars`
+    const label = sourceType === 'image' ? 'image' : sourceType === 'voice_note' ? 'voice note' : sourceType === 'voice_conversation' ? 'voice conversation' : 'scanned PDF'
+
+    return `${size} ${label} ready for encrypted ${sourceType === 'voice_note' || sourceType === 'voice_conversation' ? 'audio' : 'OCR'} upload`
+  }
+
+  return `${content.trim().length} chars ready for encrypted ${sourceType} upload`
+}
+
+function formatRecordingState(state: RecordingState) {
+  if (state === 'requesting_permission') {
+    return 'Requesting microphone'
+  }
+
+  if (state === 'recording') {
+    return 'Recording'
+  }
+
+  if (state === 'recorded') {
+    return 'Ready to save'
+  }
+
+  if (state === 'saving') {
+    return 'Encrypting'
+  }
+
+  if (state === 'error') {
+    return 'Recording unavailable'
+  }
+
+  return 'Idle'
+}
+
+function formatUploadPhase(phase: UploadPhase) {
+  if (phase === 'reading_file') {
+    return 'Reading file'
+  }
+
+  if (phase === 'extracting_pdf') {
+    return 'Extracting PDF'
+  }
+
+  if (phase === 'encoding_binary') {
+    return 'Encoding'
+  }
+
+  if (phase === 'ready') {
+    return 'Ready'
+  }
+
+  if (phase === 'encrypting_uploading') {
+    return 'Encrypting upload'
+  }
+
+  if (phase === 'queued') {
+    return 'Queued'
+  }
+
+  if (phase === 'processing') {
+    return 'Processing'
+  }
+
+  if (phase === 'pending') {
+    return 'Pending'
+  }
+
+  if (phase === 'completed') {
+    return 'Completed'
+  }
+
+  if (phase === 'failed') {
+    return 'Needs attention'
+  }
+
+  return 'Idle'
+}
+
+function formatDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
 function errorMessage(error: unknown) {

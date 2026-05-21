@@ -38,15 +38,30 @@ Initial supported sources:
 - Markdown notes.
 - Plain text.
 - PDFs.
+- OCR scanned PDFs.
+- DOCX documents.
+- CSV files.
+- Email exports.
 - GitHub repository summaries or imported files.
 - Chat exports as JSON or text.
+- Slack exports.
+- WhatsApp exports.
+- Screenshots and images.
+- Audio and voice notes.
+- Browser history exports.
 - Manual memories.
 
 Nice to have:
 
-- Voice note transcription.
-- Email import.
 - Calendar import.
+- Live conversational voice mode.
+
+Connector scope:
+
+- Initial import/backfill from connected tools.
+- Recurring sync for changed documents, conversations, commits, issues, notes, and messages.
+- User-visible sync status, last sync time, and extracted memory changes.
+- Explicit permission boundaries per connector.
 
 ### 3. Memory Processing Pipeline
 
@@ -132,7 +147,7 @@ Each receives different context based on scope.
 
 - Full enterprise admin.
 - Complex org graph.
-- Full browser history ingestion.
+- Passive full-browser-history surveillance. Browser history should begin as explicit user-provided exports/imports only.
 - Perfect mobile app.
 - Marketplace.
 - Advanced payments.

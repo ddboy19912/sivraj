@@ -37,7 +37,6 @@ Fields:
 - `id`
 - `twin_id`
 - `source_type`
-- `title`
 - `uri`
 - `raw_storage_ref`
 - `hash`
@@ -49,14 +48,22 @@ Fields:
 Source types:
 
 - `manual`
+- `browser_history`
 - `markdown`
 - `text`
 - `pdf`
+- `ocr_pdf`
+- `image`
+- `docx`
+- `csv`
 - `github`
 - `chat_export`
+- `slack_export`
+- `whatsapp_export`
 - `email`
 - `calendar`
 - `voice_note`
+- `voice_conversation`
 - `screenshot`
 
 ### MemoryFragment
@@ -68,8 +75,9 @@ Fields:
 - `id`
 - `twin_id`
 - `source_artifact_id`
-- `content`
-- `summary`
+- `content_storage_ref`
+- `content_sha256`
+- `metadata`
 - `embedding_ref`
 - `importance_score`
 - `confidence_score`
@@ -222,4 +230,3 @@ Fields:
 - The graph should allow uncertainty, revision, and contradiction.
 - Access policies must be evaluated before retrieval output is sent to any agent.
 - Context packets should be bounded, auditable, and disposable.
-

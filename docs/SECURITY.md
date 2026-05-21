@@ -119,7 +119,7 @@ Data written to Walrus should be treated as long-lived and portable. Therefore:
 
 ### Current Implementation Status
 
-The current manual note endpoint is a development foundation. It writes the first memory fragment into Postgres so the product loop can be tested.
+The current manual note endpoint is a development foundation. Private raw artifacts and derived memory fragments now use encrypted Walrus storage.
 
 This is not the final private-memory storage model.
 
@@ -136,8 +136,13 @@ Current private manual memory writes:
 - Encrypt raw content with Seal before durable storage.
 - Store ciphertext on Walrus.
 - Store `source_artifacts.raw_storage_ref` and encryption/storage metadata in Postgres.
-- Do not create plaintext `memory_fragments.content` at upload time.
+- Do not persist private artifact titles as plaintext columns.
+- Do not persist private upload names or user-supplied metadata as plaintext Postgres metadata.
+- Do not create plaintext memory fragment content or summary columns.
+- Store derived memory fragments as encrypted Walrus refs via `memory_fragments.content_storage_ref`.
 - Fail closed when Seal, Sui, or Walrus config is missing.
+
+Current implementation note: first-party uploads are encrypted by the API service before durable storage. Before public beta, move private artifact encryption to the browser/client boundary so the API does not receive raw private payloads.
 
 ### Private Memory Storage Boundary
 
@@ -165,7 +170,7 @@ Before any real user/private beta:
 - Raw manual memory content must be encrypted before durable storage.
 - Encrypted raw content must be stored through the Walrus adapter.
 - Postgres should store metadata, processing state, memory fragments, audit records, and Walrus references.
-- Sensitive memory fragments and summaries must be treated as scoped data and reviewed before being stored in plaintext.
+- Sensitive memory fragments must be encrypted before persistence; summaries/previews must not be stored as plaintext unless a future policy explicitly classifies them as non-sensitive.
 - Retrieval must apply permission policy before returning any memory content.
 
 ### Walrus and Seal
@@ -181,7 +186,7 @@ Example:
 1. User uploads a private founder journal.
 2. Sivraj encrypts the blob with Seal.
 3. Encrypted blob is persisted on Walrus.
-4. Sivraj stores the Walrus reference, content hash, source metadata, and access policy.
+4. Sivraj stores the Walrus reference, ciphertext hash, safe system metadata, and access policy.
 5. A strategy agent requests relevant context.
 6. Sivraj checks policy before retrieving and decrypting only approved fragments.
 7. The agent receives a bounded context packet, not blanket access to the Walrus object.

@@ -333,12 +333,54 @@ Endpoints:
 POST /v1/twins/:twinId/artifacts
 GET /v1/twins/:twinId/artifacts
 GET /v1/twins/:twinId/artifacts/:artifactId
+GET /v1/twins/:twinId/artifacts/:artifactId/events
+POST /v1/twins/:twinId/artifacts/:artifactId/retry
 DELETE /v1/twins/:twinId/artifacts/:artifactId
 ```
 
 External clients can upload artifacts only when granted `artifact:upload`.
 
 Raw artifact reads require `artifact:read_raw` and should be separately consented.
+
+Retry failed ingestion:
+
+```http
+POST /v1/twins/:twinId/artifacts/:artifactId/retry
+Authorization: Bearer <token>
+```
+
+The route requires `artifact:upload`, only accepts artifacts currently in `failed` state, resets `source_artifacts.ingestion_status` to `queued`, writes `artifact.retry_requested`, and republishes a processing job.
+
+Live processing status:
+
+```http
+GET /v1/twins/:twinId/artifacts/:artifactId/events
+Authorization: Bearer <token>
+Accept: text/event-stream
+```
+
+The route returns Server-Sent Events for the artifact after upload. It writes the current database state first, then streams Redis-backed worker status updates until the artifact reaches a terminal state.
+
+Event name:
+
+```text
+artifact.status
+```
+
+Event payload:
+
+```json
+{
+  "artifactId": "...",
+  "twinId": "...",
+  "sourceType": "note",
+  "status": "processing",
+  "reason": "encrypted_decryption_failed",
+  "occurredAt": "2026-05-20T19:01:24.846Z"
+}
+```
+
+Clients should treat the upload response as a storage receipt only. The final ingestion result comes from this event stream or a later artifact status read.
 
 First write endpoint:
 
@@ -364,8 +406,37 @@ Supported first-slice source types:
 - `markdown` for `.md` / `.markdown` file content.
 - `upload` for plain text file content.
 - `pdf` for extracted PDF text.
+- `ocr_pdf` for base64 PDF payloads that need worker-side OCR after encrypted storage.
+- `image` for base64 screenshot/image payloads that need worker-side OCR after encrypted storage.
+- `voice_note` for base64 audio file uploads. Supported first-slice formats are `.mp3`, `.m4a`, `.wav`, and `.webm`.
+- `voice_conversation` for browser-recorded audio conversations. The web client records audio locally, base64-encodes the blob, and sends it through the same encrypted artifact route.
+- `browser_history` for explicit browser history export uploads.
+- `docx` for extracted DOCX text today, and base64 DOCX content once binary upload support lands.
+- `csv` for CSV file content.
+- `email` for RFC822 `.eml` text content.
+- `chat_export` for JSON or text chat exports.
+- `slack_export` for Slack JSON exports.
+- `whatsapp_export` for WhatsApp text exports.
+- `github` for imported public GitHub repository context.
 
 The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, encrypts private content with Seal, stores ciphertext on Walrus, creates a queued source artifact, writes an audit event, and publishes a Redis/BullMQ processing job. It does not create a plaintext memory fragment for private memory.
+
+GitHub public repository import:
+
+```http
+POST /v1/twins/:twinId/imports/github
+Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "repoUrl": "https://github.com/owner/repo"
+}
+```
+
+The first version imports public repository context only. It fetches repository metadata plus selected text files such as README, docs, package metadata, and root config files, then encrypts the deterministic bundle before Walrus storage. Private repositories, GitHub OAuth, issues, pull requests, commit history, and recurring sync are later connector tasks.
 
 Current PDF behavior: the web client extracts PDF text and submits that extracted text through the encrypted artifact path. The original PDF binary is not yet stored as a separate encrypted raw file object.
 
@@ -395,7 +466,9 @@ Worker behavior:
 - The worker consumes queue jobs immediately and claims the corresponding artifact.
 - On boot, the worker drains existing queued/pending/processing artifacts once so recoverable rows are not stranded after a restart.
 - If Seal/Walrus decrypt config is unavailable, encrypted private artifacts are marked `pending` with `metadata.processing.reason = encrypted_decryption_required`.
+- If Walrus read or Seal decrypt hits a retryable infrastructure error such as `fetch failed`, timeout, connection reset, 429, or 5xx, the worker keeps the artifact `pending` with `metadata.processing.reason = encrypted_decryption_retrying`, emits stage-aware logs, and throws to BullMQ so queue backoff can retry the job.
 - If decrypt config is available, the worker reads ciphertext from Walrus, requests Seal key shares through the `owner_policy::seal_approve` Move policy, decrypts locally, creates a `memory_fragments` row, marks the artifact `completed`, and writes `artifact.processed`.
+- Voice note and voice conversation artifacts are encrypted and stored first. After decrypt, the worker transcribes them when `SPEECH_TO_TEXT_API_KEY` or `LLM_API_KEY` is configured, creates a transcript-backed memory fragment, and records `metadata.processing.transcription`. If transcription is not configured, the worker marks them `pending` with `metadata.processing.reason = speech_to_text_required`.
 - Audit metadata records storage refs and fragment IDs, but not decrypted content.
 
 Live upload acceptance is not complete on UI success alone. Confirm:
@@ -405,6 +478,7 @@ Live upload acceptance is not complete on UI success alone. Confirm:
 - `source_artifacts.metadata.storageMode = encrypted_walrus`.
 - `source_artifacts.metadata.sensitivity = private`.
 - `source_artifacts.metadata.ciphertextSha256` exists.
+- `source_artifacts` has no plaintext title column for private artifact names.
 - `audit_events` has `event_type = artifact.created` for the artifact.
 - `memory_fragments` has exactly one row for this artifact after worker processing completes.
 - plaintext note content does not appear in `source_artifacts.metadata`.
@@ -447,7 +521,7 @@ Rules:
 
 - Requires `memory:read`.
 - Requires token `twinId` to match path `twinId` unless token type is `service`.
-- Searches processed `memory_fragments`.
+- Searches processed `memory_fragments`. Private fragments are stored as encrypted Walrus refs and decrypted only inside this authenticated route before ranking.
 - Returns ranked memory fragments with citations.
 - Does not return raw Walrus artifacts.
 - Writes `memory.search` audit event.

@@ -148,17 +148,18 @@ Expected:
 - `resource_id` matches UI `artifactId`.
 - `raw_storage_ref` matches UI `rawStorageRef`.
 
-4. Confirm no plaintext memory fragment was created:
+4. Confirm no plaintext memory fragment content column exists:
 
 ```sql
-select count(*) as fragment_count
-from memory_fragments
-where source_artifact_id = '<ARTIFACT_ID>';
+select count(*) as plaintext_content_columns
+from information_schema.columns
+where table_name = 'memory_fragments'
+  and column_name = 'content';
 ```
 
 Expected:
 
-- `fragment_count = 0`.
+- `plaintext_content_columns = 0`.
 
 5. Confirm plaintext did not land in artifact metadata:
 
@@ -217,7 +218,9 @@ Confirm the derived fragment exists:
 select
   id,
   source_artifact_id,
-  summary
+  content_storage_ref,
+  content_sha256,
+  metadata
 from memory_fragments
 where source_artifact_id = '<artifactId>';
 ```

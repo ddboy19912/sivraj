@@ -6,10 +6,15 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "build": "echo \"llm build not configured yet\"",
+    "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck",
     "lint": "echo \"llm lint not configured yet\"",
-    "test": "echo \"llm tests not configured yet\"",
-    "typecheck": "echo \"llm typecheck not configured yet\""
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
   }
 }

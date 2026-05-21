@@ -49,6 +49,9 @@ Root `.env.example` is source of truth.
 - `LLM_PROVIDER`
 - `LLM_API_KEY`
 - `LLM_MODEL`
+- `SPEECH_TO_TEXT_PROVIDER`
+- `SPEECH_TO_TEXT_API_KEY`
+- `SPEECH_TO_TEXT_MODEL`
 - `EMBEDDING_MODEL`
 - `WALRUS_ENDPOINT`
 - `WALRUS_API_KEY`
@@ -90,6 +93,12 @@ Root `.env.example` is source of truth.
 - `LLM_API_KEY`: Provider API key.
 - `LLM_MODEL`: Main synthesis model.
 - `EMBEDDING_MODEL`: Embedding model.
+
+### Speech To Text
+
+- `SPEECH_TO_TEXT_PROVIDER`: Voice note transcription provider. Use `openai` or `none`.
+- `SPEECH_TO_TEXT_API_KEY`: Optional dedicated transcription API key. Falls back to `LLM_API_KEY` when unset.
+- `SPEECH_TO_TEXT_MODEL`: Audio transcription model. Defaults to `gpt-4o-mini-transcribe`.
 
 ### Walrus
 

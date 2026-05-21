@@ -88,15 +88,23 @@ The more Sivraj learns:
 
 Bulk import is a feature, not a flaw.
 
+Connectors are also a feature, not an afterthought. One-time imports create the Twin's starting context. Ongoing connectors keep the Twin alive as the user's tools change over time.
+
 The Twin should accept:
 
 - PDFs.
+- OCR scanned PDFs.
+- DOCX documents.
+- CSVs.
 - Chats.
 - Emails.
 - GitHub repositories.
 - Voice notes.
+- Live voice conversations.
 - Screenshots.
+- Images.
 - Browser activity.
+- Browser history.
 - Notes.
 - Calendars.
 - Journals.
@@ -104,6 +112,21 @@ The Twin should accept:
 - WhatsApp exports.
 - Manual memories.
 - Passive integrations.
+
+Priority connectors should include:
+
+- Claude.
+- ChatGPT and Codex.
+- Microsoft Docs and OneDrive.
+- Google Drive and Docs.
+- Notion.
+- GitHub.
+- Slack.
+- Email.
+- Calendar.
+- Browser history.
+
+Connectors should support permissioned initial backfill plus recurring sync. Sivraj should re-read changed documents, conversations, issues, commits, and notes over time so the Twin keeps growing without the user manually re-uploading everything.
 
 ### 2. Memory Is Not Enough
 
@@ -127,6 +150,26 @@ The Twin should continuously update:
 - Strategic assumptions.
 - Recurring risks.
 - Opportunity areas.
+
+### 4. Talking to Sivraj Should Update the Twin
+
+Users should be able to speak with Sivraj naturally. Sivraj should listen, transcribe, understand the conversation, extract candidate memories, goals, decisions, and preferences, then update the Twin through the same encrypted memory pipeline after user approval.
+
+Voice is not just a chat surface. It is an ingestion path for lived context.
+
+### 5. Connected Tools Should Continuously Update the Twin
+
+Sivraj should connect to the tools where the user already works, then keep the Twin current through scoped recurring sync.
+
+Examples:
+
+- Re-read updated Notion pages.
+- Sync new GitHub issues, commits, and repository docs.
+- Pull new Microsoft or Google documents after user approval.
+- Import new Slack, email, or chat history within permission scope.
+- Refresh AI assistant exports or context where APIs allow it.
+
+The product should make clear what is connected, when it last synced, what changed, and what memories were added or updated.
 
 ## Key Product Capabilities
 

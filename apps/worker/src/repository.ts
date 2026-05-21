@@ -118,8 +118,9 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
         .values({
           twinId: input.twinId,
           sourceArtifactId: input.sourceArtifactId,
-          content: input.content,
-          summary: input.summary,
+          contentStorageRef: input.contentStorageRef,
+          contentSha256: input.contentSha256 ?? null,
+          metadata: input.metadata ?? null,
           importanceScore: input.importanceScore,
           confidenceScore: input.confidenceScore,
         })
@@ -168,7 +169,6 @@ function toQueuedArtifact(
     id: row.id,
     twinId: row.twinId,
     sourceType: row.sourceType,
-    title: row.title,
     rawStorageRef: row.rawStorageRef,
     metadata: row.metadata,
   };

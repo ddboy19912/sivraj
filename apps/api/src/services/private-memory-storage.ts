@@ -20,6 +20,7 @@ import type {
 
 const textEncoder = new TextEncoder();
 const DEFAULT_WALRUS_EPOCHS = 5;
+const PRIVATE_SOURCE_PAYLOAD_VERSION = 1;
 
 export function createPrivateMemoryStorage(
   env: EnvSource,
@@ -40,12 +41,21 @@ export function createPrivateMemoryStorageService(params: {
 }): PrivateMemoryStorage {
   return {
     async storePrivateMemory(input) {
-      const plaintextBytes = textEncoder.encode(input.content);
+      const plaintextBytes = textEncoder.encode(
+        JSON.stringify({
+          kind: "source_artifact",
+          version: PRIVATE_SOURCE_PAYLOAD_VERSION,
+          title: input.title,
+          content: input.content,
+          metadata: input.metadata,
+        }),
+      );
       const aad = textEncoder.encode(
         JSON.stringify({
           twinId: input.twinId,
           sourceType: input.sourceType,
-          title: input.title,
+          kind: "source_artifact",
+          version: PRIVATE_SOURCE_PAYLOAD_VERSION,
         }),
       );
       const encrypted = await params.seal.encrypt({

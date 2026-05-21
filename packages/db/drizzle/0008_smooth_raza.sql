@@ -1,0 +1,1 @@
+ALTER TYPE "public"."source_type" ADD VALUE 'browser_history' BEFORE 'chat_export';

@@ -2,13 +2,19 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import {
   createLazyArtifactProcessingQueue,
+  createLazyArtifactStatusPublisher,
+  createLazyArtifactStatusSubscriber,
   type ArtifactProcessingQueue,
+  type ArtifactStatusPublisher,
+  type ArtifactStatusSubscriber,
 } from "@sivraj/queue";
 import { db } from "./db.js";
 import { createArtifactRoutes } from "./routes/artifacts.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createGitHubImportRoutes, type GitHubImporter } from "./routes/github-imports.js";
 import { healthRoutes } from "./routes/health.js";
 import { createMemoryRoutes } from "./routes/memories.js";
+import { createConfiguredPrivateMemoryReader, type PrivateMemoryReader } from "./services/private-memory-reader.js";
 import { createPrivateMemoryStorage } from "./services/private-memory-storage.js";
 
 export type ApiDb = Pick<typeof db, "insert" | "select" | "update">;
@@ -17,9 +23,29 @@ export type AppDependencies = {
   db: ApiDb;
   privateMemoryStorage?: PrivateMemoryStorage;
   artifactProcessingQueue?: ArtifactProcessingQueue;
+  artifactStatusPublisher?: ArtifactStatusPublisher;
+  artifactStatusSubscriber?: ArtifactStatusSubscriber;
+  githubImporter?: GitHubImporter;
+  privateMemoryReader?: PrivateMemoryReader;
 };
 
-export type SupportedArtifactSourceType = "note" | "markdown" | "upload" | "pdf";
+export type SupportedArtifactSourceType =
+  | "note"
+  | "browser_history"
+  | "markdown"
+  | "upload"
+  | "pdf"
+  | "ocr_pdf"
+  | "image"
+  | "voice_note"
+  | "voice_conversation"
+  | "docx"
+  | "csv"
+  | "email"
+  | "chat_export"
+  | "slack_export"
+  | "whatsapp_export"
+  | "github";
 
 export type PrivateMemoryStorageInput = {
   twinId: string;
@@ -55,6 +81,9 @@ export function createApp(dependencies: AppDependencies = {
   db,
   privateMemoryStorage: createPrivateMemoryStorage(process.env),
   artifactProcessingQueue: createLazyArtifactProcessingQueue(process.env["REDIS_URL"]),
+  artifactStatusPublisher: createLazyArtifactStatusPublisher(process.env["REDIS_URL"]),
+  artifactStatusSubscriber: createLazyArtifactStatusSubscriber(process.env["REDIS_URL"]),
+  privateMemoryReader: createConfiguredPrivateMemoryReader(process.env),
 }) {
   const app = new Hono();
 
@@ -69,6 +98,7 @@ export function createApp(dependencies: AppDependencies = {
 
   app.route("/health", healthRoutes);
   app.route("/v1/auth", createAuthRoutes(dependencies));
+  app.route("/v1/twins/:twinId/imports/github", createGitHubImportRoutes(dependencies));
   app.route("/v1/twins/:twinId/artifacts", createArtifactRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));
 

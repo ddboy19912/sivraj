@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
 
-export function createMemoryRoutes({ db }: AppDependencies) {
+export function createMemoryRoutes({ db, privateMemoryReader }: AppDependencies) {
   const memoryRoutes = new Hono<AuthEnv>();
 
   memoryRoutes.post("/search", requireAuth, async (c) => {
@@ -47,7 +47,26 @@ export function createMemoryRoutes({ db }: AppDependencies) {
       .from(memoryFragments)
       .where(eq(memoryFragments.twinId, twinId))
       .limit(200);
-    const results = retrieveRelevantMemories(rows.map(toCandidate), {
+    const candidates = await Promise.all(
+      rows.map((row) => toCandidate(row, privateMemoryReader)),
+    ).catch((error: unknown) => {
+      console.error("private memory fragment decrypt failed", error);
+      return null;
+    });
+
+    if (!candidates) {
+      return c.json({ error: "private_memory_fragment_decrypt_failed" }, 503);
+    }
+
+    if (candidates.some((candidate) => candidate === null)) {
+      return c.json({ error: "private_memory_reader_not_configured" }, 503);
+    }
+
+    const readableCandidates = candidates.filter(
+      (candidate): candidate is MemoryCandidate => candidate !== null,
+    );
+
+    const results = retrieveRelevantMemories(readableCandidates, {
       query,
       limit,
     });
@@ -72,7 +91,6 @@ export function createMemoryRoutes({ db }: AppDependencies) {
         id: result.memory.id,
         sourceArtifactId: result.memory.sourceArtifactId,
         content: result.memory.content,
-        summary: result.memory.summary,
         score: result.score,
         matchedTerms: result.matchedTerms,
         citation: {
@@ -91,18 +109,32 @@ export function createMemoryRoutes({ db }: AppDependencies) {
 
 function toCandidate(
   row: typeof memoryFragments.$inferSelect,
-): MemoryCandidate {
-  return {
+  privateMemoryReader: AppDependencies["privateMemoryReader"],
+): Promise<MemoryCandidate | null> {
+  if (!row.contentStorageRef) {
+    return Promise.resolve(null);
+  }
+
+  if (!privateMemoryReader) {
+    return Promise.resolve(null);
+  }
+
+  const content = privateMemoryReader.readPrivateMemory({
+    rawStorageRef: row.contentStorageRef,
+    artifactId: row.sourceArtifactId,
+    twinId: row.twinId,
+  });
+
+  return content.then((decryptedContent) => ({
     id: row.id,
     twinId: row.twinId,
     sourceArtifactId: row.sourceArtifactId,
-    content: row.content,
-    summary: row.summary,
+    content: decryptedContent,
     importanceScore: row.importanceScore,
     confidenceScore: row.confidenceScore,
     occurredAt: row.occurredAt,
     createdAt: row.createdAt,
-  };
+  }));
 }
 
 function requiredString(value: unknown): string | null {

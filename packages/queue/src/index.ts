@@ -5,6 +5,7 @@ import {
   type Job,
   type JobsOptions,
 } from "bullmq";
+import IORedis from "ioredis";
 
 export const ARTIFACT_PROCESSING_QUEUE_NAME = "sivraj-artifact-processing";
 export const PROCESS_ARTIFACT_JOB_NAME = "process-artifact";
@@ -22,8 +23,30 @@ export type ArtifactProcessingQueue = {
 
 export type ArtifactProcessingWorker = {
   close(): Promise<void>;
-  onFailed(listener: (jobId: string | undefined, error: Error) => void): void;
+  onFailed(listener: (jobId: string | undefined, error: Error, attemptsMade: number | undefined) => void): void;
   onCompleted(listener: (jobId: string | undefined) => void): void;
+};
+
+export type ArtifactStatusEvent = {
+  artifactId: string;
+  twinId: string;
+  sourceType: string;
+  status: "pending" | "queued" | "processing" | "completed" | "failed" | "cancelled";
+  reason?: string;
+  occurredAt: string;
+};
+
+export type ArtifactStatusPublisher = {
+  publishArtifactStatus(event: ArtifactStatusEvent): Promise<void>;
+  close(): Promise<void>;
+};
+
+export type ArtifactStatusSubscriber = {
+  subscribeToArtifactStatus(
+    artifactId: string,
+    listener: (event: ArtifactStatusEvent) => void,
+  ): Promise<() => Promise<void>>;
+  close(): Promise<void>;
 };
 
 const artifactJobOptions: JobsOptions = {
@@ -100,7 +123,7 @@ export function createArtifactProcessingWorker(
     },
     onFailed(listener) {
       worker.on("failed", (job, error) => {
-        listener(job?.id ? String(job.id) : undefined, error);
+        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
@@ -111,6 +134,146 @@ export function createArtifactProcessingWorker(
   };
 }
 
+export function createArtifactStatusPublisher(redisUrl: string): ArtifactStatusPublisher {
+  const redis = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+
+  return {
+    async publishArtifactStatus(event) {
+      await redis.publish(artifactStatusChannel(event.artifactId), JSON.stringify(event));
+    },
+    async close() {
+      await redis.quit();
+    },
+  };
+}
+
+export function createLazyArtifactStatusPublisher(
+  redisUrl: string | undefined,
+): ArtifactStatusPublisher | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let publisher: ArtifactStatusPublisher | null = null;
+
+  return {
+    async publishArtifactStatus(event) {
+      publisher ??= createArtifactStatusPublisher(redisUrl);
+      await publisher.publishArtifactStatus(event);
+    },
+    async close() {
+      await publisher?.close();
+      publisher = null;
+    },
+  };
+}
+
+export function createArtifactStatusSubscriber(redisUrl: string): ArtifactStatusSubscriber {
+  const redis = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+  const listeners = new Map<string, Set<(event: ArtifactStatusEvent) => void>>();
+
+  redis.on("message", (channel, message) => {
+    const channelListeners = listeners.get(channel);
+
+    if (!channelListeners) {
+      return;
+    }
+
+    const event = parseArtifactStatusEvent(message);
+
+    if (!event) {
+      return;
+    }
+
+    for (const listener of channelListeners) {
+      listener(event);
+    }
+  });
+
+  return {
+    async subscribeToArtifactStatus(artifactId, listener) {
+      const channel = artifactStatusChannel(artifactId);
+      let channelListeners = listeners.get(channel);
+
+      if (!channelListeners) {
+        channelListeners = new Set();
+        listeners.set(channel, channelListeners);
+        await redis.subscribe(channel);
+      }
+
+      channelListeners.add(listener);
+
+      return async () => {
+        const currentListeners = listeners.get(channel);
+
+        if (!currentListeners) {
+          return;
+        }
+
+        currentListeners.delete(listener);
+
+        if (currentListeners.size === 0) {
+          listeners.delete(channel);
+          await redis.unsubscribe(channel);
+        }
+      };
+    },
+    async close() {
+      listeners.clear();
+      await redis.quit();
+    },
+  };
+}
+
+export function createLazyArtifactStatusSubscriber(
+  redisUrl: string | undefined,
+): ArtifactStatusSubscriber | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let subscriber: ArtifactStatusSubscriber | null = null;
+
+  return {
+    async subscribeToArtifactStatus(artifactId, listener) {
+      subscriber ??= createArtifactStatusSubscriber(redisUrl);
+      return subscriber.subscribeToArtifactStatus(artifactId, listener);
+    },
+    async close() {
+      await subscriber?.close();
+      subscriber = null;
+    },
+  };
+}
+
 function redisConnection(redisUrl: string): ConnectionOptions {
   return { url: redisUrl };
+}
+
+function artifactStatusChannel(artifactId: string): string {
+  return `sivraj:artifact-status:${artifactId}`;
+}
+
+function parseArtifactStatusEvent(message: string): ArtifactStatusEvent | null {
+  try {
+    const parsed = JSON.parse(message) as Partial<ArtifactStatusEvent>;
+
+    if (
+      typeof parsed.artifactId !== "string" ||
+      typeof parsed.twinId !== "string" ||
+      typeof parsed.sourceType !== "string" ||
+      typeof parsed.status !== "string" ||
+      typeof parsed.occurredAt !== "string"
+    ) {
+      return null;
+    }
+
+    return parsed as ArtifactStatusEvent;
+  } catch {
+    return null;
+  }
 }

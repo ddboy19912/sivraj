@@ -24,6 +24,21 @@ Other helpers: `pnpm db:logs`, `pnpm db:generate` (Drizzle SQL from schema), `pn
 
 If Compose cannot bind **`5432`**, something else is using that port (common: a local Postgres install). Stop that process or service so the container can use **`5432`**, matching `.env.example`, then run **`pnpm db:up`** again.
 
+## OCR Tooling
+
+Scanned PDF ingestion uses the worker after encrypted Walrus storage. The worker expects these local command-line tools:
+
+- `pdftoppm` from Poppler to render PDF pages to images.
+- `tesseract` to OCR rendered page images.
+
+On macOS:
+
+```bash
+brew install poppler tesseract
+```
+
+If either tool is missing, `ocr_pdf` artifacts fail closed with parser failure metadata instead of creating an empty memory fragment.
+
 ## Current Status
 
 This repository has:
@@ -141,7 +156,8 @@ Current worker boundary:
 - Encrypted private artifacts are claimed from queue jobs and, when Seal/Walrus config is present, decrypted through the deployed Seal policy before memory fragments are created.
 - Worker boot drains existing queued/pending/processing artifacts once for restart recovery; the main runtime path is queue-driven, not database polling.
 - If decrypt config is missing, encrypted private artifacts are marked `pending` and audited with `artifact.processing_pending`.
-- Non-private artifacts may create `memory_fragments` only when explicit plaintext `metadata.processingInput.content` exists.
+- Retryable Walrus/Seal/Sui failures are kept `pending`, audited with `artifact.processing_retrying`, and thrown back to BullMQ so the queue can retry with exponential backoff. Worker logs include the failing stage, artifact ID, attempt count, and error message.
+- Memory fragments store encrypted content references only; the `memory_fragments` table has no plaintext content or summary columns.
 
 Current retrieval boundary:
 

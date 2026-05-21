@@ -364,14 +364,12 @@ describe("protected artifact route", () => {
         fileType: "text/markdown",
         fileSize: 23,
         uploadKind: "file",
-        storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
-        sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
       },
     });
     expect(insertValue(db.insertCalls[0])).toMatchObject({
       sourceType: "markdown",
-      title: "strategy.md",
     });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("strategy.md");
     expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
       artifactId: "artifact-id",
       twinId: "twin-id",
@@ -423,18 +421,85 @@ describe("protected artifact route", () => {
         fileType: "application/pdf",
         fileSize: 123,
         uploadKind: "file",
-        storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
-        sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
       },
     });
     expect(insertValue(db.insertCalls[0])).toMatchObject({
       sourceType: "pdf",
-      title: "brief.pdf",
     });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("brief.pdf");
     expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
       artifactId: "artifact-id",
       twinId: "twin-id",
       sourceType: "pdf",
+    });
+  });
+
+  it.each([
+    ["docx", "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+    ["csv", "clients.csv", "text/csv"],
+    ["email", "message.eml", "message/rfc822"],
+    ["chat_export", "chat.json", "application/json"],
+    ["slack_export", "slack.json", "application/json"],
+    ["whatsapp_export", "whatsapp.txt", "text/plain"],
+    ["browser_history", "chrome-history-export.csv", "text/csv"],
+    ["ocr_pdf", "scan.pdf", "application/pdf"],
+    ["image", "screenshot.png", "image/png"],
+    ["voice_note", "founder-reflection.m4a", "audio/mp4"],
+    ["voice_conversation", "voice-conversation.webm", "audio/webm"],
+  ] as const)("accepts %s uploads through the encrypted storage path", async (sourceType, title, fileType) => {
+    const db = createFakeDb();
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({ db, privateMemoryStorage, artifactProcessingQueue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sourceType,
+        title,
+        content: "Extracted source content",
+        metadata: {
+          fileName: title,
+          fileType,
+          fileSize: 123,
+          uploadKind: "file",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(privateMemoryStorage.storeCalls[0]).toMatchObject({
+      sourceType,
+      title,
+      content: "Extracted source content",
+      metadata: {
+        fileName: title,
+        fileType,
+        fileSize: 123,
+        uploadKind: "file",
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      sourceType,
+    });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain(title);
+    expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType,
     });
   });
 
@@ -461,6 +526,225 @@ describe("protected artifact route", () => {
 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "encrypted_storage_not_configured" });
+  });
+
+  it("requeues failed artifacts for ingestion retry", async () => {
+    const db = createRetryDb({
+      id: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "voice_conversation",
+      ingestionStatus: "failed",
+      metadata: {
+        processing: {
+          status: "failed",
+          reason: "speech_to_text_failed",
+        },
+      },
+    });
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({ db, artifactProcessingQueue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts/artifact-id/retry", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      artifactId: "artifact-id",
+      status: "queued",
+      processingJobId: "artifact-id",
+      warning: null,
+    });
+    expect(db.updateCalls[0]).toMatchObject({
+      value: {
+        ingestionStatus: "queued",
+        metadata: {
+          processing: {
+            status: "queued",
+            reason: "retry_requested",
+          },
+        },
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      eventType: "artifact.retry_requested",
+      resourceType: "source_artifact",
+      resourceId: "artifact-id",
+      metadata: {
+        previousStatus: "failed",
+        sourceType: "voice_conversation",
+      },
+    });
+    expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "voice_conversation",
+    });
+  });
+
+  it("rejects retry for artifacts that are not failed", async () => {
+    const db = createRetryDb({
+      id: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      ingestionStatus: "completed",
+      metadata: {},
+    });
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts/artifact-id/retry", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "artifact_not_failed",
+      status: "completed",
+    });
+    expect(db.updateCalls).toEqual([]);
+  });
+});
+
+describe("GitHub import route", () => {
+  it("rejects invalid GitHub repo URLs", async () => {
+    const app = createApp({
+      db: createFakeDb(),
+      privateMemoryStorage: createFakePrivateMemoryStorage(),
+      githubImporter: async () => {
+        throw new Error("invalid_github_repo_url");
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/imports/github", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ repoUrl: "https://example.com/nope" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_github_repo_url" });
+  });
+
+  it("imports a public GitHub repo through the encrypted storage path", async () => {
+    const db = createFakeDb();
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({
+      db,
+      privateMemoryStorage,
+      artifactProcessingQueue,
+      githubImporter: async () => ({
+        owner: "sivraj",
+        repo: "app",
+        repoUrl: "https://github.com/sivraj/app",
+        title: "sivraj/app",
+        content: "GitHub repository: sivraj/app\n\nFile: README.md\n# Sivraj",
+        metadata: {
+          importer: "github_public_repo",
+          owner: "sivraj",
+          repo: "app",
+          repoUrl: "https://github.com/sivraj/app",
+          description: "Persistent intelligence",
+          defaultBranch: "main",
+          files: [{ path: "README.md", size: 22, source: "contents_api" }],
+          skipped: [],
+        },
+      }),
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+        walletAddress: "0xabc",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/imports/github", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ repoUrl: "https://github.com/sivraj/app" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      artifactId: "artifact-id",
+      status: "queued",
+      storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
+      rawStorageRef: "walrus://blob/blob-id",
+      github: {
+        repoUrl: "https://github.com/sivraj/app",
+        owner: "sivraj",
+        repo: "app",
+        fileCount: 1,
+      },
+    });
+    expect(privateMemoryStorage.storeCalls[0]).toMatchObject({
+      sourceType: "github",
+      title: "sivraj/app",
+      content: "GitHub repository: sivraj/app\n\nFile: README.md\n# Sivraj",
+      metadata: {
+        importer: "github_public_repo",
+        owner: "sivraj",
+        repo: "app",
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      sourceType: "github",
+    });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("sivraj/app");
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "github_import.created",
+      metadata: {
+        fileCount: 1,
+      },
+    });
+    expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+    });
   });
 });
 
@@ -497,16 +781,25 @@ describe("memory retrieval route", () => {
     const db = createFakeDb([
       memoryRow({
         id: "memory-launch",
-        content: "Launch keeps slipping because UI polish expands late.",
-        summary: "Launch execution pattern",
+        contentStorageRef: "walrus://blob/memory-launch",
       }),
       memoryRow({
         id: "memory-finance",
-        content: "Send finance documents before tax filing.",
-        summary: "Finance admin",
+        contentStorageRef: "walrus://blob/memory-finance",
       }),
     ]);
-    const app = createApp({ db });
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          if (input.rawStorageRef === "walrus://blob/memory-launch") {
+            return "Launch keeps slipping because UI polish expands late.";
+          }
+
+          return "Send finance documents before tax filing.";
+        },
+      },
+    });
     const token = await signSessionToken(
       {
         sub: "user-id",
@@ -534,7 +827,6 @@ describe("memory retrieval route", () => {
           id: "memory-launch",
           sourceArtifactId: "artifact-id",
           content: "Launch keeps slipping because UI polish expands late.",
-          summary: "Launch execution pattern",
           matchedTerms: ["launch", "ui", "polish"],
           citation: {
             sourceArtifactId: "artifact-id",
@@ -555,6 +847,98 @@ describe("memory retrieval route", () => {
         resultCount: 1,
         memoryFragmentIds: ["memory-launch"],
       },
+    });
+  });
+
+  it("decrypts encrypted private memory fragments only inside memory read route", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-private",
+        contentStorageRef: "walrus://blob/encrypted-fragment",
+        contentSha256: "sha256:encrypted",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      }),
+    ]);
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          expect(input).toEqual({
+            rawStorageRef: "walrus://blob/encrypted-fragment",
+            artifactId: "artifact-id",
+            twinId: "twin-id",
+          });
+
+          return "Launch keeps slipping because UI polish expands late.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "launch polish", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          id: "memory-private",
+          content: "Launch keeps slipping because UI polish expands late.",
+        },
+      ],
+    });
+  });
+
+  it("fails closed when encrypted fragments exist but decrypt reader is unavailable", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        contentStorageRef: "walrus://blob/encrypted-fragment",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      }),
+    ]);
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "launch polish", limit: 5 }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "private_memory_reader_not_configured",
     });
   });
 });
@@ -608,6 +992,70 @@ function createFakeDb(memoryRows: unknown[] = []) {
       };
     },
   } as unknown as AppDependencies["db"] & { insertCalls: unknown[] };
+}
+
+function createRetryDb(artifact: Record<string, unknown> | null) {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              return Promise.resolve([]);
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                limit() {
+                  return Promise.resolve(artifact ? [artifact] : []);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          return {
+            where() {
+              return {
+                returning() {
+                  return Promise.resolve([
+                    {
+                      ...artifact,
+                      ...(value as Record<string, unknown>),
+                      id: artifact?.id ?? "artifact-id",
+                    },
+                  ]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
+  };
 }
 
 function createRefreshDb({
@@ -675,9 +1123,10 @@ function memoryRow(overrides: Record<string, unknown> = {}) {
     id: "memory-id",
     twinId: "twin-id",
     sourceArtifactId: "artifact-id",
-    content: "Memory content",
-    summary: null,
+    contentStorageRef: "walrus://blob/memory-id",
+    contentSha256: null,
     embeddingRef: null,
+    metadata: null,
     importanceScore: 0.5,
     confidenceScore: 0.5,
     occurredAt: null,

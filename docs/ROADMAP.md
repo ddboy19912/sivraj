@@ -32,14 +32,43 @@ Goal: Users can import meaningful context.
 - Run first live encrypted manual memory upload.
 - Add markdown/text upload.
 - Add PDF text extraction ingestion. (done)
+- Add DOCX and CSV ingestion.
+- Add OCR scanned PDF ingestion.
+- Add screenshots/image ingestion.
+- Add audio/voice note ingestion.
 - Add chat export ingestion.
+- Add email export ingestion.
+- Add Slack and WhatsApp export ingestion.
 - Add GitHub source import.
+- Add browser history import.
 - Store raw source metadata and encrypted raw storage refs.
 - Build Redis/BullMQ processing queue. (done)
 
 Exit criteria:
 
 - User can import at least 50 artifacts into a Twin without relying on plaintext raw memory storage.
+
+## Phase 1.5: Source Connectors and Recurring Sync
+
+Goal: Keep the Twin current by connecting to the user's active tools.
+
+- Define connector permission and sync model.
+- Add connector account/link records.
+- Add recurring sync jobs.
+- Add connector sync audit events.
+- Add connector status and settings UI.
+- Add Notion connector.
+- Add GitHub recurring repository sync.
+- Add Microsoft Docs/OneDrive connector.
+- Add Google Drive/Docs connector.
+- Add Slack, email, and calendar connectors.
+- Add browser history connector/import.
+- Add Claude and ChatGPT/Codex history imports or connectors where APIs allow.
+- Reprocess changed documents, conversations, commits, and notes into updated memories.
+
+Exit criteria:
+
+- A user can connect at least one external source, perform an initial backfill, receive recurring updates, and see what the sync added or changed.
 
 ## Phase 2: Cognitive Graph V1
 
@@ -57,6 +86,21 @@ Goal: Convert raw data into structured identity context.
 Exit criteria:
 
 - User can see a useful graph of projects, people, goals, and decisions.
+
+## Phase 2.5: Voice Conversation Memory
+
+Goal: Let users talk to Sivraj and turn meaningful conversation into Twin updates.
+
+- Add voice recording UX.
+- Add speech-to-text transcription.
+- Extract candidate memories, goals, decisions, preferences, and project updates from conversation.
+- Ask the user to approve or edit extracted updates.
+- Store approved updates through the encrypted Walrus path.
+- Add audit events for voice-derived memory changes.
+
+Exit criteria:
+
+- A user can talk to Sivraj, approve extracted memories, and later retrieve those memories with citations.
 
 ## Phase 3: Retrieval and Context Routing
 

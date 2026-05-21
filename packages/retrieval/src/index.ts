@@ -3,7 +3,7 @@ export type MemoryCandidate = {
   twinId: string;
   sourceArtifactId: string;
   content: string;
-  summary: string | null;
+  summary?: string | null;
   importanceScore: number | null;
   confidenceScore: number | null;
   occurredAt: Date | null;
