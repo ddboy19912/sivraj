@@ -28,6 +28,12 @@ Root `.env.example` is source of truth.
 - `APP_URL`
 - `API_URL`
 - `VITE_API_URL`
+- `VITE_SUI_NETWORK`
+- `VITE_SUI_RPC_URL`
+- `VITE_SEAL_PACKAGE_ID`
+- `VITE_SEAL_POLICY_ID`
+- `VITE_SEAL_KEY_SERVERS`
+- `VITE_SEAL_THRESHOLD`
 
 ### API
 
@@ -53,11 +59,16 @@ Root `.env.example` is source of truth.
 - `SPEECH_TO_TEXT_API_KEY`
 - `SPEECH_TO_TEXT_MODEL`
 - `EMBEDDING_MODEL`
-- `WALRUS_ENDPOINT`
-- `WALRUS_API_KEY`
 - `WALRUS_NETWORK`
-- `SEAL_PROJECT_ID`
-- `SEAL_API_KEY`
+- `WALRUS_EPOCHS`
+- `WALRUS_DELETABLE`
+- `WALRUS_UPLOAD_RELAY_URL`
+- `WALRUS_UPLOAD_RELAY_TIP_MAX_MIST`
+- `WALRUS_AGGREGATOR_URL`
+- `SEAL_PACKAGE_ID`
+- `SEAL_POLICY_ID`
+- `SEAL_KEY_SERVERS`
+- `SEAL_THRESHOLD`
 - `SUI_NETWORK`
 - `SUI_RPC_URL`
 - `SUI_PRIVATE_KEY`
@@ -71,6 +82,12 @@ Root `.env.example` is source of truth.
 - `APP_URL`: Web app URL.
 - `API_URL`: API base URL.
 - `VITE_API_URL`: Browser-facing API base URL for the Vite app.
+- `VITE_SUI_NETWORK`: Browser/client Sui network for first-party encryption.
+- `VITE_SUI_RPC_URL`: Browser/client Sui RPC URL for Seal encryption.
+- `VITE_SEAL_PACKAGE_ID`: Seal package ID exposed to the client for encryption.
+- `VITE_SEAL_POLICY_ID`: Seal policy object ID exposed to the client for encryption.
+- `VITE_SEAL_KEY_SERVERS`: Seal key server object IDs exposed to the client for encryption.
+- `VITE_SEAL_THRESHOLD`: Seal key server threshold for client-side encryption.
 
 ### API
 
@@ -107,6 +124,7 @@ Root `.env.example` is source of truth.
 - `WALRUS_DELETABLE`: Whether Walrus blobs should be deletable.
 - `WALRUS_UPLOAD_RELAY_URL`: Optional upload relay URL. Recommended on testnet to avoid direct storage-node confirmation failures.
 - `WALRUS_UPLOAD_RELAY_TIP_MAX_MIST`: Optional max relay tip in MIST.
+- `WALRUS_AGGREGATOR_URL`: Optional HTTP aggregator URL for worker reads. Recommended on testnet as a fallback when direct SDK storage-node reads fail.
 
 ### Seal
 

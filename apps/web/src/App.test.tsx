@@ -27,6 +27,16 @@ vi.mock('@mysten/dapp-kit-react/ui', () => ({
   ConnectButton: () => <button type="button">Connect wallet</button>,
 }))
 
+vi.mock('@mysten/seal', () => ({
+  SealClient: class {
+    async encrypt() {
+      return {
+        encryptedObject: new TextEncoder().encode('encrypted-client-payload'),
+      }
+    }
+  },
+}))
+
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {},
   getDocument: pdfState.getDocument,
@@ -39,6 +49,13 @@ vi.mock('pdfjs-dist/build/pdf.worker.mjs?url', () => ({
 describe('Manual memory app', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.stubEnv('VITE_SEAL_PACKAGE_ID', '0xpackage')
+    vi.stubEnv('VITE_SEAL_POLICY_ID', '0xpolicy')
+    vi.stubEnv('VITE_SEAL_KEY_SERVERS', '0xkeyserver')
+    vi.stubEnv('VITE_SEAL_THRESHOLD', '1')
+    vi.stubEnv('VITE_SUI_RPC_URL', 'https://fullnode.testnet.sui.io:443')
+    vi.stubEnv('VITE_SUI_NETWORK', 'testnet')
     localStorage.clear()
     walletState.account = null
     walletState.wallet = null
@@ -133,21 +150,7 @@ describe('Manual memory app', () => {
     expect(screen.getByText('encrypted_walrus')).toBeInTheDocument()
     expect(screen.getByText('walrus://blob/blob-id')).toBeInTheDocument()
     expect(screen.getByText('artifact-id')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          authorization: 'Bearer api-token',
-        }),
-        body: JSON.stringify({
-          sourceType: 'note',
-          title: 'Founder note',
-          content: 'Raw text memory',
-          metadata: {},
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('note', ['Founder note', 'Raw text memory'])
   })
 
   it('refreshes an expired API session and retries the memory upload', async () => {
@@ -321,23 +324,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'markdown',
-          title: 'strategy.md',
-          content: '# Strategy\nShip faster.',
-          metadata: {
-            fileName: 'strategy.md',
-            fileType: 'text/markdown',
-            fileSize: file.size,
-            uploadKind: 'file',
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('markdown', ['strategy.md', '# Strategy', 'Ship faster'])
   })
 
   it('loads a browser history export and submits it as encrypted browser history', async () => {
@@ -366,24 +353,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'browser_history',
-          title: 'chrome-history-export.csv',
-          content,
-          metadata: {
-            fileName: 'chrome-history-export.csv',
-            fileType: 'text/csv',
-            fileSize: file.size,
-            uploadKind: 'file',
-            importer: 'browser_history_export',
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('browser_history', ['chrome-history-export.csv', content, 'sivraj.ai'])
   })
 
   it('loads a PDF file and submits extracted text as encrypted PDF memory', async () => {
@@ -421,23 +391,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'pdf',
-          title: 'brief.pdf',
-          content: 'Founder PDF\n\nexecution plan',
-          metadata: {
-            fileName: 'brief.pdf',
-            fileType: 'application/pdf',
-            fileSize: file.size,
-            uploadKind: 'file',
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('pdf', ['brief.pdf', 'Founder PDF', 'execution plan'])
   })
 
   it('loads an image-only PDF and submits the encrypted payload for worker OCR', async () => {
@@ -479,28 +433,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'ocr_pdf',
-          title: 'scan.pdf',
-          content: btoa('%PDF-1.7'),
-          metadata: {
-            fileName: 'scan.pdf',
-            fileType: 'application/pdf',
-            fileSize: file.size,
-            uploadKind: 'file',
-            encoding: 'base64',
-            ocr: {
-              requested: true,
-              reason: 'no_extractable_pdf_text',
-            },
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('ocr_pdf', ['scan.pdf', btoa('%PDF-1.7')])
   })
 
   it('loads an image and submits the encrypted payload for worker OCR', async () => {
@@ -532,28 +465,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'image',
-          title: 'screenshot.png',
-          content: btoa('fake image'),
-          metadata: {
-            fileName: 'screenshot.png',
-            fileType: 'image/png',
-            fileSize: file.size,
-            uploadKind: 'file',
-            encoding: 'base64',
-            ocr: {
-              requested: true,
-              reason: 'image_upload',
-            },
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('image', ['screenshot.png', btoa('fake image'), 'fake image'])
   })
 
   it('loads an audio file and submits the encrypted payload as a voice note', async () => {
@@ -585,27 +497,7 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'voice_note',
-          title: 'founder-reflection.m4a',
-          content: btoa('fake audio'),
-          metadata: {
-            fileName: 'founder-reflection.m4a',
-            fileType: 'audio/mp4',
-            fileSize: file.size,
-            uploadKind: 'file',
-            encoding: 'base64',
-            audio: {
-              kind: 'voice_note',
-            },
-          },
-        }),
-      }),
-    )
+    expectEncryptedArtifactRequest('voice_note', ['founder-reflection.m4a', btoa('fake audio'), 'fake audio'])
   })
 
   it('records a voice conversation and submits encrypted recorded audio', async () => {
@@ -658,30 +550,17 @@ describe('Manual memory app', () => {
       'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
       expect.objectContaining({
         method: 'POST',
-        body: expect.stringContaining('"sourceType":"voice_conversation"'),
+        headers: expect.objectContaining({
+          authorization: 'Bearer api-token',
+        }),
       }),
     )
 
-    const body = JSON.parse(
-      (fetch as unknown as { mock: { calls: Array<[string, { body?: string }]> } }).mock.calls.find(
-        ([url]) => url === 'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
-      )?.[1].body ?? '{}',
-    )
-    expect(body).toMatchObject({
-      sourceType: 'voice_conversation',
-      content: btoa('recorded audio'),
-      metadata: {
-        fileType: 'audio/webm;codecs=opus',
-        fileSize: 14,
-        uploadKind: 'recording',
-        encoding: 'base64',
-        audio: {
-          kind: 'voice_conversation',
-        },
-      },
-    })
-    expect(body.title).toMatch(/^voice-conversation-/)
-    expect(body.metadata.fileName).toMatch(/^voice-conversation-/)
+    expectEncryptedArtifactRequest('voice_conversation', [
+      btoa('recorded audio'),
+      'recorded audio',
+      'voice-conversation-',
+    ])
   })
 
   it('shows infra setup error when encrypted storage is missing', async () => {
@@ -832,6 +711,56 @@ function storeTestSession(overrides: Partial<{
     walletAddress: '0x1234567890abcdef',
     ...overrides,
   }))
+}
+
+function expectEncryptedArtifactRequest(sourceType: string, forbiddenText: string[] = []) {
+  const call = (fetch as unknown as {
+    mock: { calls: Array<[string, RequestInit | undefined]> }
+  }).mock.calls.find(([url]) => url === 'http://127.0.0.1:3000/v1/twins/twin-id/artifacts')
+
+  expect(call).toBeDefined()
+
+  const request = call?.[1]
+  const bodyText = String(request?.body ?? '')
+  const body = JSON.parse(bodyText) as {
+    sourceType?: string
+    encryptedPayload?: {
+      ciphertextBase64?: string
+      ciphertextSha256?: string
+      seal?: {
+        packageId?: string
+        policyId?: string
+        threshold?: number
+        keyServerObjectIds?: string[]
+      }
+    }
+  }
+
+  expect(request).toEqual(expect.objectContaining({
+    method: 'POST',
+    headers: expect.objectContaining({
+      authorization: 'Bearer api-token',
+    }),
+  }))
+  expect(body).toEqual({
+    sourceType,
+    encryptedPayload: {
+      ciphertextBase64: expect.any(String),
+      ciphertextSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      seal: {
+        packageId: '0xpackage',
+        policyId: '0xpolicy',
+        threshold: 1,
+        keyServerObjectIds: ['0xkeyserver'],
+      },
+    },
+  })
+
+  for (const text of forbiddenText) {
+    expect(bodyText).not.toContain(text)
+  }
+
+  return body
 }
 
 type MockResponse = ReturnType<typeof jsonResponse> | ReturnType<typeof sseResponse>

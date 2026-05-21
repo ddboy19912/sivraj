@@ -67,6 +67,72 @@ describe("private memory storage service", () => {
     expect(result.rawStorageRef).toBe("walrus://blob/blob-id");
   });
 
+  it("stores client-encrypted ciphertext without re-encrypting it in the API", async () => {
+    const sealInputs: unknown[] = [];
+    const walrusInputs: unknown[] = [];
+    const service = createPrivateMemoryStorageService({
+      seal: {
+        async encrypt(input) {
+          sealInputs.push(input);
+          return {
+            encryptedBytes: new Uint8Array([0]),
+            ciphertextSha256: "unexpected",
+            packageId: "0xpackage",
+            policyId: "0xpolicy",
+            threshold: 1,
+            keyServerObjectIds: ["0xkeyserver"],
+          };
+        },
+      },
+      walrus: {
+        async store(input) {
+          walrusInputs.push(input);
+          return {
+            rawStorageRef: "walrus://blob/client-blob-id",
+            blobId: "client-blob-id",
+            blobObjectId: "client-blob-object-id",
+            startEpoch: 1,
+            endEpoch: 6,
+            size: "456",
+          };
+        },
+      },
+    });
+
+    const result = await service.storeEncryptedPrivateMemory({
+      twinId: "twin-id",
+      sourceType: "note",
+      encryptedBytes: new Uint8Array([1, 2, 3]),
+      ciphertextSha256: "client-ciphertext-hash",
+      seal: {
+        packageId: "0xclientpackage",
+        policyId: "0xclientpolicy",
+        threshold: 1,
+        keyServerObjectIds: ["0xclientkeyserver"],
+      },
+    });
+
+    expect(sealInputs).toHaveLength(0);
+    expect(walrusInputs[0]).toMatchObject({
+      bytes: new Uint8Array([1, 2, 3]),
+      attributes: {
+        twinId: "twin-id",
+        sourceType: "note",
+        storageMode: "encrypted_walrus",
+        sensitivity: "private",
+        ciphertextSha256: "client-ciphertext-hash",
+      },
+    });
+    expect(result).toMatchObject({
+      rawStorageRef: "walrus://blob/client-blob-id",
+      ciphertextSha256: "client-ciphertext-hash",
+      seal: {
+        packageId: "0xclientpackage",
+        policyId: "0xclientpolicy",
+      },
+    });
+  });
+
   it("does not require worker or LLM env to build storage config", async () => {
     const service = createPrivateMemoryStorage({
       SEAL_PACKAGE_ID: "0xpackage",

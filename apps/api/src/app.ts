@@ -55,6 +55,14 @@ export type PrivateMemoryStorageInput = {
   metadata: Record<string, unknown>;
 };
 
+export type EncryptedPrivateMemoryStorageInput = {
+  twinId: string;
+  sourceType: SupportedArtifactSourceType;
+  encryptedBytes: Uint8Array;
+  ciphertextSha256: string;
+  seal: PrivateMemoryStorageOutput["seal"];
+};
+
 export type PrivateMemoryStorageOutput = {
   rawStorageRef: string;
   ciphertextSha256: string;
@@ -75,6 +83,7 @@ export type PrivateMemoryStorageOutput = {
 
 export type PrivateMemoryStorage = {
   storePrivateMemory(input: PrivateMemoryStorageInput): Promise<PrivateMemoryStorageOutput>;
+  storeEncryptedPrivateMemory(input: EncryptedPrivateMemoryStorageInput): Promise<PrivateMemoryStorageOutput>;
 };
 
 export function createApp(dependencies: AppDependencies = {

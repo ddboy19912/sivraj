@@ -1,4 +1,5 @@
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   assertWalrusStorageConfig,
@@ -91,6 +92,70 @@ describe("Walrus storage adapter", () => {
     expect(calls).toEqual([{ blobId: "blob-id" }]);
   });
 
+  it("falls back to an aggregator when SDK reads fail", async () => {
+    const sdkCalls: unknown[] = [];
+    const fetchCalls: string[] = [];
+    const expectedBytes = new Uint8Array([7, 8, 9]);
+    const reader = createWalrusReader({
+      config: {
+        network: "testnet",
+        rpcUrl: "https://fullnode.testnet.sui.io:443",
+        aggregatorUrl: "https://aggregator.walrus-testnet.walrus.space/",
+      },
+      client: {
+        async readBlob(input) {
+          sdkCalls.push(input);
+          throw new Error("fetch failed");
+        },
+      },
+      fetch: async (input) => {
+        fetchCalls.push(input);
+
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          async arrayBuffer() {
+            return expectedBytes.buffer.slice(
+              expectedBytes.byteOffset,
+              expectedBytes.byteOffset + expectedBytes.byteLength,
+            );
+          },
+        };
+      },
+    });
+
+    await expect(
+      reader.read({
+        rawStorageRef: "walrus://blob/blob-id",
+        expectedSha256: sha256Hex(expectedBytes),
+      }),
+    ).resolves.toEqual(expectedBytes);
+    expect(sdkCalls).toEqual([{ blobId: "blob-id" }]);
+    expect(fetchCalls).toEqual(["https://aggregator.walrus-testnet.walrus.space/v1/blobs/blob-id"]);
+  });
+
+  it("rejects Walrus reads when bytes do not match the expected hash", async () => {
+    const reader = createWalrusReader({
+      config: {
+        network: "testnet",
+        rpcUrl: "https://fullnode.testnet.sui.io:443",
+      },
+      client: {
+        async readBlob() {
+          return new Uint8Array([4, 5, 6]);
+        },
+      },
+    });
+
+    await expect(
+      reader.read({
+        rawStorageRef: "walrus://blob/blob-id",
+        expectedSha256: sha256Hex(new Uint8Array([1, 2, 3])),
+      }),
+    ).rejects.toThrow("Walrus blob SHA-256 mismatch");
+  });
+
   it("parses Walrus blob refs", () => {
     expect(parseWalrusBlobId("walrus://blob/blob-id")).toBe("blob-id");
     expect(() => parseWalrusBlobId("https://example.com/blob-id")).toThrow(
@@ -98,3 +163,7 @@ describe("Walrus storage adapter", () => {
     );
   });
 });
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}

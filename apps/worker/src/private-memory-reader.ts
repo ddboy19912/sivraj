@@ -12,6 +12,7 @@ type PrivateMemoryReaderConfig = {
   suiRpcUrl: string;
   suiPrivateKey: string;
   suiNetwork: "mainnet" | "testnet" | "devnet" | "localnet";
+  walrusAggregatorUrl?: string;
   sealPackageId: string;
   sealPolicyId: string;
   sealKeyServers: string;
@@ -36,6 +37,7 @@ export function createPrivateMemoryReader(params: {
         operation: () =>
           params.walrus.read({
             rawStorageRef: input.rawStorageRef,
+            expectedSha256: input.expectedCiphertextSha256,
           }),
       });
       const decrypted = await retryPrivateMemoryStage({
@@ -141,6 +143,7 @@ export function createConfiguredPrivateMemoryReader(
       config: {
         network: config.suiNetwork,
         rpcUrl: config.suiRpcUrl,
+        aggregatorUrl: config.walrusAggregatorUrl,
       },
     }),
     seal: createSealDecryptor({
@@ -179,11 +182,21 @@ function readPrivateMemoryReaderConfig(
     suiRpcUrl,
     suiPrivateKey,
     suiNetwork: readSuiNetwork(env["SUI_NETWORK"]),
+    walrusAggregatorUrl: readMaybe(env, "WALRUS_AGGREGATOR_URL"),
     sealPackageId,
     sealPolicyId,
     sealKeyServers,
     sealThreshold: readInteger(env["SEAL_THRESHOLD"], 1),
   };
+}
+
+function readMaybe(
+  env: Record<string, string | undefined>,
+  key: string,
+): string | undefined {
+  const value = env[key]?.trim();
+
+  return value ? value : undefined;
 }
 
 function readSuiNetwork(

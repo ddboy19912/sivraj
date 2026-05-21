@@ -30,6 +30,7 @@ describe("processQueuedArtifacts", () => {
         metadata: {
           storageMode: "encrypted_walrus",
           sensitivity: "private",
+          ciphertextSha256: "ciphertext-hash",
         },
       },
     ]);
@@ -109,6 +110,7 @@ describe("processQueuedArtifacts", () => {
         metadata: {
           storageMode: "encrypted_walrus",
           sensitivity: "private",
+          ciphertextSha256: "ciphertext-hash",
         },
       },
     ]);
@@ -130,6 +132,7 @@ describe("processQueuedArtifacts", () => {
         rawStorageRef: "walrus://blob/blob-id",
         artifactId: "artifact-id",
         twinId: "twin-id",
+        expectedCiphertextSha256: "ciphertext-hash",
       },
     ]);
     expect(repository.fragments[0]).toMatchObject({

@@ -50,6 +50,7 @@ export type WalrusConfig = {
   network: string;
   epochs: number;
   deletable: boolean;
+  aggregatorUrl?: string;
 };
 
 export type SealConfig = {
@@ -113,6 +114,7 @@ export function loadConfig(env: EnvSource): SivrajConfig {
       network: readOptional(env, "WALRUS_NETWORK", "testnet"),
       epochs: readInteger(env, "WALRUS_EPOCHS", 5),
       deletable: readBoolean(env, "WALRUS_DELETABLE", false),
+      aggregatorUrl: readMaybe(env, "WALRUS_AGGREGATOR_URL"),
     },
     seal: {
       packageId: readRequired(env, "SEAL_PACKAGE_ID"),

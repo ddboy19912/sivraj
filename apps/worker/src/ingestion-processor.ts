@@ -55,6 +55,7 @@ export type PrivateMemoryReader = {
     rawStorageRef: string;
     artifactId: string;
     twinId: string;
+    expectedCiphertextSha256?: string | null;
   }): Promise<string>;
 };
 
@@ -239,6 +240,7 @@ async function processClaimedArtifact(
           rawStorageRef: artifact.rawStorageRef,
           artifactId: artifact.id,
           twinId: artifact.twinId,
+          expectedCiphertextSha256: readCiphertextSha256(metadata),
         })
         .catch(async (error: unknown) => {
           const detail = errorMessage(error);
@@ -1047,6 +1049,10 @@ function readMetadataString(metadata: unknown, key: string): string | null {
   const value = asRecord(metadata)[key];
 
   return typeof value === "string" ? value : null;
+}
+
+function readCiphertextSha256(metadata: unknown): string | null {
+  return readMetadataString(metadata, "ciphertextSha256");
 }
 
 function errorMessage(error: unknown): string {

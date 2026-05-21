@@ -389,7 +389,27 @@ POST /v1/twins/:twinId/artifacts
 Authorization: Bearer <token>
 ```
 
-Initial JSON body:
+Preferred first-party JSON body:
+
+```json
+{
+  "sourceType": "note",
+  "encryptedPayload": {
+    "ciphertextBase64": "...",
+    "ciphertextSha256": "...",
+    "seal": {
+      "packageId": "0x...",
+      "policyId": "0x...",
+      "threshold": 1,
+      "keyServerObjectIds": ["0x..."]
+    }
+  }
+}
+```
+
+The first-party web app encrypts the complete source payload in the browser before calling the API. The encrypted payload contains the original title, content, and private metadata inside the ciphertext envelope, not as plaintext request fields.
+
+Trusted server-side ingestion paths can still submit a plaintext source envelope for API-side encryption:
 
 ```json
 {
@@ -399,6 +419,8 @@ Initial JSON body:
   "metadata": {}
 }
 ```
+
+Use this compatibility shape only when the API is the component fetching or constructing the private source material. Browser/mobile clients should use `encryptedPayload`.
 
 Supported first-slice source types:
 
@@ -419,7 +441,7 @@ Supported first-slice source types:
 - `whatsapp_export` for WhatsApp text exports.
 - `github` for imported public GitHub repository context.
 
-The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, encrypts private content with Seal, stores ciphertext on Walrus, creates a queued source artifact, writes an audit event, and publishes a Redis/BullMQ processing job. It does not create a plaintext memory fragment for private memory.
+The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, verifies client ciphertext hashes, stores ciphertext on Walrus, creates a queued source artifact, writes an audit event, and publishes a Redis/BullMQ processing job. It does not create a plaintext memory fragment for private memory.
 
 GitHub public repository import:
 
@@ -438,7 +460,7 @@ Request:
 
 The first version imports public repository context only. It fetches repository metadata plus selected text files such as README, docs, package metadata, and root config files, then encrypts the deterministic bundle before Walrus storage. Private repositories, GitHub OAuth, issues, pull requests, commit history, and recurring sync are later connector tasks.
 
-Current PDF behavior: the web client extracts PDF text and submits that extracted text through the encrypted artifact path. The original PDF binary is not yet stored as a separate encrypted raw file object.
+Current PDF behavior: the web client extracts PDF text locally, encrypts the extracted source envelope in the browser, and submits only ciphertext through the artifact path. The original PDF binary is not yet stored as a separate encrypted raw file object.
 
 Initial response:
 
@@ -457,7 +479,7 @@ Initial response:
 
 Current implementation note:
 
-The manual note endpoint now fails closed unless Seal, Sui, and Walrus config is present. The current write path stores private raw memory as Seal-encrypted Walrus ciphertext and persists `source_artifacts.raw_storage_ref` plus metadata in Postgres. Retrieval/decryption is a separate future path and must apply permission policy before returning memory content.
+The manual note endpoint now fails closed unless Seal, Sui, and Walrus config is present. First-party writes encrypt private raw memory in the browser, store Seal-encrypted Walrus ciphertext, and persist `source_artifacts.raw_storage_ref` plus safe metadata in Postgres. Retrieval/decryption must apply permission policy before returning memory content.
 
 Worker behavior:
 

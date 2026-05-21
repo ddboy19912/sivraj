@@ -3,6 +3,7 @@ import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "./app";
 
@@ -318,6 +319,117 @@ describe("protected artifact route", () => {
       },
     });
     expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("Raw text memory");
+  });
+
+  it("accepts client-encrypted artifact payloads without requiring plaintext content", async () => {
+    const db = createFakeDb();
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({ db, privateMemoryStorage, artifactProcessingQueue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const encryptedBytes = Buffer.from("client encrypted payload");
+    const encryptedSha256 = sha256Hex(encryptedBytes);
+
+    const response = await app.request("/v1/twins/twin-id/artifacts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sourceType: "note",
+        encryptedPayload: {
+          ciphertextBase64: encryptedBytes.toString("base64"),
+          ciphertextSha256: encryptedSha256,
+          seal: {
+            packageId: "0xclientpackage",
+            policyId: "0xclientpolicy",
+            threshold: 1,
+            keyServerObjectIds: ["0xclientkeyserver"],
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(privateMemoryStorage.storeCalls).toHaveLength(0);
+    expect(privateMemoryStorage.storeEncryptedCalls).toHaveLength(1);
+    expect(privateMemoryStorage.storeEncryptedCalls[0]).toMatchObject({
+      twinId: "twin-id",
+      sourceType: "note",
+      ciphertextSha256: encryptedSha256,
+      seal: {
+        packageId: "0xclientpackage",
+        policyId: "0xclientpolicy",
+        threshold: 1,
+        keyServerObjectIds: ["0xclientkeyserver"],
+      },
+    });
+    expect(Buffer.from(privateMemoryStorage.storeEncryptedCalls[0].encryptedBytes).toString("utf8")).toBe(
+      "client encrypted payload",
+    );
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      metadata: {
+        encryptedPayload: {
+          encryptionBoundary: "client",
+          kind: "source_artifact",
+          version: 1,
+        },
+      },
+      rawStorageRef: "walrus://blob/blob-id",
+    });
+    expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+    });
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("client encrypted payload");
+  });
+
+  it("rejects malformed client-encrypted artifact payloads", async () => {
+    const app = createApp({
+      db: createFakeDb(),
+      privateMemoryStorage: createFakePrivateMemoryStorage(),
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sourceType: "note",
+        encryptedPayload: {
+          ciphertextBase64: "not-valid-base64",
+          ciphertextSha256: "bad",
+          seal: {
+            packageId: "0xclientpackage",
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_encrypted_payload" });
   });
 
   it("accepts markdown uploads through the encrypted storage path", async () => {
@@ -1154,33 +1266,51 @@ function restoreEnv(snapshot: Record<string, string | undefined>) {
   }
 }
 
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 function createFakePrivateMemoryStorage(): AppDependencies["privateMemoryStorage"] & {
   storeCalls: Parameters<NonNullable<AppDependencies["privateMemoryStorage"]>["storePrivateMemory"]>[0][];
+  storeEncryptedCalls: Parameters<
+    NonNullable<AppDependencies["privateMemoryStorage"]>["storeEncryptedPrivateMemory"]
+  >[0][];
 } {
   const storeCalls: Parameters<NonNullable<AppDependencies["privateMemoryStorage"]>["storePrivateMemory"]>[0][] = [];
+  const storeEncryptedCalls: Parameters<
+    NonNullable<AppDependencies["privateMemoryStorage"]>["storeEncryptedPrivateMemory"]
+  >[0][] = [];
+
+  const stored = {
+    rawStorageRef: "walrus://blob/blob-id",
+    ciphertextSha256: "ciphertext-hash",
+    seal: {
+      packageId: "0xpackage",
+      policyId: "0xpolicy",
+      threshold: 1,
+      keyServerObjectIds: ["0xkeyserver"],
+    },
+    walrus: {
+      blobId: "blob-id",
+      blobObjectId: "blob-object-id",
+      startEpoch: 1,
+      endEpoch: 6,
+      size: "123",
+    },
+  };
 
   return {
     storeCalls,
+    storeEncryptedCalls,
     async storePrivateMemory(input) {
       storeCalls.push(input);
 
-      return {
-        rawStorageRef: "walrus://blob/blob-id",
-        ciphertextSha256: "ciphertext-hash",
-        seal: {
-          packageId: "0xpackage",
-          policyId: "0xpolicy",
-          threshold: 1,
-          keyServerObjectIds: ["0xkeyserver"],
-        },
-        walrus: {
-          blobId: "blob-id",
-          blobObjectId: "blob-object-id",
-          startEpoch: 1,
-          endEpoch: 6,
-          size: "123",
-        },
-      };
+      return stored;
+    },
+    async storeEncryptedPrivateMemory(input) {
+      storeEncryptedCalls.push(input);
+
+      return stored;
     },
   };
 }

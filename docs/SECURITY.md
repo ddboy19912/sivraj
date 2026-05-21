@@ -142,7 +142,9 @@ Current private manual memory writes:
 - Store derived memory fragments as encrypted Walrus refs via `memory_fragments.content_storage_ref`.
 - Fail closed when Seal, Sui, or Walrus config is missing.
 
-Current implementation note: first-party uploads are encrypted by the API service before durable storage. Before public beta, move private artifact encryption to the browser/client boundary so the API does not receive raw private payloads.
+Current implementation note: first-party web uploads are encrypted in the browser before they are sent to the API. The API accepts a client-encrypted payload, verifies the ciphertext hash, stores ciphertext on Walrus, and persists only storage references plus safe processing metadata. API-side encryption remains available for trusted server-side ingestion paths such as public GitHub import, where the API itself fetches the source material before durable storage.
+
+Native mobile clients must follow the same boundary: encrypt in the app runtime before sending private memory to Sivraj APIs. Mobile does not need browser crypto specifically; it needs equivalent app-side Seal encryption.
 
 ### Private Memory Storage Boundary
 

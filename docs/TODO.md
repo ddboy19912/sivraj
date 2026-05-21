@@ -147,7 +147,7 @@
 - [x] Deploy Seal access-control policy package on Sui testnet.
 - [x] Configure testnet Seal policy IDs and key servers.
 - [x] Use Seal policy approval for worker decryption.
-- [ ] Move first-party private artifact encryption from API-side to browser/client-side before public beta.
+- [x] Move first-party private artifact encryption from API-side to browser/client-side before public beta.
 - [ ] Add audit logs.
 - [ ] Add access revocation.
 - [ ] Design Seal integration.

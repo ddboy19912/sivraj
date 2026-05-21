@@ -32,6 +32,10 @@ export function createPrivateMemoryStorage(
       service ??= createConfiguredPrivateMemoryStorage(env);
       return service.storePrivateMemory(input);
     },
+    async storeEncryptedPrivateMemory(input) {
+      service ??= createConfiguredPrivateMemoryStorage(env);
+      return service.storeEncryptedPrivateMemory(input);
+    },
   };
 }
 
@@ -82,6 +86,31 @@ export function createPrivateMemoryStorageService(params: {
           threshold: encrypted.threshold,
           keyServerObjectIds: encrypted.keyServerObjectIds,
         },
+        walrus: {
+          blobId: stored.blobId,
+          blobObjectId: stored.blobObjectId,
+          startEpoch: stored.startEpoch,
+          endEpoch: stored.endEpoch,
+          size: stored.size,
+        },
+      } satisfies PrivateMemoryStorageOutput;
+    },
+    async storeEncryptedPrivateMemory(input) {
+      const stored = await params.walrus.store({
+        bytes: input.encryptedBytes,
+        attributes: {
+          twinId: input.twinId,
+          sourceType: input.sourceType,
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          ciphertextSha256: input.ciphertextSha256,
+        },
+      });
+
+      return {
+        rawStorageRef: stored.rawStorageRef,
+        ciphertextSha256: input.ciphertextSha256,
+        seal: input.seal,
         walrus: {
           blobId: stored.blobId,
           blobObjectId: stored.blobObjectId,

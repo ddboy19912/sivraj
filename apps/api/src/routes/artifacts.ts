@@ -3,6 +3,7 @@ import {
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
 import { auditEvents, sourceArtifacts } from "@sivraj/db";
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -45,6 +46,13 @@ export function createArtifactRoutes({
     const sourceType = readSupportedSourceType(body["sourceType"]);
     const title = optionalString(body["title"]);
     const content = requiredString(body["content"]);
+    const encryptedPayload = (() => {
+      try {
+        return readEncryptedPayload(body["encryptedPayload"]);
+      } catch {
+        return "invalid" as const;
+      }
+    })();
     const privateMetadata = recordMetadata(body["metadata"]);
     const storageMetadata = {
       storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
@@ -52,6 +60,7 @@ export function createArtifactRoutes({
       encryptedPayload: {
         kind: "source_artifact",
         version: 1,
+        encryptionBoundary: encryptedPayload ? "client" : "api",
       },
     };
 
@@ -62,7 +71,11 @@ export function createArtifactRoutes({
       );
     }
 
-    if (!content) {
+    if (encryptedPayload === "invalid") {
+      return c.json({ error: "invalid_encrypted_payload" }, 400);
+    }
+
+    if (!content && !encryptedPayload) {
       return c.json({ error: "missing_content" }, 400);
     }
 
@@ -70,18 +83,25 @@ export function createArtifactRoutes({
       return c.json({ error: "encrypted_storage_not_configured" }, 503);
     }
 
-    const stored = await privateMemoryStorage
-      .storePrivateMemory({
-        twinId,
-        sourceType,
-        title,
-        content,
-        metadata: privateMetadata,
-      })
-      .catch((error: unknown) => {
-        console.error("private memory storage failed", error);
-        return null;
-      });
+    const stored = await (encryptedPayload
+      ? privateMemoryStorage.storeEncryptedPrivateMemory({
+          twinId,
+          sourceType,
+          encryptedBytes: encryptedPayload.encryptedBytes,
+          ciphertextSha256: encryptedPayload.ciphertextSha256,
+          seal: encryptedPayload.seal,
+        })
+      : privateMemoryStorage.storePrivateMemory({
+          twinId,
+          sourceType,
+          title,
+          content: content ?? "",
+          metadata: privateMetadata,
+        })
+    ).catch((error: unknown) => {
+      console.error("private memory storage failed", error);
+      return null;
+    });
 
     if (!stored) {
       return c.json({ error: "encrypted_storage_failed" }, 503);
@@ -409,6 +429,68 @@ function recordMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function readEncryptedPayload(value: unknown): {
+  encryptedBytes: Uint8Array;
+  ciphertextSha256: string;
+  seal: {
+    packageId: string;
+    policyId: string;
+    threshold: number;
+    keyServerObjectIds: string[];
+  };
+} | null {
+  const payload = recordMetadata(value);
+  const ciphertextBase64 = optionalString(payload["ciphertextBase64"]);
+  const ciphertextSha256 = optionalString(payload["ciphertextSha256"]);
+  const seal = recordMetadata(payload["seal"]);
+  const packageId = optionalString(seal["packageId"]);
+  const policyId = optionalString(seal["policyId"]);
+  const threshold = typeof seal["threshold"] === "number" ? seal["threshold"] : null;
+  const keyServerObjectIds = Array.isArray(seal["keyServerObjectIds"])
+    ? seal["keyServerObjectIds"].filter((item): item is string => typeof item === "string")
+    : [];
+
+  if (!ciphertextBase64 && !ciphertextSha256 && Object.keys(seal).length === 0) {
+    return null;
+  }
+
+  if (!ciphertextBase64 || !ciphertextSha256 || !packageId || !policyId || keyServerObjectIds.length === 0) {
+    throw new Error("invalid_encrypted_payload");
+  }
+
+  if (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold < 1 || threshold > keyServerObjectIds.length) {
+    throw new Error("invalid_encrypted_payload");
+  }
+  const thresholdValue = threshold;
+
+  if (!/^[a-f0-9]{64}$/i.test(ciphertextSha256)) {
+    throw new Error("invalid_encrypted_payload");
+  }
+
+  const encryptedBytes = Buffer.from(ciphertextBase64, "base64");
+
+  if (encryptedBytes.length === 0 || encryptedBytes.toString("base64") !== ciphertextBase64) {
+    throw new Error("invalid_encrypted_payload");
+  }
+
+  const actualSha256 = createHash("sha256").update(encryptedBytes).digest("hex");
+
+  if (actualSha256 !== ciphertextSha256.toLowerCase()) {
+    throw new Error("invalid_encrypted_payload");
+  }
+
+  return {
+    encryptedBytes,
+    ciphertextSha256: actualSha256,
+    seal: {
+      packageId,
+      policyId,
+      threshold: thresholdValue,
+      keyServerObjectIds,
+    },
+  };
 }
 
 function readProcessingReason(metadata: unknown): string | undefined {
