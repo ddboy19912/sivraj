@@ -17,6 +17,7 @@
     "@sivraj/crypto-seal": "workspace:*",
     "@sivraj/db": "workspace:*",
     "@sivraj/ingestion": "workspace:*",
+    "@sivraj/intelligence": "workspace:*",
     "@sivraj/llm": "workspace:*",
     "@sivraj/queue": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",

@@ -240,7 +240,7 @@ describe('Manual memory app', () => {
     await user.type(screen.getByLabelText('Content'), 'Raw text memory')
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
-    expect(await screen.findByText('Worker completed processing and created retrievable memory.')).toBeInTheDocument()
+    expect(await screen.findByText('Encrypted memory stored and retrievable. Twin learning is queued.')).toBeInTheDocument()
     expect(localStorage.getItem('sivraj.session.v1')).toContain('fresh-stream-token')
     expect(fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:3000/v1/twins/twin-id/artifacts/artifact-id/events',

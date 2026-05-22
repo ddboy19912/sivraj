@@ -13,6 +13,13 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 export type PrivateFragmentStorageOutput = {
   contentStorageRef: string;
   contentSha256: string;
+  encryptedBytesBase64?: string;
+  metadata: Record<string, unknown>;
+};
+
+export type PrivateEncryptedFragmentOutput = {
+  encryptedBytesBase64: string;
+  contentSha256: string;
   metadata: Record<string, unknown>;
 };
 
@@ -22,6 +29,23 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
+    contentKind?: "memory_fragment" | "candidate_memory";
+  }): Promise<PrivateFragmentStorageOutput>;
+  encryptPrivateFragment(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    sourceType: string;
+    content: string;
+    contentKind?: "memory_fragment" | "candidate_memory";
+  }): Promise<PrivateEncryptedFragmentOutput>;
+  storeEncryptedPrivateFragment(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    sourceType: string;
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+    contentKind?: "memory_fragment" | "candidate_memory";
   }): Promise<PrivateFragmentStorageOutput>;
 };
 
@@ -45,9 +69,43 @@ const textEncoder = new TextEncoder();
 export function createPrivateFragmentStorage(params: {
   seal: SealEncryptor;
   walrus: WalrusStorage;
+  logger?: Pick<Console, "info">;
 }): PrivateFragmentStorage {
+  const logger = params.logger ?? console;
+
   return {
     async storePrivateFragment(input) {
+      const totalStartedAt = Date.now();
+      const contentKind = input.contentKind ?? "memory_fragment";
+      const encrypted = await this.encryptPrivateFragment(input);
+      const stored = await this.storeEncryptedPrivateFragment({
+        twinId: input.twinId,
+        sourceArtifactId: input.sourceArtifactId,
+        sourceType: input.sourceType,
+        encryptedBytesBase64: encrypted.encryptedBytesBase64,
+        contentSha256: encrypted.contentSha256,
+        metadata: encrypted.metadata,
+        contentKind,
+      });
+
+      logger.info("private fragment storage completed", {
+        twinId: input.twinId,
+        sourceArtifactId: input.sourceArtifactId,
+        sourceType: input.sourceType,
+        contentKind,
+        plaintextChars: input.content.length,
+        encryptedBytes: approximateBase64Bytes(encrypted.encryptedBytesBase64),
+        sealEncryptMs: readNumber(encrypted.metadata["sealEncryptMs"]),
+        walrusStoreMs: readNumber(stored.metadata["walrusStoreMs"]),
+        totalMs: Date.now() - totalStartedAt,
+        rawStorageRef: stored.contentStorageRef,
+      });
+
+      return stored;
+    },
+    async encryptPrivateFragment(input) {
+      const contentKind = input.contentKind ?? "memory_fragment";
+      const encryptStartedAt = Date.now();
       const encrypted = await params.seal.encrypt({
         data: textEncoder.encode(input.content),
         aad: textEncoder.encode(
@@ -55,36 +113,64 @@ export function createPrivateFragmentStorage(params: {
             twinId: input.twinId,
             sourceArtifactId: input.sourceArtifactId,
             sourceType: input.sourceType,
-            kind: "memory_fragment",
+            kind: contentKind,
           }),
         ),
       });
-      const stored = await params.walrus.store({
-        bytes: encrypted.encryptedBytes,
-        attributes: {
-          twinId: input.twinId,
-          sourceArtifactId: input.sourceArtifactId,
-          sourceType: input.sourceType,
-          storageMode: "encrypted_walrus",
-          sensitivity: "private",
-          contentSha256: encrypted.ciphertextSha256,
-          kind: "memory_fragment",
-        },
-      });
+      const sealEncryptMs = Date.now() - encryptStartedAt;
 
       return {
-        contentStorageRef: stored.rawStorageRef,
+        encryptedBytesBase64: Buffer.from(encrypted.encryptedBytes).toString("base64"),
         contentSha256: encrypted.ciphertextSha256,
         metadata: {
           storageMode: "encrypted_walrus",
           sensitivity: "private",
-          contentKind: "memory_fragment",
+          contentKind,
+          sealEncryptMs,
           seal: {
             packageId: encrypted.packageId,
             policyId: encrypted.policyId,
             threshold: encrypted.threshold,
             keyServerObjectIds: encrypted.keyServerObjectIds,
           },
+        },
+      };
+    },
+    async storeEncryptedPrivateFragment(input) {
+      const contentKind = input.contentKind ?? "memory_fragment";
+      const encryptedBytes = Buffer.from(input.encryptedBytesBase64, "base64");
+      const walrusStartedAt = Date.now();
+      const stored = await params.walrus.store({
+        bytes: encryptedBytes,
+        attributes: {
+          twinId: input.twinId,
+          sourceArtifactId: input.sourceArtifactId,
+          sourceType: input.sourceType,
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          contentSha256: input.contentSha256,
+          kind: contentKind,
+        },
+      });
+      const walrusStoreMs = Date.now() - walrusStartedAt;
+
+      logger.info("private encrypted fragment walrus storage completed", {
+        twinId: input.twinId,
+        sourceArtifactId: input.sourceArtifactId,
+        sourceType: input.sourceType,
+        contentKind,
+        encryptedBytes: encryptedBytes.length,
+        walrusStoreMs,
+        rawStorageRef: stored.rawStorageRef,
+      });
+
+      return {
+        contentStorageRef: stored.rawStorageRef,
+        contentSha256: input.contentSha256,
+        encryptedBytesBase64: input.encryptedBytesBase64,
+        metadata: {
+          ...input.metadata,
+          walrusStoreMs,
           walrus: {
             blobId: stored.blobId,
             blobObjectId: stored.blobObjectId,
@@ -138,6 +224,14 @@ export function createConfiguredPrivateFragmentStorage(
       },
     }),
   });
+}
+
+function approximateBase64Bytes(value: string): number {
+  return Math.floor((value.length * 3) / 4);
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
 
 function readPrivateFragmentStorageConfig(

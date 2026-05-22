@@ -10,6 +10,8 @@ import { streamSSE } from "hono/streaming";
 import type { AppDependencies, SupportedArtifactSourceType } from "../app.js";
 import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
 
+const DEFAULT_TRANSIENT_CIPHERTEXT_MAX_BYTES = 2 * 1024 * 1024;
+
 export function createArtifactRoutes({
   db,
   privateMemoryStorage,
@@ -150,6 +152,12 @@ export function createArtifactRoutes({
           artifactId: artifact.id,
           twinId,
           sourceType,
+          ...(stored.encryptedBytesBase64 && shouldAttachTransientCiphertextBase64(stored.encryptedBytesBase64)
+            ? {
+                transientCiphertextBase64: stored.encryptedBytesBase64,
+                transientCiphertextSha256: stored.ciphertextSha256,
+              }
+            : {}),
         })
         .catch(async (error: unknown) => {
           console.error("artifact processing queue enqueue failed", error);
@@ -361,6 +369,7 @@ export function createArtifactRoutes({
       twinId: artifact.twinId,
       sourceType: artifact.sourceType,
       status: artifact.ingestionStatus,
+      intelligenceStatus: readIntelligenceStatus(artifact.metadata),
       reason: readProcessingReason(artifact.metadata),
       occurredAt: new Date().toISOString(),
     };
@@ -371,7 +380,7 @@ export function createArtifactRoutes({
         data: JSON.stringify(initialEvent),
       });
 
-      if (isTerminalStatus(artifact.ingestionStatus) || !artifactStatusSubscriber) {
+      if (isStreamTerminal(artifact.ingestionStatus, initialEvent.intelligenceStatus) || !artifactStatusSubscriber) {
         return;
       }
 
@@ -396,7 +405,7 @@ export function createArtifactRoutes({
             data: JSON.stringify(event),
           });
 
-          if (isTerminalStatus(event.status)) {
+          if (isStreamTerminal(event.status, event.intelligenceStatus)) {
             resolveTerminal();
           }
         },
@@ -415,6 +424,23 @@ export function createArtifactRoutes({
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown queue error";
+}
+
+function shouldAttachTransientCiphertextBase64(ciphertextBase64: string): boolean {
+  const maxBytes = readTransientCiphertextMaxBytes(process.env["TRANSIENT_CIPHERTEXT_MAX_BYTES"]);
+  const approximateBytes = Math.ceil((ciphertextBase64.length * 3) / 4);
+
+  return maxBytes > 0 && approximateBytes <= maxBytes;
+}
+
+function readTransientCiphertextMaxBytes(value: string | undefined): number {
+  if (!value) {
+    return DEFAULT_TRANSIENT_CIPHERTEXT_MAX_BYTES;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TRANSIENT_CIPHERTEXT_MAX_BYTES;
 }
 
 function optionalString(value: unknown): string | null {
@@ -500,8 +526,35 @@ function readProcessingReason(metadata: unknown): string | undefined {
   return typeof reason === "string" ? reason : undefined;
 }
 
-function isTerminalStatus(status: string): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+function readIntelligenceStatus(metadata: unknown): "queued" | "processing" | "completed" | "failed" | "skipped" | undefined {
+  const intelligence = recordMetadata(recordMetadata(recordMetadata(metadata)["processing"])["intelligence"]);
+  const status = intelligence["status"];
+
+  return status === "queued" ||
+    status === "processing" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "skipped"
+    ? status
+    : undefined;
+}
+
+function isStreamTerminal(
+  status: string,
+  intelligenceStatus?: "queued" | "processing" | "completed" | "failed" | "skipped",
+): boolean {
+  if (status === "failed" || status === "cancelled") {
+    return true;
+  }
+
+  if (status !== "completed") {
+    return false;
+  }
+
+  return !intelligenceStatus ||
+    intelligenceStatus === "completed" ||
+    intelligenceStatus === "failed" ||
+    intelligenceStatus === "skipped";
 }
 
 function readSupportedSourceType(

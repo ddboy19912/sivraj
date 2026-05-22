@@ -80,6 +80,7 @@ export function createPrivateMemoryStorageService(params: {
       return {
         rawStorageRef: stored.rawStorageRef,
         ciphertextSha256: encrypted.ciphertextSha256,
+        encryptedBytesBase64: Buffer.from(encrypted.encryptedBytes).toString("base64"),
         seal: {
           packageId: encrypted.packageId,
           policyId: encrypted.policyId,
@@ -110,6 +111,7 @@ export function createPrivateMemoryStorageService(params: {
       return {
         rawStorageRef: stored.rawStorageRef,
         ciphertextSha256: input.ciphertextSha256,
+        encryptedBytesBase64: Buffer.from(input.encryptedBytes).toString("base64"),
         seal: input.seal,
         walrus: {
           blobId: stored.blobId,

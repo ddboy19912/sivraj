@@ -9,15 +9,51 @@ import IORedis from "ioredis";
 
 export const ARTIFACT_PROCESSING_QUEUE_NAME = "sivraj-artifact-processing";
 export const PROCESS_ARTIFACT_JOB_NAME = "process-artifact";
+export const INTELLIGENCE_PROCESSING_QUEUE_NAME = "sivraj-intelligence-processing";
+export const PROCESS_INTELLIGENCE_JOB_NAME = "process-intelligence";
+export const CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME = "sivraj-candidate-memory-archive";
+export const ARCHIVE_CANDIDATE_MEMORY_JOB_NAME = "archive-candidate-memory";
 
 export type ArtifactProcessingJobData = {
   artifactId: string;
   twinId: string;
   sourceType: string;
+  transientCiphertextBase64?: string;
+  transientCiphertextSha256?: string;
+};
+
+export type IntelligenceProcessingJobData = {
+  artifactId: string;
+  twinId: string;
+  memoryFragmentId: string;
+  sourceType: string;
+  transientFragmentCiphertextBase64?: string;
+  transientFragmentCiphertextSha256?: string;
+};
+
+export type CandidateMemoryArchiveJobData = {
+  artifactId: string;
+  twinId: string;
+  memoryFragmentId: string;
+  sourceType: string;
+  candidateMemoryIds: string[];
+  encryptedBytesBase64: string;
+  contentSha256: string;
+  metadata: Record<string, unknown>;
 };
 
 export type ArtifactProcessingQueue = {
   enqueueArtifactProcessing(data: ArtifactProcessingJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
+export type IntelligenceProcessingQueue = {
+  enqueueIntelligenceProcessing(data: IntelligenceProcessingJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
+export type CandidateMemoryArchiveQueue = {
+  enqueueCandidateMemoryArchive(data: CandidateMemoryArchiveJobData): Promise<{ jobId: string }>;
   close(): Promise<void>;
 };
 
@@ -27,11 +63,16 @@ export type ArtifactProcessingWorker = {
   onCompleted(listener: (jobId: string | undefined) => void): void;
 };
 
+export type IntelligenceProcessingWorker = ArtifactProcessingWorker;
+export type CandidateMemoryArchiveWorker = ArtifactProcessingWorker;
+
 export type ArtifactStatusEvent = {
   artifactId: string;
   twinId: string;
   sourceType: string;
   status: "pending" | "queued" | "processing" | "completed" | "failed" | "cancelled";
+  intelligenceStatus?: "queued" | "processing" | "completed" | "failed" | "skipped";
+  intelligenceStage?: "entity_extraction" | "memory_extraction";
   reason?: string;
   occurredAt: string;
 };
@@ -80,6 +121,52 @@ export function createArtifactProcessingQueue(redisUrl: string): ArtifactProcess
   };
 }
 
+export function createIntelligenceProcessingQueue(redisUrl: string): IntelligenceProcessingQueue {
+  const queue = new Queue<IntelligenceProcessingJobData>(INTELLIGENCE_PROCESSING_QUEUE_NAME, {
+    connection: redisConnection(redisUrl),
+    defaultJobOptions: artifactJobOptions,
+  });
+
+  return {
+    async enqueueIntelligenceProcessing(data) {
+      const job = await queue.add(PROCESS_INTELLIGENCE_JOB_NAME, data, {
+        ...artifactJobOptions,
+        jobId: data.artifactId,
+      });
+
+      return { jobId: String(job.id) };
+    },
+    async close() {
+      await queue.close();
+    },
+  };
+}
+
+export function createCandidateMemoryArchiveQueue(redisUrl: string): CandidateMemoryArchiveQueue {
+  const queue = new Queue<CandidateMemoryArchiveJobData>(CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME, {
+    connection: redisConnection(redisUrl),
+    defaultJobOptions: {
+      ...artifactJobOptions,
+      priority: 10,
+    },
+  });
+
+  return {
+    async enqueueCandidateMemoryArchive(data) {
+      const job = await queue.add(ARCHIVE_CANDIDATE_MEMORY_JOB_NAME, data, {
+        ...artifactJobOptions,
+        priority: 10,
+        jobId: `${data.artifactId}:candidate-memory-archive:${data.contentSha256.slice(0, 16)}`,
+      });
+
+      return { jobId: String(job.id) };
+    },
+    async close() {
+      await queue.close();
+    },
+  };
+}
+
 export function createLazyArtifactProcessingQueue(
   redisUrl: string | undefined,
 ): ArtifactProcessingQueue | undefined {
@@ -114,6 +201,72 @@ export function createArtifactProcessingWorker(
     {
       connection: redisConnection(redisUrl),
       concurrency: options.concurrency ?? 2,
+    },
+  );
+
+  return {
+    async close() {
+      await worker.close();
+    },
+    onFailed(listener) {
+      worker.on("failed", (job, error) => {
+        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
+      });
+    },
+    onCompleted(listener) {
+      worker.on("completed", (job) => {
+        listener(job?.id ? String(job.id) : undefined);
+      });
+    },
+  };
+}
+
+export function createIntelligenceProcessingWorker(
+  redisUrl: string,
+  processor: (data: IntelligenceProcessingJobData, job: Job<IntelligenceProcessingJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): IntelligenceProcessingWorker {
+  const worker = new Worker<IntelligenceProcessingJobData>(
+    INTELLIGENCE_PROCESSING_QUEUE_NAME,
+    async (job) => {
+      await processor(job.data, job);
+    },
+    {
+      connection: redisConnection(redisUrl),
+      concurrency: options.concurrency ?? 2,
+    },
+  );
+
+  return {
+    async close() {
+      await worker.close();
+    },
+    onFailed(listener) {
+      worker.on("failed", (job, error) => {
+        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
+      });
+    },
+    onCompleted(listener) {
+      worker.on("completed", (job) => {
+        listener(job?.id ? String(job.id) : undefined);
+      });
+    },
+  };
+}
+
+export function createCandidateMemoryArchiveWorker(
+  redisUrl: string,
+  processor: (data: CandidateMemoryArchiveJobData, job: Job<CandidateMemoryArchiveJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): CandidateMemoryArchiveWorker {
+  const worker = new Worker<CandidateMemoryArchiveJobData>(
+    CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME,
+    async (job) => {
+      await processor(job.data, job);
+    },
+    {
+      connection: redisConnection(redisUrl),
+      concurrency: options.concurrency ?? 1,
     },
   );
 

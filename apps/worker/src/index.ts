@@ -1,12 +1,26 @@
 import "./env.js";
 import { resolveDatabaseUrl } from "@sivraj/config";
 import { sourceArtifacts, type Db } from "@sivraj/db";
-import { createConfiguredSpeechToTextTranscriber } from "@sivraj/llm";
-import { createArtifactProcessingWorker, createArtifactStatusPublisher } from "@sivraj/queue";
+import {
+  createConfiguredSpeechToTextTranscriber,
+  createConfiguredStructuredGenerator,
+} from "@sivraj/llm";
+import {
+  createArtifactProcessingWorker,
+  createArtifactStatusPublisher,
+  createCandidateMemoryArchiveQueue,
+  createCandidateMemoryArchiveWorker,
+  createIntelligenceProcessingQueue,
+  createIntelligenceProcessingWorker,
+} from "@sivraj/queue";
 import { eq } from "drizzle-orm";
 import { createWorkerDb } from "./db.js";
 import {
   processArtifact,
+  processCandidateMemoryArchive,
+  createEntityExtractor,
+  createMemoryExtractor,
+  processArtifactIntelligence,
   processQueuedArtifacts,
   RetryableArtifactProcessingError,
 } from "./ingestion-processor.js";
@@ -27,9 +41,20 @@ async function main() {
   const privateMemoryReader = createConfiguredPrivateMemoryReader(process.env);
   const privateFragmentStorage = createConfiguredPrivateFragmentStorage(process.env);
   const speechToTextTranscriber = createConfiguredSpeechToTextTranscriber(process.env);
+  const structuredGenerator = createConfiguredStructuredGenerator(process.env);
+  const entityExtractor = structuredGenerator
+    ? createEntityExtractor(structuredGenerator)
+    : undefined;
+  const memoryExtractor = structuredGenerator
+    ? createMemoryExtractor(structuredGenerator)
+    : undefined;
   const redisUrl = readRequired(process.env["REDIS_URL"], "REDIS_URL");
   const artifactStatusPublisher = createArtifactStatusPublisher(redisUrl);
+  const intelligenceQueue = createIntelligenceProcessingQueue(redisUrl);
+  const candidateMemoryArchiveQueue = createCandidateMemoryArchiveQueue(redisUrl);
   const concurrency = readPositiveInt(process.env["WORKER_CONCURRENCY"], 2);
+  const intelligenceChunkChars = readPositiveInt(process.env["INTELLIGENCE_CHUNK_CHARS"], 18_000);
+  const intelligenceChunkConcurrency = readPositiveInt(process.env["INTELLIGENCE_CHUNK_CONCURRENCY"], 2);
 
   if (process.env["WORKER_DRAIN_EXISTING_ON_BOOT"] !== "false") {
     const result = await processQueuedArtifacts(repository, {
@@ -37,6 +62,7 @@ async function main() {
       privateMemoryReader,
       privateFragmentStorage,
       speechToTextTranscriber: speechToTextTranscriber ?? undefined,
+      intelligenceQueue,
     });
 
     console.log(`${serviceName} boot drain processed`, result);
@@ -52,6 +78,9 @@ async function main() {
           privateMemoryReader,
           privateFragmentStorage,
           speechToTextTranscriber: speechToTextTranscriber ?? undefined,
+          intelligenceQueue,
+          transientCiphertextBase64: data.transientCiphertextBase64,
+          transientCiphertextSha256: data.transientCiphertextSha256,
         });
       } catch (error) {
         if (error instanceof RetryableArtifactProcessingError) {
@@ -85,6 +114,7 @@ async function main() {
           twinId: data.twinId,
           sourceType: data.sourceType,
           status: status?.ingestionStatus ?? result,
+          intelligenceStatus: status?.intelligenceStatus,
           reason: status?.reason,
           occurredAt: new Date().toISOString(),
         });
@@ -111,13 +141,125 @@ async function main() {
     });
   });
 
+  const intelligenceWorker = createIntelligenceProcessingWorker(
+    redisUrl,
+    async (data, job) => {
+      await artifactStatusPublisher.publishArtifactStatus({
+        artifactId: data.artifactId,
+        twinId: data.twinId,
+        sourceType: data.sourceType,
+        status: "completed",
+        intelligenceStatus: "processing",
+        occurredAt: new Date().toISOString(),
+      });
+
+      const startedAt = Date.now();
+      const result = await processArtifactIntelligence(repository, {
+        artifactId: data.artifactId,
+        twinId: data.twinId,
+        sourceType: data.sourceType,
+        memoryFragmentId: data.memoryFragmentId,
+        transientFragmentCiphertextBase64: data.transientFragmentCiphertextBase64,
+        transientFragmentCiphertextSha256: data.transientFragmentCiphertextSha256,
+        privateMemoryReader,
+        privateFragmentStorage,
+        entityExtractor,
+        memoryExtractor,
+        candidateMemoryArchiveQueue,
+        intelligenceChunkChars,
+        intelligenceChunkConcurrency,
+      });
+
+      await artifactStatusPublisher.publishArtifactStatus({
+        artifactId: data.artifactId,
+        twinId: data.twinId,
+        sourceType: data.sourceType,
+        status: "completed",
+        intelligenceStatus: result["status"] === "failed" ? "failed" : "completed",
+        occurredAt: new Date().toISOString(),
+      });
+
+      console.log(`${serviceName} intelligence job processed`, {
+        jobId: job.id,
+        artifactId: data.artifactId,
+        result: result.status,
+        durationMs: Date.now() - startedAt,
+      });
+    },
+    { concurrency },
+  );
+
+  intelligenceWorker.onCompleted((jobId) => {
+    console.log(`${serviceName} intelligence job completed`, { jobId });
+  });
+  intelligenceWorker.onFailed((jobId, error, attemptsMade) => {
+    console.error(`${serviceName} intelligence job failed`, {
+      jobId,
+      attemptsMade,
+      errorName: error.name,
+      errorMessage: error.message,
+    });
+  });
+
+  const candidateMemoryArchiveWorker = createCandidateMemoryArchiveWorker(
+    redisUrl,
+    async (data, job) => {
+      const startedAt = Date.now();
+      const result = await processCandidateMemoryArchive(repository, {
+        artifactId: data.artifactId,
+        twinId: data.twinId,
+        memoryFragmentId: data.memoryFragmentId,
+        sourceType: data.sourceType,
+        candidateMemoryIds: data.candidateMemoryIds,
+        encryptedBytesBase64: data.encryptedBytesBase64,
+        contentSha256: data.contentSha256,
+        metadata: data.metadata,
+        privateFragmentStorage,
+      });
+
+      console.log(`${serviceName} candidate memory archive job processed`, {
+        jobId: job.id,
+        artifactId: data.artifactId,
+        result: result.status,
+        candidateMemoryCount: result.candidateMemoryCount,
+        archiveMs: result.archiveMs,
+        durationMs: Date.now() - startedAt,
+      });
+    },
+    { concurrency: readPositiveInt(process.env["CANDIDATE_MEMORY_ARCHIVE_CONCURRENCY"], 1) },
+  );
+
+  candidateMemoryArchiveWorker.onCompleted((jobId) => {
+    console.log(`${serviceName} candidate memory archive job completed`, { jobId });
+  });
+  candidateMemoryArchiveWorker.onFailed((jobId, error, attemptsMade) => {
+    console.error(`${serviceName} candidate memory archive job failed`, {
+      jobId,
+      attemptsMade,
+      errorName: error.name,
+      errorMessage: error.message,
+    });
+  });
+
   console.log(`${serviceName} ready`, {
     queue: "sivraj-artifact-processing",
+    intelligenceQueue: "sivraj-intelligence-processing",
+    candidateMemoryArchiveQueue: "sivraj-candidate-memory-archive",
     concurrency,
+    entityExtraction: entityExtractor ? "enabled" : "disabled",
+    memoryExtraction: memoryExtractor ? "enabled" : "disabled",
+    intelligenceChunkChars,
+    intelligenceChunkConcurrency,
+    llmModel: process.env["LLM_MODEL"] || null,
+    llmBaseUrl: process.env["OPENAI_BASE_URL"] || "https://api.openai.com",
   });
 
   await waitForShutdown();
+  await candidateMemoryArchiveWorker.close();
+  await intelligenceWorker.close();
   await worker.close();
+  await candidateMemoryArchiveQueue.close();
+  await intelligenceQueue.close();
   await artifactStatusPublisher.close();
   await close();
 }
@@ -162,6 +304,7 @@ async function readArtifactStatus(db: Db, artifactId: string) {
   return {
     ingestionStatus: artifact.ingestionStatus,
     reason: readProcessingReason(artifact.metadata),
+    intelligenceStatus: readIntelligenceStatus(artifact.metadata),
   };
 }
 
@@ -179,6 +322,34 @@ function readProcessingReason(metadata: unknown): string | undefined {
   const reason = (processing as Record<string, unknown>)["reason"];
 
   return typeof reason === "string" ? reason : undefined;
+}
+
+function readIntelligenceStatus(metadata: unknown): "queued" | "processing" | "completed" | "failed" | "skipped" | undefined {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return undefined;
+  }
+
+  const processing = (metadata as Record<string, unknown>)["processing"];
+
+  if (!processing || typeof processing !== "object" || Array.isArray(processing)) {
+    return undefined;
+  }
+
+  const intelligence = (processing as Record<string, unknown>)["intelligence"];
+
+  if (!intelligence || typeof intelligence !== "object" || Array.isArray(intelligence)) {
+    return undefined;
+  }
+
+  const status = (intelligence as Record<string, unknown>)["status"];
+
+  return status === "queued" ||
+    status === "processing" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "skipped"
+    ? status
+    : undefined;
 }
 
 function waitForShutdown(): Promise<void> {

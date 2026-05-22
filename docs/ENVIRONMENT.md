@@ -52,9 +52,13 @@ Root `.env.example` is source of truth.
 - `DATABASE_URL`
 - `REDIS_URL`
 - `WORKER_CONCURRENCY`
+- `TRANSIENT_CIPHERTEXT_MAX_BYTES`
+- `INTELLIGENCE_CHUNK_CHARS`
+- `INTELLIGENCE_CHUNK_CONCURRENCY`
 - `LLM_PROVIDER`
 - `LLM_API_KEY`
 - `LLM_MODEL`
+- `LLM_REQUEST_TIMEOUT_MS`
 - `SPEECH_TO_TEXT_PROVIDER`
 - `SPEECH_TO_TEXT_API_KEY`
 - `SPEECH_TO_TEXT_MODEL`
@@ -103,12 +107,17 @@ Root `.env.example` is source of truth.
 
 - `REDIS_URL`: Redis connection string.
 - `WORKER_CONCURRENCY`: Max concurrent worker jobs.
+- `TRANSIENT_CIPHERTEXT_MAX_BYTES`: Maximum encrypted payload size the API/worker may pass through Redis for short-lived processing handoff. Defaults to `2097152`; set `0` to force all worker reads through Walrus.
+- `INTELLIGENCE_CHUNK_CHARS`: Target character size for chunking large memory fragments before entity and memory extraction. Defaults to `18000`.
+- `INTELLIGENCE_CHUNK_CONCURRENCY`: Max concurrent chunk extraction tasks inside one intelligence job. Defaults to `2`.
+- `CANDIDATE_MEMORY_ARCHIVE_CONCURRENCY`: Max concurrent low-priority candidate-memory archive jobs. Defaults to `1`.
 
 ### LLM
 
 - `LLM_PROVIDER`: Model provider key.
 - `LLM_API_KEY`: Provider API key.
 - `LLM_MODEL`: Main synthesis model.
+- `LLM_REQUEST_TIMEOUT_MS`: Per structured-generation request timeout in milliseconds. Defaults to `45000`; prevents worker jobs from sitting in `processing` indefinitely when an OpenAI-compatible provider hangs.
 - `EMBEDDING_MODEL`: Embedding model.
 
 ### Speech To Text

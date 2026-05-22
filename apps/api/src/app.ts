@@ -66,6 +66,7 @@ export type EncryptedPrivateMemoryStorageInput = {
 export type PrivateMemoryStorageOutput = {
   rawStorageRef: string;
   ciphertextSha256: string;
+  encryptedBytesBase64?: string;
   seal: {
     packageId: string;
     policyId: string;

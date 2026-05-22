@@ -83,4 +83,40 @@ describe("private memory reader", () => {
       }),
     );
   });
+
+  it("decrypts transient ciphertext without reading Walrus", async () => {
+    const walrusCalls: unknown[] = [];
+    const sealCalls: unknown[] = [];
+    const encryptedBytes = new Uint8Array([4, 5, 6]);
+    const reader = createPrivateMemoryReader({
+      walrus: {
+        async read(input) {
+          walrusCalls.push(input);
+          return new Uint8Array([1, 2, 3]);
+        },
+      },
+      seal: {
+        async decrypt(input) {
+          sealCalls.push(input);
+          return {
+            plaintext: new TextEncoder().encode("transient memory"),
+            packageId: "0xpackage",
+            policyId: "0xpolicy",
+            sealId: "0xseal",
+          };
+        },
+      },
+    });
+
+    await expect(
+      reader.readPrivateMemoryFromEncryptedBytes?.({
+        encryptedBytesBase64: Buffer.from(encryptedBytes).toString("base64"),
+        artifactId: "artifact-id",
+        twinId: "twin-id",
+        source: "artifact_queue",
+      }),
+    ).resolves.toBe("transient memory");
+    expect(walrusCalls).toEqual([]);
+    expect(sealCalls).toEqual([{ encryptedBytes: Buffer.from(encryptedBytes) }]);
+  });
 });

@@ -38,6 +38,7 @@ type ArtifactReceipt = {
   rawStorageRef: string | null
   processingJobId?: string | null
   warning: string | null
+  intelligenceStatus?: 'queued' | 'processing' | 'completed' | 'failed' | 'skipped'
   github?: {
     repoUrl: string
     owner: string
@@ -51,6 +52,8 @@ type ArtifactStatusEvent = {
   twinId: string
   sourceType: string
   status: ArtifactReceipt['status']
+  intelligenceStatus?: ArtifactReceipt['intelligenceStatus']
+  intelligenceStage?: 'entity_extraction' | 'memory_extraction'
   reason?: string
   occurredAt: string
 }
@@ -240,10 +243,17 @@ function App() {
           return {
             ...current,
             status: event.status,
+            intelligenceStatus: event.intelligenceStatus ?? current.intelligenceStatus,
           }
         })
 
-        if (event.status === 'failed') {
+        if (event.intelligenceStatus === 'processing') {
+          setUploadProgress('completed', 'Encrypted memory stored. Twin learning is running in the background.')
+        } else if (event.intelligenceStatus === 'completed') {
+          setUploadProgress('completed', 'Encrypted memory stored. Twin learning completed.')
+        } else if (event.intelligenceStatus === 'failed') {
+          setUploadProgress('completed', 'Encrypted memory stored. Twin learning needs attention, but upload succeeded.')
+        } else if (event.status === 'failed') {
           const detail = event.reason ? `Processing failed: ${event.reason}.` : 'Artifact processing failed.'
           setUploadProgress('failed', detail)
           setNotice({
@@ -252,7 +262,7 @@ function App() {
             body: detail,
           })
         } else if (event.status === 'completed') {
-          setUploadProgress('completed', 'Worker completed processing and created retrievable memory.')
+          setUploadProgress('completed', 'Encrypted memory stored and retrievable. Twin learning is queued.')
         } else if (event.status === 'pending') {
           const detail = event.reason ? `Processing pending: ${event.reason}.` : 'Worker marked this artifact pending.'
           setUploadProgress('pending', detail)
@@ -1130,6 +1140,12 @@ function ReceiptPanel({
             <dd>{receipt.processingJobId}</dd>
           </div>
         ) : null}
+        {receipt.intelligenceStatus ? (
+          <div>
+            <dt>Twin learning</dt>
+            <dd>{formatIntelligenceStatus(receipt.intelligenceStatus)}</dd>
+          </div>
+        ) : null}
         {receipt.warning ? (
           <div>
             <dt>Warning</dt>
@@ -1153,6 +1169,21 @@ function EmptyReceipt() {
       <p>Successful uploads will show the artifact ID, status, storage mode, and Walrus reference.</p>
     </section>
   )
+}
+
+function formatIntelligenceStatus(status: NonNullable<ArtifactReceipt['intelligenceStatus']>) {
+  switch (status) {
+    case 'queued':
+      return 'Queued'
+    case 'processing':
+      return 'In progress'
+    case 'completed':
+      return 'Completed'
+    case 'failed':
+      return 'Needs attention'
+    case 'skipped':
+      return 'Skipped'
+  }
 }
 
 async function postJson<TResponse>(
@@ -1320,7 +1351,7 @@ async function streamArtifactStatus(
       if (event) {
         onEvent(event)
 
-        if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {
+        if (isArtifactStatusStreamTerminal(event)) {
           await reader.cancel()
           return
         }
@@ -1379,6 +1410,23 @@ function parseArtifactStatusSse(message: string): ArtifactStatusEvent | null {
   } catch {
     return null
   }
+}
+
+function isArtifactStatusStreamTerminal(event: ArtifactStatusEvent) {
+  if (event.status === 'failed' || event.status === 'cancelled') {
+    return true
+  }
+
+  if (event.status !== 'completed') {
+    return false
+  }
+
+  return (
+    !event.intelligenceStatus ||
+    event.intelligenceStatus === 'completed' ||
+    event.intelligenceStatus === 'failed' ||
+    event.intelligenceStatus === 'skipped'
+  )
 }
 
 function apiErrorMessage(status: number, payload: unknown): string {

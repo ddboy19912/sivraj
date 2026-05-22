@@ -13,6 +13,8 @@ import {
   SPEECH_TO_TEXT_FAILED,
   SPEECH_TO_TEXT_REQUIRED,
   processArtifact,
+  processCandidateMemoryArchive,
+  processArtifactIntelligence,
   processQueuedArtifacts,
   RetryableArtifactProcessingError,
   type ArtifactRepository,
@@ -34,7 +36,6 @@ describe("processQueuedArtifacts", () => {
         },
       },
     ]);
-
     const result = await processQueuedArtifacts(repository, {
       privateFragmentStorage: createFakePrivateFragmentStorage(),
       now: new Date("2026-05-18T00:00:00.000Z"),
@@ -191,6 +192,520 @@ describe("processQueuedArtifacts", () => {
         contentKind: "memory_fragment",
       },
     });
+  });
+
+  it("extracts entities into graph nodes and edges after memory fragment creation", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    const entityExtractor = {
+      async extract(input: {
+        twinId: string;
+        sourceArtifactId: string;
+        memoryFragmentId: string;
+        sourceType: string;
+        content: string;
+        title?: string | null;
+      }) {
+        expect(input).toMatchObject({
+          twinId: "twin-id",
+          sourceArtifactId: "artifact-id",
+          memoryFragmentId: "fragment-1",
+          sourceType: "note",
+          title: null,
+        });
+
+        return {
+          entities: [
+            {
+              name: "Polytope Labs",
+              normalizedName: "polytope labs",
+              type: "organization" as const,
+              graphNodeType: "organization" as const,
+              aliases: [],
+              confidence: 0.93,
+              evidenceHash: "hash",
+              evidenceLength: 14,
+              metadata: { relationship: "client" },
+            },
+          ],
+          metadata: {
+            extractor: "llm_structured_entity_extractor",
+            provider: "openai",
+            model: "gpt-4o",
+            originalLength: input.content.length,
+            returnedEntities: 1,
+            acceptedEntities: 1,
+            warnings: [],
+          },
+        };
+      },
+    };
+
+    const result = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Founder note",
+            content: "I worked with Polytope Labs on Hyperbridge.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "I worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+      entityExtractor,
+    });
+
+    expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(repository.graphNodes).toHaveLength(2);
+    expect(repository.graphNodes[0]).toMatchObject({
+      nodeType: "artifact",
+      name: "source_artifact:artifact-id",
+    });
+    expect(repository.graphNodes[1]).toMatchObject({
+      nodeType: "organization",
+      name: "Polytope Labs",
+      normalizedName: "polytope labs",
+      properties: {
+        normalizedName: "polytope labs",
+        entityType: "organization",
+        evidenceHash: "hash",
+        evidenceLength: 14,
+        metadata: { relationship: "client" },
+      },
+    });
+    expect(repository.graphEdges[0]).toMatchObject({
+      edgeType: "mentions",
+      evidenceMemoryIds: ["fragment-1"],
+      confidenceScore: 0.93,
+    });
+    expect(JSON.stringify(repository.graphNodes)).not.toContain("I worked with");
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          entityExtraction: {
+            status: "completed",
+            entityCount: 1,
+            provider: "openai",
+          },
+        },
+      },
+    });
+  });
+
+  it("merges repeated extracted entities by canonical graph identity", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-one",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-one",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+      {
+        id: "artifact-two",
+        twinId: "twin-id",
+        sourceType: "pdf",
+        rawStorageRef: "walrus://blob/blob-two",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    const entityExtractor = {
+      async extract(input: {
+        sourceArtifactId: string;
+        sourceType: string;
+        content: string;
+      }) {
+        return {
+          entities: [
+            {
+              name:
+                input.sourceArtifactId === "artifact-one"
+                  ? "Polytope Labs"
+                  : "polytope labs",
+              normalizedName: "polytope labs",
+              type: "organization" as const,
+              graphNodeType: "organization" as const,
+              aliases:
+                input.sourceArtifactId === "artifact-one"
+                  ? ["Hyperbridge"]
+                  : ["Polytope"],
+              confidence:
+                input.sourceArtifactId === "artifact-one" ? 0.82 : 0.94,
+              evidenceHash: `hash-${input.sourceArtifactId}`,
+              evidenceLength: 18,
+              metadata: { source: input.sourceType },
+            },
+          ],
+          metadata: {
+            extractor: "llm_structured_entity_extractor",
+            provider: "openai",
+            model: "gpt-4o",
+            originalLength: input.content.length,
+            returnedEntities: 1,
+            acceptedEntities: 1,
+            warnings: [],
+          },
+        };
+      },
+    };
+
+    const result = await processQueuedArtifacts(repository, {
+      limit: 2,
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          return privateSourcePayload({
+            content:
+              input.artifactId === "artifact-one"
+                ? "Polytope Labs shipped Hyperbridge."
+                : "polytope labs appears again in this PDF.",
+          });
+        },
+      },
+    });
+
+    expect(result).toEqual({ scanned: 2, completed: 2, pending: 0, failed: 0 });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-one",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Polytope Labs shipped Hyperbridge.";
+        },
+      },
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      entityExtractor,
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-two",
+      twinId: "twin-id",
+      sourceType: "pdf",
+      memoryFragmentId: "fragment-2",
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "polytope labs appears again in this PDF.";
+        },
+      },
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      entityExtractor,
+    });
+
+    const organizationNodes = repository.graphNodes.filter(
+      (node) => node.nodeType === "organization",
+    );
+    expect(organizationNodes).toHaveLength(1);
+    expect(organizationNodes[0]).toMatchObject({
+      name: "Polytope Labs",
+      normalizedName: "polytope labs",
+      confidenceScore: 0.94,
+      properties: {
+        normalizedName: "polytope labs",
+        aliases: ["Hyperbridge", "Polytope"],
+        sourceTypes: ["note", "pdf"],
+        mentionCount: 2,
+      },
+    });
+    expect(repository.graphEdges).toHaveLength(2);
+    expect(repository.graphEdges.map((edge) => edge.toNodeId)).toEqual([
+      organizationNodes[0]?.id,
+      organizationNodes[0]?.id,
+    ]);
+  });
+
+  it("does not fail ingestion when entity extraction fails", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    const result = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({ content: "Private memory." });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Private memory.";
+        },
+      },
+      entityExtractor: {
+        async extract() {
+          throw new Error("model unavailable");
+        },
+      },
+    });
+
+    expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          entityExtraction: {
+            status: "failed",
+            reason: "entity_extraction_failed",
+            detail: "model unavailable",
+          },
+        },
+      },
+    });
+    expect(repository.auditEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "artifact.entity_extraction_failed",
+      }),
+    ]));
+  });
+
+  it("extracts candidate memories into encrypted storage without plaintext DB statements", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    const memoryExtractor = {
+      async extract(input: {
+        twinId: string;
+        sourceArtifactId: string;
+        memoryFragmentId: string;
+        sourceType: string;
+        content: string;
+        title?: string | null;
+      }) {
+        expect(input).toMatchObject({
+          twinId: "twin-id",
+          sourceArtifactId: "artifact-id",
+          memoryFragmentId: "fragment-1",
+          sourceType: "note",
+          title: null,
+        });
+
+        return {
+          memories: [
+            {
+              statement: "The user worked with Polytope Labs on Hyperbridge.",
+              normalizedStatement: "the user worked with polytope labs on hyperbridge.",
+              memoryType: "experience" as const,
+              subject: "Polytope Labs",
+              confidence: 0.91,
+              evidenceHash: "evidence-hash",
+              evidenceLength: 24,
+              metadata: { category: "work_history" },
+            },
+          ],
+          metadata: {
+            extractor: "llm_structured_memory_extractor",
+            provider: "openai",
+            model: "gpt-4o",
+            originalLength: input.content.length,
+            returnedMemories: 1,
+            acceptedMemories: 1,
+            warnings: [],
+          },
+        };
+      },
+    };
+    const candidateMemoryArchiveQueue = createFakeCandidateMemoryArchiveQueue();
+
+    const result = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Founder note",
+            content: "The user worked with Polytope Labs on Hyperbridge.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "The user worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+      memoryExtractor,
+      candidateMemoryArchiveQueue,
+    });
+
+    expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(repository.candidateMemories).toHaveLength(1);
+    expect(repository.candidateMemories[0]).toMatchObject({
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-id",
+      memoryFragmentId: "fragment-1",
+      memoryType: "experience",
+      statementStorageRef: "pending://candidate-memory-archive/artifact-id/fragment-1",
+      statementSha256: "sha256:candidate:261",
+      evidenceHash: "evidence-hash",
+      evidenceLength: 24,
+      confidenceScore: 0.91,
+    });
+    expect(repository.candidateMemories[0]?.metadata).toMatchObject({
+      archiveStatus: "pending",
+    });
+    expect(candidateMemoryArchiveQueue.enqueueCalls).toHaveLength(1);
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain(
+      "The user worked with Polytope Labs",
+    );
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            status: "completed",
+            candidateMemoryCount: 1,
+            provider: "openai",
+            candidateMemoryArchiveQueued: true,
+            durationMs: expect.any(Number),
+          },
+          timing: {
+            entityExtractionMs: expect.any(Number),
+            memoryExtractionMs: expect.any(Number),
+            totalIntelligenceMs: expect.any(Number),
+          },
+        },
+      },
+    });
+    expect(repository.auditEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "artifact.memories_extracted",
+      }),
+    ]));
+
+    await processCandidateMemoryArchive(repository, {
+      ...candidateMemoryArchiveQueue.enqueueCalls[0]!,
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+    });
+
+    expect(repository.candidateMemories[0]).toMatchObject({
+      statementStorageRef: "walrus://blob/encrypted-candidate-memory",
+      statementSha256: "sha256:candidate:261",
+    });
+    expect(repository.candidateMemories[0]?.metadata).toMatchObject({
+      archiveStatus: "completed",
+    });
+    expect(repository.auditEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "artifact.candidate_memories_archived",
+      }),
+    ]));
+  });
+
+  it("does not fail ingestion when memory extraction fails", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    const result = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({ content: "Private memory." });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Private memory.";
+        },
+      },
+      memoryExtractor: {
+        async extract() {
+          throw new Error("model unavailable");
+        },
+      },
+    });
+
+    expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            status: "failed",
+            reason: "memory_extraction_failed",
+            detail: "model unavailable",
+          },
+        },
+      },
+    });
+    expect(repository.auditEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "artifact.memory_extraction_failed",
+      }),
+    ]));
   });
 
   it("keeps transient encrypted decrypt failures pending and throws for queue retry", async () => {
@@ -1220,16 +1735,28 @@ function createRepository(artifacts: QueuedArtifact[]) {
     status: "queued",
   }));
   const fragments: unknown[] = [];
+  const graphNodes: Array<Record<string, unknown> & { id: string }> = [];
+  const graphEdges: Array<Record<string, unknown> & { id: string }> = [];
+  const candidateMemories: Array<Record<string, unknown> & { id: string }> = [];
   const auditEvents: unknown[] = [];
 
   const repository: ArtifactRepository & {
     artifacts: typeof state;
     fragments: unknown[];
+    graphNodes: typeof graphNodes;
+    graphEdges: typeof graphEdges;
+    candidateMemories: typeof candidateMemories;
     auditEvents: unknown[];
   } = {
     artifacts: state,
     fragments,
+    graphNodes,
+    graphEdges,
+    candidateMemories,
     auditEvents,
+    async findArtifactById(id) {
+      return state.find((artifact) => artifact.id === id) ?? null;
+    },
     async findQueuedArtifacts(limit) {
       return state.filter((artifact) => artifact.status === "queued").slice(0, limit);
     },
@@ -1273,6 +1800,25 @@ function createRepository(artifacts: QueuedArtifact[]) {
         ) as { id: string } | undefined
       ) ?? null;
     },
+    async findMemoryFragmentById(id) {
+      const fragment = fragments.find(
+        (candidate) =>
+          typeof candidate === "object" &&
+          candidate !== null &&
+          "id" in candidate &&
+          candidate.id === id,
+      ) as
+        | {
+            id: string;
+            twinId: string;
+            sourceArtifactId: string;
+            contentStorageRef: string | null;
+            contentSha256: string | null;
+          }
+        | undefined;
+
+      return fragment ?? null;
+    },
     async createMemoryFragment(input) {
       const testPlaintext = readTestPlaintext(input.metadata);
       const fragment = {
@@ -1282,6 +1828,106 @@ function createRepository(artifacts: QueuedArtifact[]) {
       };
       fragments.push(fragment);
       return fragment;
+    },
+    async upsertGraphNode(input) {
+      const normalizedName = input.normalizedName ?? normalizeTestGraphNodeName(input.name);
+      const existing = graphNodes.find(
+        (node) =>
+          node.twinId === input.twinId &&
+          node.nodeType === input.nodeType &&
+          node.normalizedName === normalizedName,
+      );
+
+      if (existing) {
+        Object.assign(existing, {
+          ...input,
+          name: existing.name,
+          normalizedName,
+          properties: mergeTestGraphNodeProperties(
+            existing.properties,
+            input.properties,
+          ),
+          confidenceScore: Math.max(
+            readTestNumber(existing.confidenceScore),
+            input.confidenceScore,
+          ),
+        });
+        return { id: existing.id };
+      }
+
+      const node = {
+        ...input,
+        normalizedName,
+        properties: mergeTestGraphNodeProperties(null, input.properties),
+        id: `node-${graphNodes.length + 1}`,
+      };
+      graphNodes.push(node);
+      return { id: node.id };
+    },
+    async upsertGraphEdge(input) {
+      const existing = graphEdges.find(
+        (edge) =>
+          edge.twinId === input.twinId &&
+          edge.fromNodeId === input.fromNodeId &&
+          edge.toNodeId === input.toNodeId &&
+          edge.edgeType === input.edgeType,
+      );
+
+      if (existing) {
+        Object.assign(existing, {
+          ...input,
+          evidenceMemoryIds: Array.from(new Set([
+            ...((existing.evidenceMemoryIds as string[] | undefined) ?? []),
+            ...input.evidenceMemoryIds,
+          ])),
+        });
+        return { id: existing.id };
+      }
+
+      const edge = {
+        ...input,
+        id: `edge-${graphEdges.length + 1}`,
+      };
+      graphEdges.push(edge);
+      return { id: edge.id };
+    },
+    async createCandidateMemory(input) {
+      const existing = candidateMemories.find(
+        (candidate) =>
+          candidate.memoryFragmentId === input.memoryFragmentId &&
+          candidate.memoryType === input.memoryType &&
+          candidate.evidenceHash === input.evidenceHash,
+      );
+
+      if (existing) {
+        Object.assign(existing, input);
+        return { id: existing.id };
+      }
+
+      const candidate = {
+        ...input,
+        id: `candidate-memory-${candidateMemories.length + 1}`,
+      };
+      candidateMemories.push(candidate);
+      return { id: candidate.id };
+    },
+    async markCandidateMemoriesArchived(input) {
+      for (const id of input.candidateMemoryIds) {
+        const candidate = candidateMemories.find((item) => item.id === id);
+
+        if (!candidate) {
+          continue;
+        }
+
+        Object.assign(candidate, {
+          statementStorageRef: input.statementStorageRef,
+          statementSha256: input.statementSha256,
+          metadata: {
+            ...((candidate.metadata as Record<string, unknown> | undefined) ?? {}),
+            ...input.metadata,
+          },
+        });
+      }
     },
     async createAuditEvent(input) {
       auditEvents.push(input);
@@ -1323,10 +1969,71 @@ function privateSourcePayload(input: {
 
 function createFakePrivateFragmentStorage() {
   return {
-    async storePrivateFragment(input: { content: string }) {
+    async encryptPrivateFragment(input: { content: string; contentKind?: string }) {
+      if (input.contentKind === "candidate_memory") {
+        return {
+          encryptedBytesBase64: Buffer.from(`candidate:${input.content}`).toString("base64"),
+          contentSha256: `sha256:candidate:${input.content.length}`,
+          metadata: {
+            storageMode: "encrypted_walrus",
+            sensitivity: "private",
+            contentKind: "candidate_memory",
+            sealEncryptMs: 1,
+          },
+        };
+      }
+
+      return {
+        encryptedBytesBase64: Buffer.from(input.content).toString("base64"),
+        contentSha256: `sha256:${input.content.length}`,
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          contentKind: "memory_fragment",
+          sealEncryptMs: 1,
+          testPlaintext: input.content,
+        },
+      };
+    },
+    async storeEncryptedPrivateFragment(input: {
+      encryptedBytesBase64: string;
+      contentSha256: string;
+      metadata: Record<string, unknown>;
+      contentKind?: string;
+    }) {
+      return {
+        contentStorageRef: input.contentKind === "candidate_memory"
+          ? "walrus://blob/encrypted-candidate-memory"
+          : "walrus://blob/encrypted-fragment",
+        contentSha256: input.contentSha256,
+        encryptedBytesBase64: input.encryptedBytesBase64,
+        metadata: {
+          ...input.metadata,
+          walrusStoreMs: 1,
+          walrus: {
+            blobId: "test-blob",
+          },
+        },
+      };
+    },
+    async storePrivateFragment(input: { content: string; contentKind?: string }) {
+      if (input.contentKind === "candidate_memory") {
+        return {
+          contentStorageRef: "walrus://blob/encrypted-candidate-memory",
+          contentSha256: `sha256:candidate:${input.content.length}`,
+          encryptedBytesBase64: Buffer.from(`candidate:${input.content}`).toString("base64"),
+          metadata: {
+            storageMode: "encrypted_walrus",
+            sensitivity: "private",
+            contentKind: "candidate_memory",
+          },
+        };
+      }
+
       return {
         contentStorageRef: "walrus://blob/encrypted-fragment",
         contentSha256: `sha256:${input.content.length}`,
+        encryptedBytesBase64: Buffer.from(input.content).toString("base64"),
         metadata: {
           storageMode: "encrypted_walrus",
           sensitivity: "private",
@@ -1338,12 +2045,34 @@ function createFakePrivateFragmentStorage() {
   };
 }
 
+function createFakeCandidateMemoryArchiveQueue() {
+  const enqueueCalls: Array<{
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  }> = [];
+
+  return {
+    enqueueCalls,
+    async enqueueCandidateMemoryArchive(input: typeof enqueueCalls[number]) {
+      enqueueCalls.push(input);
+      return { jobId: `${input.artifactId}:candidate-memory-archive:${input.contentSha256.slice(0, 16)}` };
+    },
+  };
+}
+
 function createStrictFakePrivateFragmentStorage() {
   return {
     async storePrivateFragment(input: { content: string }) {
       return {
         contentStorageRef: "walrus://blob/encrypted-fragment",
         contentSha256: `sha256:${input.content.length}`,
+        encryptedBytesBase64: Buffer.from(input.content).toString("base64"),
         metadata: {
           storageMode: "encrypted_walrus",
           sensitivity: "private",
@@ -1361,4 +2090,58 @@ function readTestPlaintext(metadata: unknown): string | null {
 
   const value = (metadata as Record<string, unknown>)["testPlaintext"];
   return typeof value === "string" ? value : null;
+}
+
+function normalizeTestGraphNodeName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function mergeTestGraphNodeProperties(
+  existing: unknown,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const existingRecord = readTestRecord(existing);
+  const aliases = mergeTestStringArrays(
+    readTestStringArray(existingRecord.aliases),
+    readTestStringArray(incoming.aliases),
+  );
+  const sourceTypes = mergeTestStringArrays(
+    readTestStringArray(existingRecord.sourceTypes),
+    readTestStringArray(incoming.sourceTypes),
+    typeof incoming.sourceType === "string" ? [incoming.sourceType] : [],
+  );
+
+  return {
+    ...existingRecord,
+    ...incoming,
+    aliases,
+    sourceTypes,
+    mentionCount:
+      readTestNumber(existingRecord.mentionCount) +
+      Math.max(1, readTestNumber(incoming.mentionCount)),
+  };
+}
+
+function readTestRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readTestStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function mergeTestStringArrays(...arrays: string[][]): string[] {
+  return Array.from(new Set(arrays.flat().map((value) => value.trim()).filter(Boolean)));
+}
+
+function readTestNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

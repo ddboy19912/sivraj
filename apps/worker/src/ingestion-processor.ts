@@ -1,4 +1,13 @@
 import {
+  extractEntities,
+  extractMemories,
+  type EntityExtractionResult,
+  type ExtractedEntity,
+  type ExtractedMemory,
+  type MemoryExtractionResult,
+} from "@sivraj/intelligence";
+import { createHash } from "node:crypto";
+import {
   parseBrowserHistory,
   parseChatExport,
   parseCsv,
@@ -13,7 +22,7 @@ import {
   parseWhatsAppExport,
   type ParserMetadata,
 } from "@sivraj/ingestion";
-import type { SpeechToTextTranscriber } from "@sivraj/llm";
+import type { SpeechToTextTranscriber, StructuredGenerator } from "@sivraj/llm";
 
 export type IngestionStatus = "pending" | "queued" | "processing" | "completed" | "failed" | "cancelled";
 
@@ -26,6 +35,7 @@ export type QueuedArtifact = {
 };
 
 export type ArtifactRepository = {
+  findArtifactById(id: string): Promise<QueuedArtifact | null>;
   findQueuedArtifacts(limit: number): Promise<QueuedArtifact[]>;
   claimArtifact(id: string): Promise<QueuedArtifact | null>;
   claimRecoverableArtifact(id: string): Promise<QueuedArtifact | null>;
@@ -33,6 +43,13 @@ export type ArtifactRepository = {
   markArtifactCompleted(id: string, metadata: Record<string, unknown>): Promise<void>;
   markArtifactFailed(id: string, metadata: Record<string, unknown>): Promise<void>;
   findMemoryFragmentBySourceArtifactId(sourceArtifactId: string): Promise<{ id: string } | null>;
+  findMemoryFragmentById(id: string): Promise<{
+    id: string;
+    twinId: string;
+    sourceArtifactId: string;
+    contentStorageRef: string | null;
+    contentSha256: string | null;
+  } | null>;
   createMemoryFragment(input: {
     twinId: string;
     sourceArtifactId: string;
@@ -42,12 +59,70 @@ export type ArtifactRepository = {
     importanceScore: number;
     confidenceScore: number;
   }): Promise<{ id: string }>;
+  upsertGraphNode(input: {
+    twinId: string;
+    nodeType: ExtractedEntity["graphNodeType"];
+    name: string;
+    normalizedName?: string | null;
+    description?: string | null;
+    properties: Record<string, unknown>;
+    confidenceScore: number;
+  }): Promise<{ id: string }>;
+  upsertGraphEdge(input: {
+    twinId: string;
+    fromNodeId: string;
+    toNodeId: string;
+    edgeType: string;
+    description?: string | null;
+    evidenceMemoryIds: string[];
+    confidenceScore: number;
+  }): Promise<{ id: string }>;
+  createCandidateMemory(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    memoryType: ExtractedMemory["memoryType"];
+    statementStorageRef: string;
+    statementSha256: string;
+    evidenceHash: string;
+    evidenceLength: number;
+    confidenceScore: number;
+    metadata: Record<string, unknown>;
+  }): Promise<{ id: string }>;
+  markCandidateMemoriesArchived(input: {
+    candidateMemoryIds: string[];
+    statementStorageRef: string;
+    statementSha256: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void>;
   createAuditEvent(input: {
     twinId: string;
     eventType: string;
     resourceId: string;
     metadata: Record<string, unknown>;
   }): Promise<void>;
+};
+
+export type EntityExtractor = {
+  extract(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    content: string;
+    title?: string | null;
+  }): Promise<EntityExtractionResult>;
+};
+
+export type MemoryExtractor = {
+  extract(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    content: string;
+    title?: string | null;
+  }): Promise<MemoryExtractionResult>;
 };
 
 export type PrivateMemoryReader = {
@@ -57,6 +132,13 @@ export type PrivateMemoryReader = {
     twinId: string;
     expectedCiphertextSha256?: string | null;
   }): Promise<string>;
+  readPrivateMemoryFromEncryptedBytes?(input: {
+    encryptedBytesBase64: string;
+    artifactId: string;
+    twinId: string;
+    expectedCiphertextSha256?: string | null;
+    source: "artifact_queue" | "intelligence_queue";
+  }): Promise<string>;
 };
 
 export type PrivateFragmentStorage = {
@@ -65,17 +147,74 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
+    contentKind?: "memory_fragment" | "candidate_memory";
   }): Promise<{
     contentStorageRef: string;
     contentSha256: string;
+    encryptedBytesBase64?: string;
     metadata: Record<string, unknown>;
   }>;
+  encryptPrivateFragment?(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    sourceType: string;
+    content: string;
+    contentKind?: "memory_fragment" | "candidate_memory";
+  }): Promise<{
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  }>;
+  storeEncryptedPrivateFragment?(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    sourceType: string;
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+    contentKind?: "memory_fragment" | "candidate_memory";
+  }): Promise<{
+    contentStorageRef: string;
+    contentSha256: string;
+    encryptedBytesBase64?: string;
+    metadata: Record<string, unknown>;
+  }>;
+};
+
+export type IntelligenceProcessingQueue = {
+  enqueueIntelligenceProcessing(data: {
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    transientFragmentCiphertextBase64?: string;
+    transientFragmentCiphertextSha256?: string;
+  }): Promise<{ jobId: string }>;
+};
+
+export type CandidateMemoryArchiveQueue = {
+  enqueueCandidateMemoryArchive(data: {
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  }): Promise<{ jobId: string }>;
 };
 
 type PrivateSourcePayload = {
   content: string;
   title: string | null;
   metadata: Record<string, unknown>;
+};
+
+type MemoryFragmentProcessingRef = {
+  id: string;
+  transientCiphertextBase64?: string;
+  transientCiphertextSha256?: string;
 };
 
 export type ProcessQueuedArtifactsResult = {
@@ -135,6 +274,9 @@ export async function processArtifact(
     privateMemoryReader?: PrivateMemoryReader;
     privateFragmentStorage?: PrivateFragmentStorage;
     speechToTextTranscriber?: SpeechToTextTranscriber;
+    intelligenceQueue?: IntelligenceProcessingQueue;
+    transientCiphertextBase64?: string;
+    transientCiphertextSha256?: string;
   } = {},
 ): Promise<ProcessArtifactResult> {
   const now = options.now ?? new Date();
@@ -148,6 +290,9 @@ export async function processArtifact(
     privateMemoryReader: options.privateMemoryReader,
     privateFragmentStorage: options.privateFragmentStorage,
     speechToTextTranscriber: options.speechToTextTranscriber,
+    intelligenceQueue: options.intelligenceQueue,
+    transientCiphertextBase64: options.transientCiphertextBase64,
+    transientCiphertextSha256: options.transientCiphertextSha256,
   });
 }
 
@@ -159,6 +304,9 @@ export async function recoverArtifact(
     privateMemoryReader?: PrivateMemoryReader;
     privateFragmentStorage?: PrivateFragmentStorage;
     speechToTextTranscriber?: SpeechToTextTranscriber;
+    intelligenceQueue?: IntelligenceProcessingQueue;
+    transientCiphertextBase64?: string;
+    transientCiphertextSha256?: string;
   } = {},
 ): Promise<ProcessArtifactResult> {
   const now = options.now ?? new Date();
@@ -172,6 +320,9 @@ export async function recoverArtifact(
     privateMemoryReader: options.privateMemoryReader,
     privateFragmentStorage: options.privateFragmentStorage,
     speechToTextTranscriber: options.speechToTextTranscriber,
+    intelligenceQueue: options.intelligenceQueue,
+    transientCiphertextBase64: options.transientCiphertextBase64,
+    transientCiphertextSha256: options.transientCiphertextSha256,
   });
 }
 
@@ -183,6 +334,7 @@ export async function processQueuedArtifacts(
     privateMemoryReader?: PrivateMemoryReader;
     privateFragmentStorage?: PrivateFragmentStorage;
     speechToTextTranscriber?: SpeechToTextTranscriber;
+    intelligenceQueue?: IntelligenceProcessingQueue;
   } = {},
 ): Promise<ProcessQueuedArtifactsResult> {
   const limit = options.limit ?? 10;
@@ -201,6 +353,7 @@ export async function processQueuedArtifacts(
       privateMemoryReader: options.privateMemoryReader,
       privateFragmentStorage: options.privateFragmentStorage,
       speechToTextTranscriber: options.speechToTextTranscriber,
+      intelligenceQueue: options.intelligenceQueue,
     }).catch((error: unknown) => {
       if (error instanceof RetryableArtifactProcessingError) {
         return "pending" as const;
@@ -227,6 +380,9 @@ async function processClaimedArtifact(
     privateMemoryReader?: PrivateMemoryReader;
     privateFragmentStorage?: PrivateFragmentStorage;
     speechToTextTranscriber?: SpeechToTextTranscriber;
+    intelligenceQueue?: IntelligenceProcessingQueue;
+    transientCiphertextBase64?: string;
+    transientCiphertextSha256?: string;
   },
 ): Promise<"completed" | "pending" | "failed"> {
   const metadata = asRecord(artifact.metadata);
@@ -235,13 +391,13 @@ async function processClaimedArtifact(
     const { privateMemoryReader, speechToTextTranscriber } = options;
 
     if (privateMemoryReader && artifact.rawStorageRef) {
-      const plaintext = await privateMemoryReader
-        .readPrivateMemory({
-          rawStorageRef: artifact.rawStorageRef,
-          artifactId: artifact.id,
-          twinId: artifact.twinId,
-          expectedCiphertextSha256: readCiphertextSha256(metadata),
-        })
+      const plaintext = await readArtifactPrivateMemory({
+        privateMemoryReader,
+        artifact,
+        metadata,
+        transientCiphertextBase64: options.transientCiphertextBase64,
+        transientCiphertextSha256: options.transientCiphertextSha256,
+      })
         .catch(async (error: unknown) => {
           const detail = errorMessage(error);
 
@@ -406,11 +562,13 @@ async function processClaimedArtifact(
           importanceScore: 0.5,
           confidenceScore: 0.7,
         });
+        const intelligence = await queueIntelligenceProcessing(repository, artifact, fragment, options.intelligenceQueue);
         const nextMetadata = withProcessingState(metadata, {
           status: "completed",
           memoryFragmentId: fragment.id,
           processedAt: now.toISOString(),
           decryptPath: "seal_walrus",
+          ...intelligence,
           transcription: {
             provider: transcription.provider,
             model: transcription.model,
@@ -462,11 +620,13 @@ async function processClaimedArtifact(
           importanceScore: 0.5,
           confidenceScore: 0.7,
         });
+        const intelligence = await queueIntelligenceProcessing(repository, artifact, fragment, options.intelligenceQueue);
         const nextMetadata = withProcessingState(metadata, {
           status: "completed",
           memoryFragmentId: fragment.id,
           processedAt: now.toISOString(),
           decryptPath: "seal_walrus",
+          ...intelligence,
           ...(parsed.parser ? { parser: parsed.parser } : {}),
         });
 
@@ -598,10 +758,12 @@ async function processClaimedArtifact(
     importanceScore: 0.5,
     confidenceScore: 0.6,
   });
+  const intelligence = await queueIntelligenceProcessing(repository, artifact, fragment, options.intelligenceQueue);
   const nextMetadata = withProcessingState(metadata, {
     status: "completed",
     memoryFragmentId: fragment.id,
     processedAt: now.toISOString(),
+    ...intelligence,
     ...(parsed.parser ? { parser: parsed.parser } : {}),
   });
 
@@ -639,6 +801,42 @@ function isRetryablePrivateMemoryReadError(error: unknown): boolean {
   ].some((fragment) => message.includes(fragment));
 }
 
+function readArtifactPrivateMemory(input: {
+  privateMemoryReader: PrivateMemoryReader;
+  artifact: QueuedArtifact;
+  metadata: Record<string, unknown>;
+  transientCiphertextBase64?: string;
+  transientCiphertextSha256?: string;
+}): Promise<string> {
+  const expectedCiphertextSha256 = readCiphertextSha256(input.metadata);
+
+  if (
+    input.transientCiphertextBase64 &&
+    input.privateMemoryReader.readPrivateMemoryFromEncryptedBytes
+  ) {
+    console.log("artifact transient ciphertext handoff used", {
+      artifactId: input.artifact.id,
+      sourceType: input.artifact.sourceType,
+      ciphertextBytesApprox: approximateBase64Bytes(input.transientCiphertextBase64),
+    });
+
+    return input.privateMemoryReader.readPrivateMemoryFromEncryptedBytes({
+      encryptedBytesBase64: input.transientCiphertextBase64,
+      artifactId: input.artifact.id,
+      twinId: input.artifact.twinId,
+      expectedCiphertextSha256: input.transientCiphertextSha256 ?? expectedCiphertextSha256,
+      source: "artifact_queue",
+    });
+  }
+
+  return input.privateMemoryReader.readPrivateMemory({
+    rawStorageRef: input.artifact.rawStorageRef!,
+    artifactId: input.artifact.id,
+    twinId: input.artifact.twinId,
+    expectedCiphertextSha256,
+  });
+}
+
 async function getOrCreateMemoryFragment(
   repository: ArtifactRepository,
   input: {
@@ -654,21 +852,31 @@ async function getOrCreateMemoryFragment(
   const existing = await repository.findMemoryFragmentBySourceArtifactId(input.sourceArtifactId);
 
   if (existing) {
-    return existing;
+    return existing satisfies MemoryFragmentProcessingRef;
   }
 
   if (!input.privateFragmentStorage) {
     throw new Error("Encrypted fragment storage is required before creating memory fragments");
   }
 
+  const storageStartedAt = Date.now();
   const stored = await input.privateFragmentStorage.storePrivateFragment({
     twinId: input.twinId,
     sourceArtifactId: input.sourceArtifactId,
     sourceType: input.sourceType ?? "unknown",
     content: input.content,
   });
+  console.log("artifact memory fragment storage completed", {
+    artifactId: input.sourceArtifactId,
+    twinId: input.twinId,
+    sourceType: input.sourceType ?? "unknown",
+    contentChars: input.content.length,
+    contentStorageRef: stored.contentStorageRef,
+    durationMs: Date.now() - storageStartedAt,
+  });
 
-  return repository.createMemoryFragment({
+  const dbStartedAt = Date.now();
+  const fragment = await repository.createMemoryFragment({
     twinId: input.twinId,
     sourceArtifactId: input.sourceArtifactId,
     contentStorageRef: stored.contentStorageRef,
@@ -677,6 +885,850 @@ async function getOrCreateMemoryFragment(
     importanceScore: input.importanceScore,
     confidenceScore: input.confidenceScore,
   });
+  console.log("artifact memory fragment db write completed", {
+    artifactId: input.sourceArtifactId,
+    memoryFragmentId: fragment.id,
+    durationMs: Date.now() - dbStartedAt,
+  });
+
+  return {
+    id: fragment.id,
+    transientCiphertextBase64: stored.encryptedBytesBase64,
+    transientCiphertextSha256: stored.contentSha256,
+  } satisfies MemoryFragmentProcessingRef;
+}
+
+async function queueIntelligenceProcessing(
+  repository: ArtifactRepository,
+  artifact: QueuedArtifact,
+  fragment: MemoryFragmentProcessingRef,
+  intelligenceQueue?: IntelligenceProcessingQueue,
+): Promise<Record<string, unknown>> {
+  if (!intelligenceQueue) {
+    return {
+      intelligence: {
+        status: "skipped",
+        reason: "intelligence_queue_not_configured",
+      },
+    };
+  }
+
+  const job = await intelligenceQueue.enqueueIntelligenceProcessing({
+    artifactId: artifact.id,
+    twinId: artifact.twinId,
+    memoryFragmentId: fragment.id,
+    sourceType: artifact.sourceType,
+    ...(fragment.transientCiphertextBase64
+      ? {
+          transientFragmentCiphertextBase64: fragment.transientCiphertextBase64,
+          transientFragmentCiphertextSha256: fragment.transientCiphertextSha256,
+        }
+      : {}),
+  });
+
+  await repository.createAuditEvent({
+    twinId: artifact.twinId,
+    eventType: "artifact.intelligence_queued",
+    resourceId: artifact.id,
+    metadata: {
+      memoryFragmentId: fragment.id,
+      intelligenceJobId: job.jobId,
+      transientCiphertextHandoff: Boolean(fragment.transientCiphertextBase64),
+    },
+  });
+
+  return {
+    intelligence: {
+      status: "queued",
+      memoryFragmentId: fragment.id,
+      jobId: job.jobId,
+      transientCiphertextHandoff: Boolean(fragment.transientCiphertextBase64),
+      queuedAt: new Date().toISOString(),
+    },
+  };
+}
+
+export async function processArtifactIntelligence(
+  repository: ArtifactRepository,
+  input: {
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    transientFragmentCiphertextBase64?: string;
+    transientFragmentCiphertextSha256?: string;
+    privateMemoryReader?: PrivateMemoryReader;
+    entityExtractor?: EntityExtractor;
+    memoryExtractor?: MemoryExtractor;
+    privateFragmentStorage?: PrivateFragmentStorage;
+    candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+    intelligenceChunkChars?: number;
+    intelligenceChunkConcurrency?: number;
+  },
+): Promise<Record<string, unknown>> {
+  if (!input.privateMemoryReader) {
+    throw new Error("private_memory_reader_not_configured");
+  }
+
+  const artifact = await repository.findArtifactById(input.artifactId);
+  const fragment = await repository.findMemoryFragmentById(input.memoryFragmentId);
+
+  if (!artifact || artifact.twinId !== input.twinId) {
+    throw new Error("artifact_not_found");
+  }
+
+  if (!fragment || fragment.twinId !== input.twinId || fragment.sourceArtifactId !== input.artifactId) {
+    throw new Error("memory_fragment_not_found");
+  }
+
+  if (!fragment.contentStorageRef) {
+    throw new Error("memory_fragment_storage_ref_missing");
+  }
+
+  const metadata = asRecord(artifact.metadata);
+  await repository.markArtifactCompleted(
+    artifact.id,
+    withIntelligenceState(metadata, {
+      status: "processing",
+      memoryFragmentId: input.memoryFragmentId,
+      startedAt: new Date().toISOString(),
+    }),
+  );
+
+  const startedAt = Date.now();
+  const timings: Record<string, number> = {};
+  console.log("artifact intelligence stage started", {
+    artifactId: input.artifactId,
+    stage: "fragment_decrypt",
+  });
+  const content = await measureStage("fragmentDecryptMs", timings, () => {
+    if (
+      input.transientFragmentCiphertextBase64 &&
+      input.privateMemoryReader!.readPrivateMemoryFromEncryptedBytes
+    ) {
+      console.log("intelligence transient fragment ciphertext handoff used", {
+        artifactId: input.artifactId,
+        memoryFragmentId: input.memoryFragmentId,
+        ciphertextBytesApprox: approximateBase64Bytes(input.transientFragmentCiphertextBase64),
+      });
+
+      return input.privateMemoryReader!.readPrivateMemoryFromEncryptedBytes({
+        encryptedBytesBase64: input.transientFragmentCiphertextBase64,
+        artifactId: input.artifactId,
+        twinId: input.twinId,
+        expectedCiphertextSha256: input.transientFragmentCiphertextSha256 ?? fragment.contentSha256,
+        source: "intelligence_queue",
+      });
+    }
+
+    return input.privateMemoryReader!.readPrivateMemory({
+      rawStorageRef: fragment.contentStorageRef!,
+      artifactId: input.artifactId,
+      twinId: input.twinId,
+      expectedCiphertextSha256: fragment.contentSha256,
+    });
+  });
+  console.log("artifact intelligence stage completed", {
+    artifactId: input.artifactId,
+    stage: "fragment_decrypt",
+    contentChars: content.length,
+    durationMs: timings.fragmentDecryptMs,
+  });
+  const chunks = createIntelligenceChunks(content, input.intelligenceChunkChars ?? 18_000);
+  console.log("artifact intelligence chunking completed", {
+    artifactId: input.artifactId,
+    memoryFragmentId: input.memoryFragmentId,
+    contentChars: content.length,
+    chunkCount: chunks.length,
+    chunkChars: input.intelligenceChunkChars ?? 18_000,
+    chunkConcurrency: input.intelligenceChunkConcurrency ?? 2,
+  });
+  console.log("artifact intelligence stage started", {
+    artifactId: input.artifactId,
+    stage: "entity_extraction",
+  });
+  const entityExtraction = await measureStage("entityExtractionMs", timings, () =>
+    processEntityExtractionChunks(repository, {
+      artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      chunks,
+      title: null,
+      entityExtractor: input.entityExtractor,
+      concurrency: input.intelligenceChunkConcurrency ?? 2,
+    }),
+  );
+  console.log("artifact intelligence stage completed", {
+    artifactId: input.artifactId,
+    stage: "entity_extraction",
+    status: entityExtraction?.status,
+    durationMs: timings.entityExtractionMs,
+    llmMs: entityExtraction?.llmMs,
+    graphWriteMs: entityExtraction?.graphWriteMs,
+  });
+  console.log("artifact intelligence stage started", {
+    artifactId: input.artifactId,
+    stage: "memory_extraction",
+  });
+  const memoryExtraction = await measureStage("memoryExtractionMs", timings, () =>
+    processMemoryExtractionChunks(repository, {
+      artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      chunks,
+      title: null,
+      memoryExtractor: input.memoryExtractor,
+      privateFragmentStorage: input.privateFragmentStorage,
+      candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
+      concurrency: input.intelligenceChunkConcurrency ?? 2,
+    }),
+  );
+  if (memoryExtraction && typeof memoryExtraction.candidateMemoryEncryptMs === "number") {
+    timings.candidateMemoryEncryptMs = memoryExtraction.candidateMemoryEncryptMs;
+  }
+  console.log("artifact intelligence stage completed", {
+    artifactId: input.artifactId,
+    stage: "memory_extraction",
+    status: memoryExtraction?.status,
+    durationMs: timings.memoryExtractionMs,
+    llmMs: memoryExtraction?.llmMs,
+    candidateMemoryEncryptMs: memoryExtraction?.candidateMemoryEncryptMs,
+    candidateMemoryDbWriteMs: memoryExtraction?.candidateMemoryDbWriteMs,
+    candidateMemoryArchiveQueued: memoryExtraction?.candidateMemoryArchiveQueued,
+  });
+  timings.totalIntelligenceMs = Date.now() - startedAt;
+
+  const intelligence = {
+    status: entityExtraction?.status === "failed" || memoryExtraction?.status === "failed" ? "failed" : "completed",
+    completedAt: new Date().toISOString(),
+    ...(entityExtraction ? { entityExtraction: { ...entityExtraction, durationMs: timings.entityExtractionMs } } : {}),
+    ...(memoryExtraction ? { memoryExtraction: { ...memoryExtraction, durationMs: timings.memoryExtractionMs } } : {}),
+    timing: timings,
+  };
+
+  await repository.markArtifactCompleted(
+    artifact.id,
+    withIntelligenceState(asRecord((await repository.findArtifactById(artifact.id))?.metadata), intelligence),
+  );
+
+  return intelligence;
+}
+
+async function processEntityExtraction(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    content: string;
+    title?: string | null;
+    entityExtractor?: EntityExtractor;
+  },
+): Promise<Record<string, unknown> | null> {
+  if (!input.entityExtractor) {
+    return {
+      status: "skipped",
+      reason: "entity_extractor_not_configured",
+    };
+  }
+
+  try {
+    const llmStartedAt = Date.now();
+    const result = await input.entityExtractor
+      .extract({
+        twinId: input.artifact.twinId,
+        sourceArtifactId: input.artifact.id,
+        memoryFragmentId: input.memoryFragmentId,
+        sourceType: input.artifact.sourceType,
+        content: input.content,
+        title: input.title,
+      });
+    const llmMs = Date.now() - llmStartedAt;
+    const graphStartedAt = Date.now();
+    const artifactNode = await repository.upsertGraphNode({
+      twinId: input.artifact.twinId,
+      nodeType: "artifact",
+      name: `source_artifact:${input.artifact.id}`,
+      normalizedName: `source_artifact:${input.artifact.id}`,
+      properties: {
+        sourceArtifactId: input.artifact.id,
+        memoryFragmentId: input.memoryFragmentId,
+        sourceType: input.artifact.sourceType,
+      },
+      confidenceScore: 1,
+    });
+
+    for (const entity of result.entities) {
+      const entityNode = await repository.upsertGraphNode({
+        twinId: input.artifact.twinId,
+        nodeType: entity.graphNodeType,
+        name: entity.name,
+        normalizedName: entity.normalizedName,
+        properties: {
+          normalizedName: entity.normalizedName,
+          entityType: entity.type,
+          aliases: entity.aliases,
+          sourceType: input.artifact.sourceType,
+          evidenceHash: entity.evidenceHash,
+          evidenceLength: entity.evidenceLength,
+          extractionMethod: result.metadata.extractor,
+          metadata: entity.metadata,
+        },
+        confidenceScore: entity.confidence,
+      });
+
+      await repository.upsertGraphEdge({
+        twinId: input.artifact.twinId,
+        fromNodeId: artifactNode.id,
+        toNodeId: entityNode.id,
+        edgeType: "mentions",
+        evidenceMemoryIds: [input.memoryFragmentId],
+        confidenceScore: entity.confidence,
+      });
+    }
+    const graphWriteMs = Date.now() - graphStartedAt;
+
+    await repository.createAuditEvent({
+      twinId: input.artifact.twinId,
+      eventType: "artifact.entities_extracted",
+      resourceId: input.artifact.id,
+      metadata: {
+        memoryFragmentId: input.memoryFragmentId,
+        entityCount: result.entities.length,
+        extractor: result.metadata.extractor,
+        provider: result.metadata.provider,
+        model: result.metadata.model,
+        llmMs,
+        graphWriteMs,
+      },
+    });
+
+    return {
+      status: "completed",
+      entityCount: result.entities.length,
+      extractor: result.metadata.extractor,
+      provider: result.metadata.provider,
+      model: result.metadata.model,
+      warnings: result.metadata.warnings,
+      llmMs,
+      graphWriteMs,
+    };
+  } catch (error) {
+    console.warn("artifact entity extraction failed", {
+      artifactId: input.artifact.id,
+      sourceType: input.artifact.sourceType,
+      memoryFragmentId: input.memoryFragmentId,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: errorMessage(error),
+    });
+
+    await repository.createAuditEvent({
+      twinId: input.artifact.twinId,
+      eventType: "artifact.entity_extraction_failed",
+      resourceId: input.artifact.id,
+      metadata: {
+        memoryFragmentId: input.memoryFragmentId,
+        error: errorMessage(error),
+      },
+    });
+
+    return {
+      status: "failed",
+      reason: "entity_extraction_failed",
+      detail: errorMessage(error),
+    };
+  }
+}
+
+async function processEntityExtractionChunks(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    chunks: IntelligenceChunk[];
+    title?: string | null;
+    entityExtractor?: EntityExtractor;
+    concurrency: number;
+  },
+): Promise<Record<string, unknown> | null> {
+  if (input.chunks.length === 1) {
+    return processEntityExtraction(repository, {
+      artifact: input.artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      content: input.chunks[0]?.content ?? "",
+      title: input.title,
+      entityExtractor: input.entityExtractor,
+    });
+  }
+
+  const results = await mapWithConcurrency(input.chunks, input.concurrency, (chunk) =>
+    processEntityExtraction(repository, {
+      artifact: input.artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      content: chunk.content,
+      title: input.title,
+      entityExtractor: input.entityExtractor,
+    }),
+  );
+
+  return aggregateExtractionResults(results, {
+    countKey: "entityCount",
+    chunkCount: input.chunks.length,
+  });
+}
+
+async function measureStage<T>(
+  key: string,
+  timings: Record<string, number>,
+  task: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+
+  try {
+    return await task();
+  } finally {
+    timings[key] = Date.now() - startedAt;
+  }
+}
+
+type IntelligenceChunk = {
+  index: number;
+  total: number;
+  startOffset: number;
+  endOffset: number;
+  content: string;
+};
+
+function createIntelligenceChunks(content: string, chunkChars: number): IntelligenceChunk[] {
+  const normalizedChunkChars = Math.max(1_000, chunkChars);
+
+  if (content.length <= normalizedChunkChars) {
+    return [
+      {
+        index: 0,
+        total: 1,
+        startOffset: 0,
+        endOffset: content.length,
+        content,
+      },
+    ];
+  }
+
+  const chunks: IntelligenceChunk[] = [];
+  let startOffset = 0;
+
+  while (startOffset < content.length) {
+    const hardEnd = Math.min(content.length, startOffset + normalizedChunkChars);
+    const nextBreak = findChunkBreak(content, startOffset, hardEnd);
+    const endOffset = nextBreak > startOffset ? nextBreak : hardEnd;
+    const chunkContent = content.slice(startOffset, endOffset).trim();
+
+    if (chunkContent) {
+      chunks.push({
+        index: chunks.length,
+        total: 0,
+        startOffset,
+        endOffset,
+        content: chunkContent,
+      });
+    }
+
+    startOffset = endOffset;
+  }
+
+  return chunks.map((chunk) => ({
+    ...chunk,
+    total: chunks.length,
+  }));
+}
+
+function findChunkBreak(content: string, startOffset: number, hardEnd: number): number {
+  if (hardEnd >= content.length) {
+    return content.length;
+  }
+
+  const searchStart = Math.max(startOffset, hardEnd - 2_000);
+  const paragraphBreak = content.lastIndexOf("\n\n", hardEnd);
+
+  if (paragraphBreak >= searchStart) {
+    return paragraphBreak + 2;
+  }
+
+  const sentenceBreak = content.lastIndexOf(". ", hardEnd);
+
+  if (sentenceBreak >= searchStart) {
+    return sentenceBreak + 2;
+  }
+
+  const lineBreak = content.lastIndexOf("\n", hardEnd);
+
+  if (lineBreak >= searchStart) {
+    return lineBreak + 1;
+  }
+
+  const spaceBreak = content.lastIndexOf(" ", hardEnd);
+
+  return spaceBreak >= searchStart ? spaceBreak + 1 : hardEnd;
+}
+
+async function mapWithConcurrency<TInput, TOutput>(
+  items: TInput[],
+  concurrency: number,
+  task: (item: TInput) => Promise<TOutput>,
+): Promise<TOutput[]> {
+  const limit = Math.max(1, concurrency);
+  const results = new Array<TOutput>(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await task(items[currentIndex]!);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
+  );
+
+  return results;
+}
+
+function aggregateExtractionResults(
+  results: Array<Record<string, unknown> | null>,
+  options: {
+    countKey: "entityCount" | "candidateMemoryCount";
+    chunkCount: number;
+  },
+): Record<string, unknown> | null {
+  const present = results.filter((result): result is Record<string, unknown> => Boolean(result));
+
+  if (present.length === 0) {
+    return null;
+  }
+
+  const failedCount = present.filter((result) => result.status === "failed").length;
+  const completedCount = present.filter((result) => result.status === "completed").length;
+  const first = present[0] ?? {};
+
+  return {
+    status: failedCount > 0 && completedCount === 0 ? "failed" : "completed",
+    ...(failedCount > 0 ? { failedChunkCount: failedCount } : {}),
+    chunkCount: options.chunkCount,
+    completedChunkCount: completedCount,
+    [options.countKey]: present.reduce((sum, result) => sum + readNumber(result[options.countKey]), 0),
+    ...(typeof first.extractor === "string" ? { extractor: first.extractor } : {}),
+    ...(typeof first.provider === "string" ? { provider: first.provider } : {}),
+    ...(typeof first.model === "string" ? { model: first.model } : {}),
+    warnings: present.flatMap((result) => readStringArray(result.warnings)),
+    llmMs: present.reduce((sum, result) => sum + readNumber(result.llmMs), 0),
+    graphWriteMs: present.reduce((sum, result) => sum + readNumber(result.graphWriteMs), 0),
+    candidateMemoryEncryptMs: present.reduce((sum, result) => sum + readNumber(result.candidateMemoryEncryptMs), 0),
+    candidateMemoryDbWriteMs: present.reduce((sum, result) => sum + readNumber(result.candidateMemoryDbWriteMs), 0),
+    candidateMemoryArchiveQueued: present.some((result) => result.candidateMemoryArchiveQueued === true),
+  };
+}
+
+async function processMemoryExtraction(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    content: string;
+    title?: string | null;
+    memoryExtractor?: MemoryExtractor;
+    privateFragmentStorage?: PrivateFragmentStorage;
+    candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+  },
+): Promise<Record<string, unknown> | null> {
+  if (!input.memoryExtractor) {
+    return {
+      status: "skipped",
+      reason: "memory_extractor_not_configured",
+    };
+  }
+
+  if (!input.privateFragmentStorage?.encryptPrivateFragment) {
+    return {
+      status: "skipped",
+      reason: "encrypted_candidate_memory_encryption_not_configured",
+    };
+  }
+
+  try {
+    const llmStartedAt = Date.now();
+    const result = await input.memoryExtractor.extract({
+      twinId: input.artifact.twinId,
+      sourceArtifactId: input.artifact.id,
+      memoryFragmentId: input.memoryFragmentId,
+      sourceType: input.artifact.sourceType,
+      content: input.content,
+      title: input.title,
+    });
+    const llmMs = Date.now() - llmStartedAt;
+    let storedCount = 0;
+    let candidateMemoryEncryptMs = 0;
+    let candidateMemoryDbWriteMs = 0;
+    let archiveQueued = false;
+    let encrypted:
+      | {
+          encryptedBytesBase64: string;
+          contentSha256: string;
+          metadata: Record<string, unknown>;
+        }
+      | null = null;
+
+    if (result.memories.length > 0) {
+      const encryptStartedAt = Date.now();
+      encrypted = await input.privateFragmentStorage.encryptPrivateFragment({
+        twinId: input.artifact.twinId,
+        sourceArtifactId: input.artifact.id,
+        sourceType: "candidate_memory_batch",
+        content: JSON.stringify({
+          kind: "candidate_memory_batch",
+          version: 1,
+          sourceArtifactId: input.artifact.id,
+          memoryFragmentId: input.memoryFragmentId,
+          memories: result.memories.map((memory, index) => ({
+            statementIndex: index,
+            statement: memory.statement,
+            memoryType: memory.memoryType,
+            subject: memory.subject,
+          })),
+        }),
+        contentKind: "candidate_memory",
+      });
+      candidateMemoryEncryptMs = Date.now() - encryptStartedAt;
+    }
+
+    const dbWriteStartedAt = Date.now();
+    const candidateMemoryIds: string[] = [];
+    for (const [statementIndex, memory] of result.memories.entries()) {
+      if (!encrypted) {
+        continue;
+      }
+
+      const candidate = await repository.createCandidateMemory({
+        twinId: input.artifact.twinId,
+        sourceArtifactId: input.artifact.id,
+        memoryFragmentId: input.memoryFragmentId,
+        memoryType: memory.memoryType,
+        statementStorageRef: pendingCandidateMemoryArchiveRef(input.artifact.id, input.memoryFragmentId),
+        statementSha256: encrypted.contentSha256,
+        evidenceHash: memory.evidenceHash,
+        evidenceLength: memory.evidenceLength,
+        confidenceScore: memory.confidence,
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          archiveStatus: input.candidateMemoryArchiveQueue ? "pending" : "deferred",
+          extractor: result.metadata.extractor,
+          provider: result.metadata.provider,
+          model: result.metadata.model,
+          subject: memory.subject,
+          normalizedStatementHash: sha256Text(memory.normalizedStatement),
+          evidenceHash: memory.evidenceHash,
+          evidenceLength: memory.evidenceLength,
+          sourceType: input.artifact.sourceType,
+          statementIndex,
+          statementCount: result.memories.length,
+          batchStorage: true,
+          ...(Object.keys(memory.metadata).length > 0 ? { memoryMetadata: memory.metadata } : {}),
+          storage: encrypted.metadata,
+        },
+      });
+      candidateMemoryIds.push(candidate.id);
+      storedCount += 1;
+    }
+    candidateMemoryDbWriteMs = Date.now() - dbWriteStartedAt;
+
+    if (encrypted && candidateMemoryIds.length > 0 && input.candidateMemoryArchiveQueue) {
+      await input.candidateMemoryArchiveQueue.enqueueCandidateMemoryArchive({
+        artifactId: input.artifact.id,
+        twinId: input.artifact.twinId,
+        memoryFragmentId: input.memoryFragmentId,
+        sourceType: "candidate_memory_batch",
+        candidateMemoryIds,
+        encryptedBytesBase64: encrypted.encryptedBytesBase64,
+        contentSha256: encrypted.contentSha256,
+        metadata: encrypted.metadata,
+      });
+      archiveQueued = true;
+    }
+
+    await repository.createAuditEvent({
+      twinId: input.artifact.twinId,
+      eventType: "artifact.memories_extracted",
+      resourceId: input.artifact.id,
+      metadata: {
+        memoryFragmentId: input.memoryFragmentId,
+        candidateMemoryCount: storedCount,
+        extractor: result.metadata.extractor,
+        provider: result.metadata.provider,
+        model: result.metadata.model,
+        llmMs,
+        candidateMemoryEncryptMs,
+        candidateMemoryDbWriteMs,
+        candidateMemoryArchiveQueued: archiveQueued,
+      },
+    });
+
+    return {
+      status: "completed",
+      candidateMemoryCount: storedCount,
+      extractor: result.metadata.extractor,
+      provider: result.metadata.provider,
+      model: result.metadata.model,
+      warnings: result.metadata.warnings,
+      llmMs,
+      candidateMemoryEncryptMs,
+      candidateMemoryDbWriteMs,
+      candidateMemoryArchiveQueued: archiveQueued,
+    };
+  } catch (error) {
+    console.warn("artifact memory extraction failed", {
+      artifactId: input.artifact.id,
+      sourceType: input.artifact.sourceType,
+      memoryFragmentId: input.memoryFragmentId,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: errorMessage(error),
+    });
+
+    await repository.createAuditEvent({
+      twinId: input.artifact.twinId,
+      eventType: "artifact.memory_extraction_failed",
+      resourceId: input.artifact.id,
+      metadata: {
+        memoryFragmentId: input.memoryFragmentId,
+        error: errorMessage(error),
+      },
+    });
+
+    return {
+      status: "failed",
+      reason: "memory_extraction_failed",
+      detail: errorMessage(error),
+    };
+  }
+}
+
+async function processMemoryExtractionChunks(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    chunks: IntelligenceChunk[];
+    title?: string | null;
+    memoryExtractor?: MemoryExtractor;
+    privateFragmentStorage?: PrivateFragmentStorage;
+    candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+    concurrency: number;
+  },
+): Promise<Record<string, unknown> | null> {
+  if (input.chunks.length === 1) {
+    return processMemoryExtraction(repository, {
+      artifact: input.artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      content: input.chunks[0]?.content ?? "",
+      title: input.title,
+      memoryExtractor: input.memoryExtractor,
+      privateFragmentStorage: input.privateFragmentStorage,
+      candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
+    });
+  }
+
+  const results = await mapWithConcurrency(input.chunks, input.concurrency, (chunk) =>
+    processMemoryExtraction(repository, {
+      artifact: input.artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      content: chunk.content,
+      title: input.title,
+      memoryExtractor: input.memoryExtractor,
+      privateFragmentStorage: input.privateFragmentStorage,
+      candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
+    }),
+  );
+
+  return aggregateExtractionResults(results, {
+    countKey: "candidateMemoryCount",
+    chunkCount: input.chunks.length,
+  });
+}
+
+export async function processCandidateMemoryArchive(
+  repository: ArtifactRepository,
+  input: {
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+    privateFragmentStorage?: PrivateFragmentStorage;
+  },
+): Promise<Record<string, unknown>> {
+  if (!input.privateFragmentStorage?.storeEncryptedPrivateFragment) {
+    throw new Error("encrypted_candidate_memory_archive_storage_not_configured");
+  }
+
+  const startedAt = Date.now();
+  const stored = await input.privateFragmentStorage.storeEncryptedPrivateFragment({
+    twinId: input.twinId,
+    sourceArtifactId: input.artifactId,
+    sourceType: input.sourceType,
+    encryptedBytesBase64: input.encryptedBytesBase64,
+    contentSha256: input.contentSha256,
+    metadata: input.metadata,
+    contentKind: "candidate_memory",
+  });
+  const archiveMs = Date.now() - startedAt;
+
+  await repository.markCandidateMemoriesArchived({
+    candidateMemoryIds: input.candidateMemoryIds,
+    statementStorageRef: stored.contentStorageRef,
+    statementSha256: stored.contentSha256,
+    metadata: {
+      archiveStatus: "completed",
+      archiveCompletedAt: new Date().toISOString(),
+      archiveMs,
+      storage: stored.metadata,
+    },
+  });
+
+  await repository.createAuditEvent({
+    twinId: input.twinId,
+    eventType: "artifact.candidate_memories_archived",
+    resourceId: input.artifactId,
+    metadata: {
+      memoryFragmentId: input.memoryFragmentId,
+      candidateMemoryCount: input.candidateMemoryIds.length,
+      statementStorageRef: stored.contentStorageRef,
+      archiveMs,
+    },
+  });
+
+  return {
+    status: "completed",
+    candidateMemoryCount: input.candidateMemoryIds.length,
+    archiveMs,
+    statementStorageRef: stored.contentStorageRef,
+  };
+}
+
+export function createEntityExtractor(generator: StructuredGenerator): EntityExtractor {
+  return {
+    extract(input) {
+      return extractEntities(input, { generator });
+    },
+  };
+}
+
+export function createMemoryExtractor(generator: StructuredGenerator): MemoryExtractor {
+  return {
+    extract(input) {
+      return extractMemories(input, { generator });
+    },
+  };
 }
 
 async function markPrivateFragmentStorageRequired(
@@ -715,6 +1767,10 @@ function readPlaintextProcessingInput(metadata: Record<string, unknown>): string
   const content = processingInput["content"];
 
   return typeof content === "string" && content.trim().length > 0 ? content.trim() : null;
+}
+
+function pendingCandidateMemoryArchiveRef(artifactId: string, memoryFragmentId: string): string {
+  return `pending://candidate-memory-archive/${artifactId}/${memoryFragmentId}`;
 }
 
 async function parseProcessableContent(
@@ -1039,6 +2095,21 @@ function withProcessingState(
   };
 }
 
+function withIntelligenceState(
+  metadata: Record<string, unknown>,
+  intelligence: Record<string, unknown>,
+): Record<string, unknown> {
+  const processing = asRecord(metadata["processing"]);
+
+  return {
+    ...metadata,
+    processing: {
+      ...processing,
+      intelligence,
+    },
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -1057,4 +2128,22 @@ function readCiphertextSha256(metadata: unknown): string | null {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown decrypt error";
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function approximateBase64Bytes(value: string): number {
+  return Math.ceil((value.length * 3) / 4);
+}
+
+function readNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

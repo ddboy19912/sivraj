@@ -81,8 +81,11 @@
 
 ## Intelligence
 
-- [ ] Entity extraction.
-- [ ] Memory extraction.
+- [x] Entity extraction.
+- [x] Graph canonicalization and normalized graph node identity.
+- [x] Memory extraction.
+- [x] Run intelligence extraction as background Twin learning job after encrypted fragment storage.
+- [x] Batch encrypted candidate-memory statement storage per artifact.
 - [ ] Speaker attribution for chat/conversation imports.
 - [ ] User-vs-other-party message classification.
 - [ ] Conversation understanding from voice transcripts.

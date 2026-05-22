@@ -95,24 +95,29 @@ Fields:
 - `twin_id`
 - `node_type`
 - `name`
+- `normalized_name`
 - `description`
 - `properties`
 - `confidence_score`
 - `created_at`
 - `updated_at`
 
+Graph node identity is canonical per Twin by `(twin_id, node_type, normalized_name)`. The display `name` remains user-facing, while `normalized_name` is used to merge repeated mentions such as `Polytope Labs`, `polytope labs`, and whitespace/casing variants into the same node.
+
 Node types:
 
 - `person`
+- `organization`
 - `project`
+- `concept`
+- `event`
+- `artifact`
 - `goal`
 - `decision`
-- `belief`
-- `workflow`
-- `habit`
-- `expertise`
-- `emotional_pattern`
-- `preference`
+- `topic`
+- `other`
+
+Entity extraction may classify richer source entities such as `product`, `place`, `role`, `technology`, or `document`. These are mapped into the graph node enum and stored with the original entity type in `properties.entityType`.
 
 ### GraphEdge
 
@@ -133,6 +138,7 @@ Fields:
 
 Edge examples:
 
+- `mentions`
 - `works_on`
 - `depends_on`
 - `influences`
@@ -141,6 +147,50 @@ Edge examples:
 - `delays`
 - `prefers`
 - `decided`
+
+### CandidateMemory
+
+Represents a source-backed extracted memory candidate.
+
+Candidate memories are not final approved Twin memory yet. They are extracted from one processed memory fragment, stored with provenance, and can later be approved, rejected, edited, or superseded by the user.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `source_artifact_id`
+- `memory_fragment_id`
+- `memory_type`
+- `status`
+- `statement_storage_ref`
+- `statement_sha256`
+- `evidence_hash`
+- `evidence_length`
+- `confidence_score`
+- `metadata`
+- `created_at`
+- `updated_at`
+
+The extracted statement is private content. It is encrypted before archive processing. Postgres stores only the encrypted statement reference, hashes, status, confidence, and provenance metadata. During fast Twin learning, `statement_storage_ref` may briefly be a `pending://candidate-memory-archive/...` ref; the archive worker later replaces it with the durable encrypted `walrus://blob/...` ref.
+
+Memory types:
+
+- `fact`
+- `preference`
+- `goal`
+- `decision`
+- `commitment`
+- `experience`
+- `project_update`
+- `relationship`
+- `other`
+
+Statuses:
+
+- `candidate`
+- `approved`
+- `rejected`
+- `superseded`
 
 ### Insight
 

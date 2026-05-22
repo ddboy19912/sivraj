@@ -1,5 +1,6 @@
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { createHash } from "node:crypto";
 import {
   createSealDecryptor,
   parseSealKeyServers,
@@ -22,13 +23,17 @@ type PrivateMemoryReaderConfig = {
 export function createPrivateMemoryReader(params: {
   walrus: WalrusReader;
   seal: SealDecryptor;
-  logger?: Pick<Console, "warn">;
+  logger?: Partial<Pick<Console, "info" | "warn">>;
 }): PrivateMemoryReader {
   const decoder = new TextDecoder();
-  const logger = params.logger ?? console;
+  const logger: Pick<Console, "info" | "warn"> = {
+    info: params.logger?.info ?? console.info,
+    warn: params.logger?.warn ?? console.warn,
+  };
 
   return {
     async readPrivateMemory(input) {
+      const totalStartedAt = Date.now();
       const encryptedBytes = await retryPrivateMemoryStage({
         stage: "walrus_read",
         artifactId: input.artifactId,
@@ -47,6 +52,42 @@ export function createPrivateMemoryReader(params: {
         logger,
         operation: () => params.seal.decrypt({ encryptedBytes }),
       });
+      logger.info("private memory read completed", {
+        artifactId: input.artifactId,
+        rawStorageRef: input.rawStorageRef,
+        encryptedBytes: encryptedBytes.length,
+        plaintextBytes: decrypted.plaintext.length,
+        durationMs: Date.now() - totalStartedAt,
+      });
+
+      return decoder.decode(decrypted.plaintext);
+    },
+    async readPrivateMemoryFromEncryptedBytes(input) {
+      const startedAt = Date.now();
+      const encryptedBytes = Buffer.from(input.encryptedBytesBase64, "base64");
+      const actualSha256 = createHash("sha256").update(encryptedBytes).digest("hex");
+
+      if (
+        input.expectedCiphertextSha256 &&
+        actualSha256 !== input.expectedCiphertextSha256.toLowerCase()
+      ) {
+        throw new Error("transient_ciphertext_sha256_mismatch");
+      }
+
+      const decrypted = await retryPrivateMemoryStage({
+        stage: "seal_decrypt",
+        artifactId: input.artifactId,
+        rawStorageRef: `transient://${input.source}`,
+        logger,
+        operation: () => params.seal.decrypt({ encryptedBytes }),
+      });
+      logger.info("private memory transient decrypt completed", {
+        artifactId: input.artifactId,
+        source: input.source,
+        encryptedBytes: encryptedBytes.length,
+        plaintextBytes: decrypted.plaintext.length,
+        durationMs: Date.now() - startedAt,
+      });
 
       return decoder.decode(decrypted.plaintext);
     },
@@ -58,14 +99,25 @@ async function retryPrivateMemoryStage<T>(params: {
   artifactId: string;
   rawStorageRef: string;
   operation: () => Promise<T>;
-  logger: Pick<Console, "warn">;
+  logger: Pick<Console, "info" | "warn">;
 }): Promise<T> {
   const maxAttempts = 3;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = Date.now();
     try {
-      return await params.operation();
+      const result = await params.operation();
+
+      params.logger.info("private memory read stage completed", {
+        stage: params.stage,
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        attempt,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return result;
     } catch (error) {
       lastError = error;
 
@@ -75,6 +127,7 @@ async function retryPrivateMemoryStage<T>(params: {
         rawStorageRef: params.rawStorageRef,
         attempt,
         maxAttempts,
+        durationMs: Date.now() - startedAt,
         retryable: isRetryableError(error),
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: errorMessage(error),

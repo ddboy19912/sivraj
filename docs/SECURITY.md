@@ -140,6 +140,8 @@ Current private manual memory writes:
 - Do not persist private upload names or user-supplied metadata as plaintext Postgres metadata.
 - Do not create plaintext memory fragment content or summary columns.
 - Store derived memory fragments as encrypted Walrus refs via `memory_fragments.content_storage_ref`.
+- Store intelligence graph records without raw private source text or plaintext evidence snippets.
+- Store extracted candidate memory statements as encrypted batches; candidate rows use a pending archive ref until the low-priority archive worker replaces it with the encrypted Walrus ref in `candidate_memories.statement_storage_ref`.
 - Fail closed when Seal, Sui, or Walrus config is missing.
 
 Current implementation note: first-party web uploads are encrypted in the browser before they are sent to the API. The API accepts a client-encrypted payload, verifies the ciphertext hash, stores ciphertext on Walrus, and persists only storage references plus safe processing metadata. API-side encryption remains available for trusted server-side ingestion paths such as public GitHub import, where the API itself fetches the source material before durable storage.

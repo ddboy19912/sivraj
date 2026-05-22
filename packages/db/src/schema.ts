@@ -67,6 +67,25 @@ export const insightTypeEnum = pgEnum("insight_type", [
   "other",
 ]);
 
+export const candidateMemoryTypeEnum = pgEnum("candidate_memory_type", [
+  "fact",
+  "preference",
+  "goal",
+  "decision",
+  "commitment",
+  "experience",
+  "project_update",
+  "relationship",
+  "other",
+]);
+
+export const candidateMemoryStatusEnum = pgEnum("candidate_memory_status", [
+  "candidate",
+  "approved",
+  "rejected",
+  "superseded",
+]);
+
 export const accessPolicySubjectTypeEnum = pgEnum("access_policy_subject_type", [
   "user",
   "client",
@@ -284,6 +303,7 @@ export const graphNodes = pgTable(
       .references(() => twins.id, { onDelete: "cascade" }),
     nodeType: graphNodeTypeEnum("node_type").notNull(),
     name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
     description: text("description"),
     properties: jsonb("properties").$type<unknown>(),
     confidenceScore: doublePrecision("confidence_score"),
@@ -293,6 +313,11 @@ export const graphNodes = pgTable(
   (t) => [
     index("graph_nodes_twin_id_idx").on(t.twinId),
     index("graph_nodes_node_type_idx").on(t.nodeType),
+    uniqueIndex("graph_nodes_twin_type_normalized_name_idx").on(
+      t.twinId,
+      t.nodeType,
+      t.normalizedName,
+    ),
   ],
 );
 
@@ -353,6 +378,43 @@ export const insights = pgTable(
   (t) => [
     index("insights_twin_id_idx").on(t.twinId),
     index("insights_insight_type_idx").on(t.insightType),
+  ],
+);
+
+export const candidateMemories = pgTable(
+  "candidate_memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    memoryFragmentId: uuid("memory_fragment_id")
+      .notNull()
+      .references(() => memoryFragments.id, { onDelete: "cascade" }),
+    memoryType: candidateMemoryTypeEnum("memory_type").notNull(),
+    status: candidateMemoryStatusEnum("status").notNull().default("candidate"),
+    statementStorageRef: text("statement_storage_ref").notNull(),
+    statementSha256: text("statement_sha256").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    evidenceLength: doublePrecision("evidence_length"),
+    confidenceScore: doublePrecision("confidence_score"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("candidate_memories_twin_id_idx").on(t.twinId),
+    index("candidate_memories_source_artifact_id_idx").on(t.sourceArtifactId),
+    index("candidate_memories_memory_fragment_id_idx").on(t.memoryFragmentId),
+    index("candidate_memories_status_idx").on(t.status),
+    uniqueIndex("candidate_memories_fragment_type_evidence_idx").on(
+      t.memoryFragmentId,
+      t.memoryType,
+      t.evidenceHash,
+    ),
   ],
 );
 
