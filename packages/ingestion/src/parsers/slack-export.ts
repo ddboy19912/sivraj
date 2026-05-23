@@ -1,4 +1,4 @@
-import type { ParsedArtifact } from "../types.js";
+import type { ParsedArtifact, ParsedConversationMessage } from "../types.js";
 
 const SLACK_EXPORT_PARSER_NAME = "slack_export";
 
@@ -35,7 +35,11 @@ export function parseSlackExport(input: {
   }
 
   const messages = extractMessages(parsedJson.value);
-  const content = messages.map(renderSlackMessage).filter(Boolean).join("\n").trim();
+  const speakers = extractSpeakers(messages);
+  const conversationMessages = messages
+    .map(toConversationMessage)
+    .filter((message): message is ParsedConversationMessage => Boolean(message));
+  const content = conversationMessages.map(renderConversationMessage).join("\n").trim();
 
   if (!content) {
     warnings.push("slack_export_empty_after_parse");
@@ -48,6 +52,10 @@ export function parseSlackExport(input: {
       originalLength,
       parsedLength: content.length,
       warnings,
+      speakers,
+    },
+    conversation: {
+      messages: conversationMessages,
     },
   };
 }
@@ -78,15 +86,35 @@ function extractMessages(value: unknown): SlackMessage[] {
   return [];
 }
 
-function renderSlackMessage(message: SlackMessage): string {
+function toConversationMessage(message: SlackMessage): ParsedConversationMessage | null {
   const author = message.username ?? message.user ?? message.bot_id ?? "unknown";
   const content = normalizeSlackText(message.text ?? "");
 
   if (!content) {
-    return "";
+    return null;
   }
 
-  return message.ts ? `[${message.ts}] ${author}: ${content}` : `${author}: ${content}`;
+  return {
+    ...(message.ts ? { timestamp: message.ts } : {}),
+    speaker: author,
+    sourceSpeakerId: message.user ?? message.bot_id,
+    text: content,
+  };
+}
+
+function renderConversationMessage(message: ParsedConversationMessage): string {
+  return message.timestamp
+    ? `[${message.timestamp}] ${message.speaker}: ${message.text}`
+    : `${message.speaker}: ${message.text}`;
+}
+
+function extractSpeakers(messages: SlackMessage[]): string[] {
+  return Array.from(new Set(
+    messages
+      .map((message) => message.username ?? message.user ?? message.bot_id ?? "unknown")
+      .map((speaker) => speaker.trim())
+      .filter(Boolean),
+  ));
 }
 
 function normalizeSlackText(content: string): string {

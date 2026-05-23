@@ -13,6 +13,8 @@ export const INTELLIGENCE_PROCESSING_QUEUE_NAME = "sivraj-intelligence-processin
 export const PROCESS_INTELLIGENCE_JOB_NAME = "process-intelligence";
 export const CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME = "sivraj-candidate-memory-archive";
 export const ARCHIVE_CANDIDATE_MEMORY_JOB_NAME = "archive-candidate-memory";
+export const WEEKLY_REFLECTION_QUEUE_NAME = "sivraj-weekly-reflection";
+export const GENERATE_WEEKLY_REFLECTION_JOB_NAME = "generate-weekly-reflection";
 
 export type ArtifactProcessingJobData = {
   artifactId: string;
@@ -42,6 +44,13 @@ export type CandidateMemoryArchiveJobData = {
   metadata: Record<string, unknown>;
 };
 
+export type WeeklyReflectionJobData = {
+  reflectionRunId: string;
+  twinId: string;
+  periodStart: string;
+  periodEnd: string;
+};
+
 export type ArtifactProcessingQueue = {
   enqueueArtifactProcessing(data: ArtifactProcessingJobData): Promise<{ jobId: string }>;
   close(): Promise<void>;
@@ -57,6 +66,11 @@ export type CandidateMemoryArchiveQueue = {
   close(): Promise<void>;
 };
 
+export type WeeklyReflectionQueue = {
+  enqueueWeeklyReflection(data: WeeklyReflectionJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
 export type ArtifactProcessingWorker = {
   close(): Promise<void>;
   onFailed(listener: (jobId: string | undefined, error: Error, attemptsMade: number | undefined) => void): void;
@@ -65,6 +79,7 @@ export type ArtifactProcessingWorker = {
 
 export type IntelligenceProcessingWorker = ArtifactProcessingWorker;
 export type CandidateMemoryArchiveWorker = ArtifactProcessingWorker;
+export type WeeklyReflectionWorker = ArtifactProcessingWorker;
 
 export type ArtifactStatusEvent = {
   artifactId: string;
@@ -167,6 +182,48 @@ export function createCandidateMemoryArchiveQueue(redisUrl: string): CandidateMe
   };
 }
 
+export function createWeeklyReflectionQueue(redisUrl: string): WeeklyReflectionQueue {
+  const queue = new Queue<WeeklyReflectionJobData>(WEEKLY_REFLECTION_QUEUE_NAME, {
+    connection: redisConnection(redisUrl),
+    defaultJobOptions: artifactJobOptions,
+  });
+
+  return {
+    async enqueueWeeklyReflection(data) {
+      const job = await queue.add(GENERATE_WEEKLY_REFLECTION_JOB_NAME, data, {
+        ...artifactJobOptions,
+        jobId: data.reflectionRunId,
+      });
+
+      return { jobId: String(job.id) };
+    },
+    async close() {
+      await queue.close();
+    },
+  };
+}
+
+export function createLazyWeeklyReflectionQueue(
+  redisUrl: string | undefined,
+): WeeklyReflectionQueue | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let queue: WeeklyReflectionQueue | null = null;
+
+  return {
+    async enqueueWeeklyReflection(data) {
+      queue ??= createWeeklyReflectionQueue(redisUrl);
+      return queue.enqueueWeeklyReflection(data);
+    },
+    async close() {
+      await queue?.close();
+      queue = null;
+    },
+  };
+}
+
 export function createLazyArtifactProcessingQueue(
   redisUrl: string | undefined,
 ): ArtifactProcessingQueue | undefined {
@@ -261,6 +318,39 @@ export function createCandidateMemoryArchiveWorker(
 ): CandidateMemoryArchiveWorker {
   const worker = new Worker<CandidateMemoryArchiveJobData>(
     CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME,
+    async (job) => {
+      await processor(job.data, job);
+    },
+    {
+      connection: redisConnection(redisUrl),
+      concurrency: options.concurrency ?? 1,
+    },
+  );
+
+  return {
+    async close() {
+      await worker.close();
+    },
+    onFailed(listener) {
+      worker.on("failed", (job, error) => {
+        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
+      });
+    },
+    onCompleted(listener) {
+      worker.on("completed", (job) => {
+        listener(job?.id ? String(job.id) : undefined);
+      });
+    },
+  };
+}
+
+export function createWeeklyReflectionWorker(
+  redisUrl: string,
+  processor: (data: WeeklyReflectionJobData, job: Job<WeeklyReflectionJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): WeeklyReflectionWorker {
+  const worker = new Worker<WeeklyReflectionJobData>(
+    WEEKLY_REFLECTION_QUEUE_NAME,
     async (job) => {
       await processor(job.data, job);
     },

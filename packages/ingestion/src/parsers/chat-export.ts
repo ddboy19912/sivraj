@@ -1,4 +1,4 @@
-import type { ParsedArtifact } from "../types.js";
+import type { ParsedArtifact, ParsedConversationMessage } from "../types.js";
 
 const CHAT_EXPORT_PARSER_NAME = "chat_export";
 
@@ -39,7 +39,11 @@ export function parseChatExport(input: {
   }
 
   const messages = extractMessages(parsedJson.value);
-  const content = messages.map(renderMessage).filter(Boolean).join("\n").trim();
+  const speakers = extractSpeakers(messages);
+  const conversationMessages = messages
+    .map(toConversationMessage)
+    .filter((message): message is ParsedConversationMessage => Boolean(message));
+  const content = conversationMessages.map(renderConversationMessage).join("\n").trim();
 
   if (!content) {
     warnings.push("chat_export_empty_after_parse");
@@ -52,6 +56,10 @@ export function parseChatExport(input: {
       originalLength,
       parsedLength: content.length,
       warnings,
+      speakers,
+    },
+    conversation: {
+      messages: conversationMessages,
     },
   };
 }
@@ -82,7 +90,7 @@ function extractMessages(value: unknown): ChatMessage[] {
   return [];
 }
 
-function renderMessage(message: ChatMessage): string {
+function toConversationMessage(message: ChatMessage): ParsedConversationMessage | null {
   const author = message.author ?? message.sender ?? message.role ?? message.name ?? "unknown";
   const timestamp = message.timestamp ?? message.createdAt ?? message.date;
   const content = normalizeChatText(
@@ -96,10 +104,29 @@ function renderMessage(message: ChatMessage): string {
   );
 
   if (!content) {
-    return "";
+    return null;
   }
 
-  return timestamp ? `[${timestamp}] ${author}: ${content}` : `${author}: ${content}`;
+  return {
+    ...(timestamp ? { timestamp } : {}),
+    speaker: author,
+    text: content,
+  };
+}
+
+function renderConversationMessage(message: ParsedConversationMessage): string {
+  return message.timestamp
+    ? `[${message.timestamp}] ${message.speaker}: ${message.text}`
+    : `${message.speaker}: ${message.text}`;
+}
+
+function extractSpeakers(messages: ChatMessage[]): string[] {
+  return Array.from(new Set(
+    messages
+      .map((message) => message.author ?? message.sender ?? message.role ?? message.name ?? "unknown")
+      .map((speaker) => speaker.trim())
+      .filter(Boolean),
+  ));
 }
 
 function normalizeChatText(content: string): string {

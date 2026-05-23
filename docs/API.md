@@ -432,6 +432,7 @@ Supported first-slice source types:
 - `image` for base64 screenshot/image payloads that need worker-side OCR after encrypted storage.
 - `voice_note` for base64 audio file uploads. Supported first-slice formats are `.mp3`, `.m4a`, `.wav`, and `.webm`.
 - `voice_conversation` for browser-recorded audio conversations. The web client records audio locally, base64-encodes the blob, and sends it through the same encrypted artifact route.
+- `onboarding_self_description` for the user's open-ended "tell Sivraj about yourself" onboarding context. This is encrypted as private memory and enters the same background Twin learning pipeline.
 - `browser_history` for explicit browser history export uploads.
 - `docx` for extracted DOCX text today, and base64 DOCX content once binary upload support lands.
 - `csv` for CSV file content.
@@ -442,6 +443,74 @@ Supported first-slice source types:
 - `github` for imported public GitHub repository context.
 
 The route requires `artifact:upload`, requires token `twinId` to match path `twinId` unless the token is a service token, verifies client ciphertext hashes, stores ciphertext on Walrus, creates a queued source artifact, writes an audit event, and publishes a Redis/BullMQ processing job. It does not create a plaintext memory fragment for private memory.
+
+Twin identity profile:
+
+```http
+GET /v1/twins/:twinId/identity-profile
+PUT /v1/twins/:twinId/identity-profile
+Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "displayName": "Fortune Ogunsusi",
+  "aliases": ["Fortune", "DDBoy"],
+  "emails": ["ddboy19912@gmail.com"],
+  "phones": ["+2348169342193"],
+  "handles": {
+    "github": ["ddboy19912"],
+    "slack": ["@fortune"],
+    "x": ["@fortune"]
+  }
+}
+```
+
+The identity profile is attribution infrastructure, not the user's private life story. It stores speaker-matching hints so future chat, email, Slack, WhatsApp, and voice imports can classify messages as `self`, `other`, `system`, or `unknown`. Open-ended onboarding context should still be submitted as encrypted `onboarding_self_description` memory.
+
+Source-specific speaker mappings:
+
+```http
+GET /v1/twins/:twinId/artifacts/:artifactId/speaker-mappings
+PUT /v1/twins/:twinId/artifacts/:artifactId/speaker-mappings
+Authorization: Bearer <token>
+```
+
+Request:
+
+```json
+{
+  "mappings": [
+    {
+      "sourceSpeaker": "Fortune",
+      "sourceSpeakerId": "U123",
+      "role": "self",
+      "mappedName": "Fortune Ogunsusi"
+    },
+    {
+      "sourceSpeaker": "Ada",
+      "role": "other",
+      "mappedName": "Ada Lovelace"
+    }
+  ]
+}
+```
+
+Chat, Slack, and WhatsApp parsers record detected speaker labels in parser metadata when available. Speaker mappings let Sivraj resolve source-local labels such as `U123`, `Fortune`, or `Admin` before later speaker attribution and user-vs-other-party classification. Explicit source mappings override profile-based inference.
+
+During worker processing, conversation imports are rewritten into attribution-aware memory text:
+
+```text
+self/Fortune: I want to lead with compliance.
+other/Ada: That reduces procurement friction.
+unknown/Client: Ship it.
+```
+
+The worker also records attribution counts under `metadata.processing.conversation`, including message count, speaker labels, role counts, unknown speakers, and mapped speaker count. Unknown speakers remain processable but should be treated cautiously by later memory extraction.
+
+Memory extraction applies a user-vs-other-party boundary on attribution-aware conversation text. First-person claims from `self/*` can become user identity, preference, goal, or experience memories. First-person claims from `other/*` are rejected as user memories, `unknown/*` personal claims are downgraded, and `system/*` lines are ignored for candidate memories. Candidate memory metadata records the safe attribution role and policy only; raw evidence text remains outside Postgres.
 
 GitHub public repository import:
 
@@ -491,6 +560,13 @@ Worker behavior:
 - If Walrus read or Seal decrypt hits a retryable infrastructure error such as `fetch failed`, timeout, connection reset, 429, or 5xx, the worker keeps the artifact `pending` with `metadata.processing.reason = encrypted_decryption_retrying`, emits stage-aware logs, and throws to BullMQ so queue backoff can retry the job.
 - If decrypt config is available, the worker reads ciphertext from Walrus, requests Seal key shares through the `owner_policy::seal_approve` Move policy, decrypts locally, creates a `memory_fragments` row, marks the artifact `completed`, and writes `artifact.processed`.
 - Voice note and voice conversation artifacts are encrypted and stored first. After decrypt, the worker transcribes them when `SPEECH_TO_TEXT_API_KEY` or `LLM_API_KEY` is configured, creates a transcript-backed memory fragment, and records `metadata.processing.transcription`. If transcription is not configured, the worker marks them `pending` with `metadata.processing.reason = speech_to_text_required`.
+- Voice conversation transcripts use conversation-aware memory extraction during background Twin learning. The extractor prefers durable goals, decisions, preferences, commitments, follow-ups, relationships, and project updates; ordinary transcript filler is ignored. Candidate memories are stored through the encrypted candidate-memory batch path and tagged with `sourceKind = conversation`, `conversationSourceType = voice_conversation`, `voiceDerived = true`, and safe count metadata under `conversationUnderstanding`.
+- Project clustering runs during background Twin learning. The worker creates or updates `project` graph nodes from deterministic project signals such as extracted project/product entities and project-like candidate-memory subjects, then links the source artifact and related entities to that project context. The cluster metadata records counts, method, and signal names; it does not store decrypted private memory text.
+- Decision extraction also runs during background Twin learning. Candidate memories with `memoryType = decision` create private-safe `decision` graph nodes named by statement hash, not plaintext. The worker links the source artifact to the decision with `records_decision`, links project context with `project_decision` where a subject is available, and stores only hashes, subject, confidence, evidence length, candidate memory ID, and safe metadata in Postgres.
+- Goal inference runs through the same private-safe graph path. Candidate memories with `memoryType = goal` create `goal` graph nodes named by statement hash, then link the source artifact with `states_goal` and project context with `project_goal` when a subject is available. Goal statement text remains only in encrypted candidate-memory storage.
+- Pattern detection is implemented as a versioned intelligence engine under `@sivraj/intelligence/patterns`. The worker provides current and recent historical candidate-memory signals, and detectors return private-safe pattern instructions. The first detector creates repeated-subject patterns for goals, decisions, preferences, and project activity. Pattern graph nodes use `nodeType = other`, `properties.kind = pattern`, hash-based names, evidence counts, source/candidate IDs, and safe signal metadata; plaintext pattern narratives are not stored in Postgres.
+- User feedback is captured through `POST /v1/twins/:twinId/feedback` with `memory:read` scope. Feedback can target candidate memories, graph nodes, patterns, insights, reflections, or source artifacts. Candidate-memory `approved` / `rejected` feedback updates candidate status. Freeform plaintext correction notes are intentionally rejected on this endpoint; richer corrections should use a future encrypted feedback artifact path.
+- Weekly reflection generation is on-demand, not cron-first. `POST /v1/twins/:twinId/reflections/weekly` creates or reuses a weekly `reflection_runs` row, enqueues the `sivraj-weekly-reflection` worker job, and returns `202` with `reflectionRunId` and `jobId`. `GET /v1/twins/:twinId/reflections` lists reflection run status and storage refs. The reflection body is encrypted through the private fragment storage path and stored by ref in `reflection_runs.summary_storage_ref`; Postgres keeps status, period, refs, hashes, timing, provider/model, and counts only.
 - Audit metadata records storage refs and fragment IDs, but not decrypted content.
 
 Live upload acceptance is not complete on UI success alone. Confirm:
@@ -506,6 +582,22 @@ Live upload acceptance is not complete on UI success alone. Confirm:
 - plaintext note content does not appear in `source_artifacts.metadata`.
 
 See [Seal policy smoke test](./SEAL_POLICY.md#live-manual-memory-smoke-test).
+
+### Intelligence Testing Console
+
+The current web UI can include a temporary testing console before final product redesign. This console is not the canonical consumer UX; it exists so local testing can verify the intelligence track without constantly switching to Beekeeper.
+
+Recommended POC pages:
+
+- **Ingestion Test:** manual note, file upload, voice note, and voice conversation submission against `POST /v1/twins/:twinId/artifacts`.
+- **Artifact Status:** live artifact status, processing state, intelligence state, worker timing metadata, and retry action.
+- **Retrieval Test:** query box for `POST /v1/twins/:twinId/memories/search` with citations.
+- **Candidate Review:** list candidate memories by safe metadata, show storage refs/hashes, approve/reject with `POST /v1/twins/:twinId/feedback`.
+- **Graph Inspector:** list graph nodes and edges for projects, goals, decisions, concepts, and patterns.
+- **Weekly Reflection:** call `POST /v1/twins/:twinId/reflections/weekly`, then list runs with `GET /v1/twins/:twinId/reflections`.
+- **Privacy Check:** show storage refs, ciphertext hashes, processing metadata, and a checklist that private content is stored by encrypted refs rather than plaintext DB columns.
+
+API verification remains part of the test plan. The UI proves end-to-end usability; direct API/DB checks prove contracts, privacy boundaries, and failure modes.
 
 ### Memory Fragment
 

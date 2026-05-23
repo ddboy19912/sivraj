@@ -120,6 +120,114 @@ describe('Manual memory app', () => {
     expect(submit).toBeEnabled()
   })
 
+  it('saves Twin identity profile hints for speaker attribution', async () => {
+    const user = userEvent.setup()
+    walletState.account = { address: '0x1234567890abcdef' }
+    storeTestSession()
+    vi.stubGlobal('fetch', mockFetch({
+      '/health/storage': jsonResponse(storageHealth()),
+      '/v1/twins/twin-id/identity-profile': [
+        jsonResponse({
+          twinId: 'twin-id',
+          displayName: null,
+          aliases: [],
+          emails: [],
+          phones: [],
+          handles: {},
+          selfDescriptionArtifactId: null,
+        }),
+        jsonResponse({
+          twinId: 'twin-id',
+          displayName: 'Fortune Ogunsusi',
+          aliases: ['Fortune', 'DDBoy'],
+          emails: ['ddboy19912@gmail.com'],
+          phones: ['+2348169342193'],
+          handles: {
+            github: ['ddboy19912'],
+            slack: ['@fortune'],
+            x: ['@fortune'],
+          },
+          selfDescriptionArtifactId: null,
+        }),
+      ],
+    }))
+
+    render(<App />)
+
+    await user.type(await screen.findByLabelText('Display name'), 'Fortune Ogunsusi')
+    await user.type(screen.getByLabelText('Aliases'), 'Fortune, DDBoy')
+    await user.type(screen.getByLabelText('Emails'), 'ddboy19912@gmail.com')
+    await user.type(screen.getByLabelText('Phones'), '+2348169342193')
+    await user.type(screen.getByLabelText('GitHub handles'), 'ddboy19912')
+    await user.type(screen.getByLabelText('Slack handles'), '@fortune')
+    await user.type(screen.getByLabelText('X handles'), '@fortune')
+    await user.click(screen.getByRole('button', { name: 'Save identity' }))
+
+    expect(await screen.findByText('Twin identity saved.')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/v1/twins/twin-id/identity-profile',
+      expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({
+          authorization: 'Bearer api-token',
+        }),
+        body: JSON.stringify({
+          displayName: 'Fortune Ogunsusi',
+          aliases: ['Fortune', 'DDBoy'],
+          emails: ['ddboy19912@gmail.com'],
+          phones: ['+2348169342193'],
+          handles: {
+            github: ['ddboy19912'],
+            slack: ['@fortune'],
+            x: ['@fortune'],
+          },
+        }),
+      }),
+    )
+  })
+
+  it('saves onboarding self-description as encrypted private memory', async () => {
+    const user = userEvent.setup()
+    walletState.account = { address: '0x1234567890abcdef' }
+    walletState.wallet = { name: 'Sui Wallet' }
+    storeTestSession()
+    vi.stubGlobal('fetch', mockFetch({
+      '/health/storage': jsonResponse(storageHealth()),
+      '/v1/twins/twin-id/identity-profile': jsonResponse({
+        twinId: 'twin-id',
+        displayName: null,
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+        selfDescriptionArtifactId: null,
+      }),
+      '/v1/twins/twin-id/artifacts': jsonResponse({
+        artifactId: 'artifact-id',
+        memoryFragmentId: null,
+        status: 'queued',
+        storageMode: 'encrypted_walrus',
+        sensitivity: 'private',
+        rawStorageRef: 'walrus://blob/blob-id',
+        warning: null,
+      }, 201),
+    }))
+
+    render(<App />)
+
+    await user.type(
+      await screen.findByLabelText('What should Sivraj know about you?'),
+      'I am building Sivraj and I prefer direct technical feedback.',
+    )
+    await user.click(screen.getByRole('button', { name: 'Save about me' }))
+
+    expect(await screen.findByText('Onboarding context queued.')).toBeInTheDocument()
+    expectEncryptedArtifactRequest('onboarding_self_description', [
+      'I am building Sivraj',
+      'Twin onboarding self-description',
+    ])
+  })
+
   it('submits memory and renders encrypted receipt', async () => {
     const user = userEvent.setup()
     walletState.account = { address: '0x1234567890abcdef' }

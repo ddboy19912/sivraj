@@ -1,10 +1,17 @@
 import {
+  detectPatterns,
   extractEntities,
   extractMemories,
+  resolveSpeakerAttribution,
+  type DetectedPattern,
   type EntityExtractionResult,
   type ExtractedEntity,
   type ExtractedMemory,
   type MemoryExtractionResult,
+  type PatternSignal,
+  type SourceSpeakerMapping,
+  type SpeakerRole,
+  type TwinIdentityProfile,
 } from "@sivraj/intelligence";
 import { createHash } from "node:crypto";
 import {
@@ -20,6 +27,7 @@ import {
   parsePlainText,
   parseSlackExport,
   parseWhatsAppExport,
+  type ParsedConversationMessage,
   type ParserMetadata,
 } from "@sivraj/ingestion";
 import type { SpeechToTextTranscriber, StructuredGenerator } from "@sivraj/llm";
@@ -50,6 +58,9 @@ export type ArtifactRepository = {
     contentStorageRef: string | null;
     contentSha256: string | null;
   } | null>;
+  findTwinIdentityProfile(twinId: string): Promise<TwinIdentityProfile | null>;
+  findSourceSpeakerMappings(twinId: string, sourceArtifactId: string): Promise<SourceSpeakerMapping[]>;
+  findRecentPatternSignals(twinId: string, limit: number): Promise<PatternSignal[]>;
   createMemoryFragment(input: {
     twinId: string;
     sourceArtifactId: string;
@@ -95,6 +106,27 @@ export type ArtifactRepository = {
     statementSha256: string;
     metadata: Record<string, unknown>;
   }): Promise<void>;
+  findWeeklyReflectionSignals(input: {
+    twinId: string;
+    periodStart: Date;
+    periodEnd: Date;
+  }): Promise<WeeklyReflectionSignals>;
+  createReflectionRun(input: {
+    twinId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    status: "completed" | "failed" | "skipped";
+    summaryStorageRef?: string | null;
+    summarySha256?: string | null;
+    metadata: Record<string, unknown>;
+  }): Promise<{ id: string }>;
+  updateReflectionRun(input: {
+    id: string;
+    status: "processing" | "completed" | "failed" | "skipped";
+    summaryStorageRef?: string | null;
+    summarySha256?: string | null;
+    metadata: Record<string, unknown>;
+  }): Promise<void>;
   createAuditEvent(input: {
     twinId: string;
     eventType: string;
@@ -125,6 +157,36 @@ export type MemoryExtractor = {
   }): Promise<MemoryExtractionResult>;
 };
 
+export type WeeklyReflectionSignals = {
+  sourceArtifactCount: number;
+  memoryFragmentCount: number;
+  candidateMemoryCount: number;
+  approvedCandidateMemoryCount: number;
+  rejectedCandidateMemoryCount: number;
+  graphNodeCount: number;
+  projectCount: number;
+  goalCount: number;
+  decisionCount: number;
+  patternCount: number;
+  feedbackCount: number;
+  usefulFeedbackCount: number;
+  negativeFeedbackCount: number;
+  candidateSubjects: Array<{
+    subject: string;
+    memoryType: ExtractedMemory["memoryType"];
+    count: number;
+  }>;
+  graphSubjects: Array<{
+    name: string;
+    nodeType: ExtractedEntity["graphNodeType"];
+  }>;
+  feedbackBreakdown: Record<string, number>;
+  sourceArtifactIds: string[];
+  memoryFragmentIds: string[];
+  candidateMemoryIds: string[];
+  graphNodeIds: string[];
+};
+
 export type PrivateMemoryReader = {
   readPrivateMemory(input: {
     rawStorageRef: string;
@@ -147,7 +209,7 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<{
     contentStorageRef: string;
     contentSha256: string;
@@ -159,7 +221,7 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<{
     encryptedBytesBase64: string;
     contentSha256: string;
@@ -172,7 +234,7 @@ export type PrivateFragmentStorage = {
     encryptedBytesBase64: string;
     contentSha256: string;
     metadata: Record<string, unknown>;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<{
     contentStorageRef: string;
     contentSha256: string;
@@ -215,6 +277,42 @@ type MemoryFragmentProcessingRef = {
   id: string;
   transientCiphertextBase64?: string;
   transientCiphertextSha256?: string;
+};
+
+type ParsedProcessableContent = {
+  content: string;
+  parser?: ParserMetadata;
+  conversation?: {
+    messages: ParsedConversationMessage[];
+  };
+};
+
+type AttributionMetadata = {
+  messageCount: number;
+  speakers: string[];
+  counts: Record<SpeakerRole, number>;
+  unknownSpeakers: string[];
+  mappedSpeakers: number;
+};
+
+type ProjectClusterCandidate = {
+  name: string;
+  normalizedName: string;
+  confidence: number;
+  signals: string[];
+  source: "entity" | "candidate_memory";
+};
+
+type DecisionGraphCandidate = {
+  memory: ExtractedMemory;
+  candidateMemoryId: string;
+  statementIndex: number;
+};
+
+type GoalGraphCandidate = {
+  memory: ExtractedMemory;
+  candidateMemoryId: string;
+  statementIndex: number;
 };
 
 export type ProcessQueuedArtifactsResult = {
@@ -605,7 +703,9 @@ async function processClaimedArtifact(
         return "failed";
       }
 
-      if (parsed.content.length > 0) {
+      const attributed = await applySpeakerAttribution(repository, artifact, parsed);
+
+      if (attributed.content.length > 0) {
         if (!options.privateFragmentStorage) {
           await markPrivateFragmentStorageRequired(repository, artifact, metadata, now);
           return "pending";
@@ -614,9 +714,10 @@ async function processClaimedArtifact(
         const fragment = await getOrCreateMemoryFragment(repository, {
           twinId: artifact.twinId,
           sourceArtifactId: artifact.id,
-          content: parsed.content,
+          content: attributed.content,
           privateFragmentStorage: options.privateFragmentStorage,
           sourceType: artifact.sourceType,
+          metadata: attributed.attribution ? { conversation: attributed.attribution } : undefined,
           importanceScore: 0.5,
           confidenceScore: 0.7,
         });
@@ -627,7 +728,8 @@ async function processClaimedArtifact(
           processedAt: now.toISOString(),
           decryptPath: "seal_walrus",
           ...intelligence,
-          ...(parsed.parser ? { parser: parsed.parser } : {}),
+          ...(attributed.parser ? { parser: attributed.parser } : {}),
+          ...(attributed.attribution ? { conversation: attributed.attribution } : {}),
         });
 
         await repository.markArtifactCompleted(artifact.id, nextMetadata);
@@ -639,7 +741,8 @@ async function processClaimedArtifact(
             memoryFragmentId: fragment.id,
             decryptPath: "seal_walrus",
             rawStorageRef: artifact.rawStorageRef,
-            ...(parsed.parser ? { parser: parsed.parser } : {}),
+            ...(attributed.parser ? { parser: attributed.parser } : {}),
+            ...(attributed.attribution ? { conversation: attributed.attribution } : {}),
           },
         });
         return "completed";
@@ -653,7 +756,7 @@ async function processClaimedArtifact(
           reason: emptyParseReason,
           detail: `${readSourceLabel(artifact.sourceType)} artifact did not produce retrievable text after parsing.`,
           processedAt: now.toISOString(),
-          ...(parsed.parser ? { parser: parsed.parser } : {}),
+          ...(attributed.parser ? { parser: attributed.parser } : {}),
         });
 
         await repository.markArtifactFailed(artifact.id, nextMetadata);
@@ -664,7 +767,7 @@ async function processClaimedArtifact(
           metadata: {
             reason: emptyParseReason,
             rawStorageRef: artifact.rawStorageRef,
-            ...(parsed.parser ? { parser: parsed.parser } : {}),
+            ...(attributed.parser ? { parser: attributed.parser } : {}),
           },
         });
         return "failed";
@@ -724,7 +827,9 @@ async function processClaimedArtifact(
     return "failed";
   }
 
-  if (!parsed.content) {
+  const attributed = await applySpeakerAttribution(repository, artifact, parsed);
+
+  if (!attributed.content) {
     const reason = readEmptyParseReason(artifact.sourceType) ?? MISSING_PROCESSABLE_CONTENT;
     const nextMetadata = withProcessingState(metadata, {
       status: "failed",
@@ -733,7 +838,7 @@ async function processClaimedArtifact(
         ? `${readSourceLabel(artifact.sourceType)} artifact did not produce retrievable text after parsing.`
         : "No plaintext processing input was available for this non-encrypted artifact.",
       processedAt: now.toISOString(),
-      ...(parsed.parser ? { parser: parsed.parser } : {}),
+      ...(attributed.parser ? { parser: attributed.parser } : {}),
     });
 
     await repository.markArtifactFailed(artifact.id, nextMetadata);
@@ -743,7 +848,7 @@ async function processClaimedArtifact(
       resourceId: artifact.id,
       metadata: {
         reason,
-        ...(parsed.parser ? { parser: parsed.parser } : {}),
+        ...(attributed.parser ? { parser: attributed.parser } : {}),
       },
     });
     return "failed";
@@ -752,9 +857,10 @@ async function processClaimedArtifact(
   const fragment = await getOrCreateMemoryFragment(repository, {
     twinId: artifact.twinId,
     sourceArtifactId: artifact.id,
-    content: parsed.content,
+    content: attributed.content,
     privateFragmentStorage: options.privateFragmentStorage,
     sourceType: artifact.sourceType,
+    metadata: attributed.attribution ? { conversation: attributed.attribution } : undefined,
     importanceScore: 0.5,
     confidenceScore: 0.6,
   });
@@ -764,7 +870,8 @@ async function processClaimedArtifact(
     memoryFragmentId: fragment.id,
     processedAt: now.toISOString(),
     ...intelligence,
-    ...(parsed.parser ? { parser: parsed.parser } : {}),
+    ...(attributed.parser ? { parser: attributed.parser } : {}),
+    ...(attributed.attribution ? { conversation: attributed.attribution } : {}),
   });
 
   await repository.markArtifactCompleted(artifact.id, nextMetadata);
@@ -774,10 +881,93 @@ async function processClaimedArtifact(
     resourceId: artifact.id,
     metadata: {
       memoryFragmentId: fragment.id,
-      ...(parsed.parser ? { parser: parsed.parser } : {}),
+      ...(attributed.parser ? { parser: attributed.parser } : {}),
+      ...(attributed.attribution ? { conversation: attributed.attribution } : {}),
     },
   });
   return "completed";
+}
+
+async function applySpeakerAttribution(
+  repository: ArtifactRepository,
+  artifact: QueuedArtifact,
+  parsed: ParsedProcessableContent,
+): Promise<ParsedProcessableContent & { attribution?: AttributionMetadata }> {
+  const messages = parsed.conversation?.messages ?? [];
+
+  if (messages.length === 0) {
+    return parsed;
+  }
+
+  const [profile, mappings] = await Promise.all([
+    repository.findTwinIdentityProfile(artifact.twinId),
+    repository.findSourceSpeakerMappings(artifact.twinId, artifact.id),
+  ]);
+  const fallbackProfile = profile ?? {};
+  const counts: Record<SpeakerRole, number> = {
+    self: 0,
+    other: 0,
+    system: 0,
+    unknown: 0,
+  };
+  const unknownSpeakers = new Set<string>();
+  let mappedSpeakers = 0;
+  const attributedLines = messages.map((message) => {
+    const attribution = resolveSpeakerAttribution({
+      label: message.speaker,
+      sourceSpeakerId: message.sourceSpeakerId,
+      profile: fallbackProfile,
+      mappings,
+    });
+
+    counts[attribution.role] += 1;
+
+    if (attribution.method === "source_mapping") {
+      mappedSpeakers += 1;
+    }
+
+    if (attribution.role === "unknown") {
+      unknownSpeakers.add(message.speaker);
+    }
+
+    return renderAttributedConversationMessage(message, attribution.role);
+  });
+  const speakers = Array.from(new Set(messages.map((message) => message.speaker).filter(Boolean)));
+  const warnings = [
+    ...(parsed.parser?.warnings ?? []),
+    ...(unknownSpeakers.size > 0 ? ["conversation_speakers_unmapped"] : []),
+  ];
+  const parser = parsed.parser
+    ? {
+        ...parsed.parser,
+        warnings,
+        speakers,
+      }
+    : parsed.parser;
+
+  return {
+    ...parsed,
+    content: attributedLines.join("\n").trim(),
+    parser,
+    attribution: {
+      messageCount: messages.length,
+      speakers,
+      counts,
+      unknownSpeakers: Array.from(unknownSpeakers),
+      mappedSpeakers,
+    },
+  };
+}
+
+function renderAttributedConversationMessage(
+  message: ParsedConversationMessage,
+  role: SpeakerRole,
+): string {
+  const speaker = `${role}/${message.speaker}`;
+
+  return message.timestamp
+    ? `[${message.timestamp}] ${speaker}: ${message.text}`
+    : `${speaker}: ${message.text}`;
 }
 
 function isRetryablePrivateMemoryReadError(error: unknown): boolean {
@@ -843,6 +1033,7 @@ async function getOrCreateMemoryFragment(
     twinId: string;
     sourceArtifactId: string;
     content: string;
+    metadata?: Record<string, unknown>;
     importanceScore: number;
     confidenceScore: number;
     privateFragmentStorage?: PrivateFragmentStorage;
@@ -881,7 +1072,10 @@ async function getOrCreateMemoryFragment(
     sourceArtifactId: input.sourceArtifactId,
     contentStorageRef: stored.contentStorageRef,
     contentSha256: stored.contentSha256,
-    metadata: stored.metadata,
+    metadata: {
+      ...stored.metadata,
+      ...input.metadata,
+    },
     importanceScore: input.importanceScore,
     confidenceScore: input.confidenceScore,
   });
@@ -1142,18 +1336,11 @@ async function processEntityExtraction(
       });
     const llmMs = Date.now() - llmStartedAt;
     const graphStartedAt = Date.now();
-    const artifactNode = await repository.upsertGraphNode({
-      twinId: input.artifact.twinId,
-      nodeType: "artifact",
-      name: `source_artifact:${input.artifact.id}`,
-      normalizedName: `source_artifact:${input.artifact.id}`,
-      properties: {
-        sourceArtifactId: input.artifact.id,
-        memoryFragmentId: input.memoryFragmentId,
-        sourceType: input.artifact.sourceType,
-      },
-      confidenceScore: 1,
-    });
+    const artifactNode = await upsertArtifactGraphNode(repository, input.artifact, input.memoryFragmentId);
+    const entityNodes: Array<{
+      nodeId: string;
+      entity: ExtractedEntity;
+    }> = [];
 
     for (const entity of result.entities) {
       const entityNode = await repository.upsertGraphNode({
@@ -1173,6 +1360,10 @@ async function processEntityExtraction(
         },
         confidenceScore: entity.confidence,
       });
+      entityNodes.push({
+        nodeId: entityNode.id,
+        entity,
+      });
 
       await repository.upsertGraphEdge({
         twinId: input.artifact.twinId,
@@ -1183,6 +1374,12 @@ async function processEntityExtraction(
         confidenceScore: entity.confidence,
       });
     }
+    const projectClustering = await clusterProjectsFromEntities(repository, {
+      artifact: input.artifact,
+      memoryFragmentId: input.memoryFragmentId,
+      artifactNodeId: artifactNode.id,
+      entityNodes,
+    });
     const graphWriteMs = Date.now() - graphStartedAt;
 
     await repository.createAuditEvent({
@@ -1197,6 +1394,8 @@ async function processEntityExtraction(
         model: result.metadata.model,
         llmMs,
         graphWriteMs,
+        projectClusterCount: projectClustering.projectClusterCount,
+        projectLinkCount: projectClustering.projectLinkCount,
       },
     });
 
@@ -1209,6 +1408,7 @@ async function processEntityExtraction(
       warnings: result.metadata.warnings,
       llmMs,
       graphWriteMs,
+      projectClustering,
     };
   } catch (error) {
     console.warn("artifact entity extraction failed", {
@@ -1272,6 +1472,486 @@ async function processEntityExtractionChunks(
     countKey: "entityCount",
     chunkCount: input.chunks.length,
   });
+}
+
+async function upsertArtifactGraphNode(
+  repository: ArtifactRepository,
+  artifact: QueuedArtifact,
+  memoryFragmentId: string,
+): Promise<{ id: string }> {
+  return repository.upsertGraphNode({
+    twinId: artifact.twinId,
+    nodeType: "artifact",
+    name: `source_artifact:${artifact.id}`,
+    normalizedName: `source_artifact:${artifact.id}`,
+    properties: {
+      sourceArtifactId: artifact.id,
+      memoryFragmentId,
+      sourceType: artifact.sourceType,
+    },
+    confidenceScore: 1,
+  });
+}
+
+async function clusterProjectsFromEntities(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    artifactNodeId: string;
+    entityNodes: Array<{
+      nodeId: string;
+      entity: ExtractedEntity;
+    }>;
+  },
+): Promise<Record<string, unknown>> {
+  const candidates = input.entityNodes
+    .map(({ entity }) => readProjectCandidateFromEntity(entity))
+    .filter((candidate): candidate is ProjectClusterCandidate => Boolean(candidate));
+  const deduped = dedupeProjectCandidates(candidates);
+  let projectLinkCount = 0;
+
+  for (const candidate of deduped) {
+    const projectNode = await upsertProjectClusterNode(repository, input.artifact, candidate);
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: input.artifactNodeId,
+      toNodeId: projectNode.id,
+      edgeType: "belongs_to_project",
+      description: "Source artifact is clustered into this project context.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: candidate.confidence,
+    });
+    projectLinkCount += 1;
+
+    for (const { nodeId, entity } of input.entityNodes) {
+      if (entity.normalizedName === candidate.normalizedName && entity.graphNodeType === "project") {
+        continue;
+      }
+
+      await repository.upsertGraphEdge({
+        twinId: input.artifact.twinId,
+        fromNodeId: projectNode.id,
+        toNodeId: nodeId,
+        edgeType: "project_context",
+        description: "Entity appears in the same source context as this project cluster.",
+        evidenceMemoryIds: [input.memoryFragmentId],
+        confidenceScore: Math.min(candidate.confidence, entity.confidence),
+      });
+      projectLinkCount += 1;
+    }
+  }
+
+  return {
+    status: "completed",
+    method: "deterministic_project_clustering",
+    projectClusterCount: deduped.length,
+    projectLinkCount,
+    signals: Array.from(new Set(deduped.flatMap((candidate) => candidate.signals))),
+  };
+}
+
+async function clusterProjectsFromCandidates(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    artifactNodeId: string;
+    candidates: ProjectClusterCandidate[];
+  },
+): Promise<Record<string, unknown>> {
+  const deduped = dedupeProjectCandidates(input.candidates);
+
+  for (const candidate of deduped) {
+    const projectNode = await upsertProjectClusterNode(repository, input.artifact, candidate);
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: input.artifactNodeId,
+      toNodeId: projectNode.id,
+      edgeType: "belongs_to_project",
+      description: "Candidate memory subject is clustered into this project context.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: candidate.confidence,
+    });
+  }
+
+  return {
+    status: "completed",
+    method: "deterministic_project_clustering",
+    projectClusterCount: deduped.length,
+    projectLinkCount: deduped.length,
+    signals: Array.from(new Set(deduped.flatMap((candidate) => candidate.signals))),
+  };
+}
+
+async function linkDecisionGraphNodes(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    artifactNodeId: string;
+    decisions: DecisionGraphCandidate[];
+  },
+): Promise<Record<string, unknown>> {
+  let decisionLinkCount = 0;
+  let projectDecisionLinkCount = 0;
+
+  for (const decision of input.decisions) {
+    const decisionHash = sha256Text(decision.memory.normalizedStatement);
+    const decisionNode = await repository.upsertGraphNode({
+      twinId: input.artifact.twinId,
+      nodeType: "decision",
+      name: `decision:${decisionHash.slice(0, 12)}`,
+      normalizedName: `decision:${decisionHash}`,
+      properties: {
+        decisionHash,
+        sourceArtifactId: input.artifact.id,
+        memoryFragmentId: input.memoryFragmentId,
+        candidateMemoryId: decision.candidateMemoryId,
+        sourceType: input.artifact.sourceType,
+        subject: decision.memory.subject,
+        evidenceHash: decision.memory.evidenceHash,
+        evidenceLength: decision.memory.evidenceLength,
+        statementIndex: decision.statementIndex,
+        extractionMethod: "llm_structured_memory_extractor",
+        privateStatementStoredEncrypted: true,
+        metadata: decision.memory.metadata,
+      },
+      confidenceScore: decision.memory.confidence,
+    });
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: input.artifactNodeId,
+      toNodeId: decisionNode.id,
+      edgeType: "records_decision",
+      description: "Source artifact contains an encrypted candidate memory classified as a decision.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: decision.memory.confidence,
+    });
+    decisionLinkCount += 1;
+
+    const projectCandidate = readProjectCandidateFromMemory(decision.memory);
+
+    if (projectCandidate) {
+      const projectNode = await upsertProjectClusterNode(repository, input.artifact, projectCandidate);
+
+      await repository.upsertGraphEdge({
+        twinId: input.artifact.twinId,
+        fromNodeId: projectNode.id,
+        toNodeId: decisionNode.id,
+        edgeType: "project_decision",
+        description: "Decision candidate is associated with this project context.",
+        evidenceMemoryIds: [input.memoryFragmentId],
+        confidenceScore: Math.min(decision.memory.confidence, projectCandidate.confidence),
+      });
+      projectDecisionLinkCount += 1;
+    }
+  }
+
+  return {
+    status: "completed",
+    method: "candidate_memory_decision_graph_linking",
+    decisionCount: input.decisions.length,
+    decisionLinkCount,
+    projectDecisionLinkCount,
+  };
+}
+
+async function linkGoalGraphNodes(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    artifactNodeId: string;
+    goals: GoalGraphCandidate[];
+  },
+): Promise<Record<string, unknown>> {
+  let goalLinkCount = 0;
+  let projectGoalLinkCount = 0;
+
+  for (const goal of input.goals) {
+    const goalHash = sha256Text(goal.memory.normalizedStatement);
+    const goalNode = await repository.upsertGraphNode({
+      twinId: input.artifact.twinId,
+      nodeType: "goal",
+      name: `goal:${goalHash.slice(0, 12)}`,
+      normalizedName: `goal:${goalHash}`,
+      properties: {
+        goalHash,
+        sourceArtifactId: input.artifact.id,
+        memoryFragmentId: input.memoryFragmentId,
+        candidateMemoryId: goal.candidateMemoryId,
+        sourceType: input.artifact.sourceType,
+        subject: goal.memory.subject,
+        evidenceHash: goal.memory.evidenceHash,
+        evidenceLength: goal.memory.evidenceLength,
+        statementIndex: goal.statementIndex,
+        extractionMethod: "llm_structured_memory_extractor",
+        inferenceMethod: "candidate_memory_goal_graph_linking",
+        privateStatementStoredEncrypted: true,
+        metadata: goal.memory.metadata,
+      },
+      confidenceScore: goal.memory.confidence,
+    });
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: input.artifactNodeId,
+      toNodeId: goalNode.id,
+      edgeType: "states_goal",
+      description: "Source artifact contains an encrypted candidate memory classified as a goal.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: goal.memory.confidence,
+    });
+    goalLinkCount += 1;
+
+    const projectCandidate = readProjectCandidateFromMemory(goal.memory);
+
+    if (projectCandidate) {
+      const projectNode = await upsertProjectClusterNode(repository, input.artifact, projectCandidate);
+
+      await repository.upsertGraphEdge({
+        twinId: input.artifact.twinId,
+        fromNodeId: projectNode.id,
+        toNodeId: goalNode.id,
+        edgeType: "project_goal",
+        description: "Goal candidate is associated with this project context.",
+        evidenceMemoryIds: [input.memoryFragmentId],
+        confidenceScore: Math.min(goal.memory.confidence, projectCandidate.confidence),
+      });
+      projectGoalLinkCount += 1;
+    }
+  }
+
+  return {
+    status: "completed",
+    method: "candidate_memory_goal_graph_linking",
+    goalCount: input.goals.length,
+    goalLinkCount,
+    projectGoalLinkCount,
+  };
+}
+
+async function detectAndLinkPatterns(
+  repository: ArtifactRepository,
+  input: {
+    artifact: QueuedArtifact;
+    memoryFragmentId: string;
+    artifactNodeId: string;
+    currentSignals: PatternSignal[];
+  },
+): Promise<Record<string, unknown>> {
+  const historicalSignals = await repository.findRecentPatternSignals(input.artifact.twinId, 250);
+  const result = detectPatterns({
+    twinId: input.artifact.twinId,
+    currentSignals: input.currentSignals,
+    historicalSignals,
+  });
+  let patternLinkCount = 0;
+  let projectPatternLinkCount = 0;
+
+  for (const pattern of result.patterns) {
+    const patternNode = await upsertPatternGraphNode(repository, input.artifact, pattern);
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: input.artifactNodeId,
+      toNodeId: patternNode.id,
+      edgeType: "supports_pattern",
+      description: "Source artifact contributes private-safe evidence for this detected pattern.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: pattern.confidence,
+    });
+    patternLinkCount += 1;
+
+    const projectNode = await upsertProjectClusterNode(repository, input.artifact, {
+      name: pattern.subject,
+      normalizedName: pattern.normalizedSubject,
+      confidence: pattern.confidence,
+      signals: [pattern.patternType],
+      source: "candidate_memory",
+    });
+
+    await repository.upsertGraphEdge({
+      twinId: input.artifact.twinId,
+      fromNodeId: projectNode.id,
+      toNodeId: patternNode.id,
+      edgeType: "project_pattern",
+      description: "Detected pattern is associated with this project or subject context.",
+      evidenceMemoryIds: [input.memoryFragmentId],
+      confidenceScore: pattern.confidence,
+    });
+    projectPatternLinkCount += 1;
+  }
+
+  return {
+    status: "completed",
+    ...result.metadata,
+    patternLinkCount,
+    projectPatternLinkCount,
+  };
+}
+
+async function upsertPatternGraphNode(
+  repository: ArtifactRepository,
+  artifact: QueuedArtifact,
+  pattern: DetectedPattern,
+): Promise<{ id: string }> {
+  return repository.upsertGraphNode({
+    twinId: artifact.twinId,
+    nodeType: "other",
+    name: `pattern:${pattern.patternHash.slice(0, 12)}`,
+    normalizedName: `pattern:${pattern.patternHash}`,
+    properties: {
+      kind: "pattern",
+      patternType: pattern.patternType,
+      patternHash: pattern.patternHash,
+      subject: pattern.subject,
+      normalizedSubject: pattern.normalizedSubject,
+      evidenceCount: pattern.evidenceCount,
+      sourceArtifactIds: pattern.sourceArtifactIds,
+      memoryFragmentIds: pattern.memoryFragmentIds,
+      candidateMemoryIds: pattern.candidateMemoryIds,
+      memoryTypes: pattern.memoryTypes,
+      sourceTypes: pattern.sourceTypes,
+      detector: pattern.detector,
+      privateStatementStoredEncrypted: true,
+    },
+    confidenceScore: pattern.confidence,
+  });
+}
+
+function toPatternSignal(
+  artifact: QueuedArtifact,
+  memoryFragmentId: string,
+  candidateMemoryId: string,
+  memory: ExtractedMemory,
+): PatternSignal | null {
+  if (!memory.subject) {
+    return null;
+  }
+
+  return {
+    twinId: artifact.twinId,
+    sourceArtifactId: artifact.id,
+    memoryFragmentId,
+    candidateMemoryId,
+    memoryType: memory.memoryType,
+    subject: memory.subject,
+    confidence: memory.confidence,
+    evidenceHash: memory.evidenceHash,
+    evidenceLength: memory.evidenceLength,
+    sourceType: artifact.sourceType,
+    metadata: memory.metadata,
+  };
+}
+
+async function upsertProjectClusterNode(
+  repository: ArtifactRepository,
+  artifact: QueuedArtifact,
+  candidate: ProjectClusterCandidate,
+): Promise<{ id: string }> {
+  return repository.upsertGraphNode({
+    twinId: artifact.twinId,
+    nodeType: "project",
+    name: candidate.name,
+    normalizedName: candidate.normalizedName,
+    properties: {
+      normalizedName: candidate.normalizedName,
+      sourceType: artifact.sourceType,
+      projectCluster: true,
+      clusterMethod: "deterministic_project_clustering",
+      clusterSignals: candidate.signals,
+      clusterSources: [candidate.source],
+    },
+    confidenceScore: candidate.confidence,
+  });
+}
+
+function readProjectCandidateFromEntity(entity: ExtractedEntity): ProjectClusterCandidate | null {
+  if (entity.graphNodeType === "project") {
+    return {
+      name: entity.name,
+      normalizedName: entity.normalizedName,
+      confidence: Math.max(entity.confidence, 0.85),
+      signals: ["project_entity"],
+      source: "entity",
+    };
+  }
+
+  if (entity.type === "product") {
+    return {
+      name: entity.name,
+      normalizedName: normalizeProjectName(entity.name),
+      confidence: Math.min(entity.confidence, 0.78),
+      signals: ["product_entity"],
+      source: "entity",
+    };
+  }
+
+  return null;
+}
+
+function readProjectCandidateFromMemory(memory: ExtractedMemory): ProjectClusterCandidate | null {
+  const subject = typeof memory.subject === "string" ? memory.subject.trim() : "";
+
+  if (!subject || subject.length < 2 || subject.length > 100) {
+    return null;
+  }
+
+  if (memory.memoryType === "project_update") {
+    return {
+      name: subject,
+      normalizedName: normalizeProjectName(subject),
+      confidence: Math.max(memory.confidence, 0.78),
+      signals: ["project_update_subject"],
+      source: "candidate_memory",
+    };
+  }
+
+  if (
+    memory.memoryType === "decision"
+    || memory.memoryType === "goal"
+    || memory.memoryType === "commitment"
+  ) {
+    return {
+      name: subject,
+      normalizedName: normalizeProjectName(subject),
+      confidence: Math.min(memory.confidence, 0.7),
+      signals: [`${memory.memoryType}_subject`],
+      source: "candidate_memory",
+    };
+  }
+
+  return null;
+}
+
+function dedupeProjectCandidates(candidates: ProjectClusterCandidate[]): ProjectClusterCandidate[] {
+  const deduped = new Map<string, ProjectClusterCandidate>();
+
+  for (const candidate of candidates) {
+    const existing = deduped.get(candidate.normalizedName);
+
+    if (!existing) {
+      deduped.set(candidate.normalizedName, candidate);
+      continue;
+    }
+
+    deduped.set(candidate.normalizedName, {
+      ...existing,
+      confidence: Math.max(existing.confidence, candidate.confidence),
+      signals: Array.from(new Set([...existing.signals, ...candidate.signals])),
+    });
+  }
+
+  return Array.from(deduped.values());
+}
+
+function normalizeProjectName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 async function measureStage<T>(
@@ -1464,6 +2144,7 @@ async function processMemoryExtraction(
       title: input.title,
     });
     const llmMs = Date.now() - llmStartedAt;
+    const conversationPolicy = readConversationMemoryPolicy(input.content, input.artifact.sourceType);
     let storedCount = 0;
     let candidateMemoryEncryptMs = 0;
     let candidateMemoryDbWriteMs = 0;
@@ -1487,6 +2168,12 @@ async function processMemoryExtraction(
           version: 1,
           sourceArtifactId: input.artifact.id,
           memoryFragmentId: input.memoryFragmentId,
+          ...(conversationPolicy
+            ? {
+                sourceKind: conversationPolicy.sourceKind,
+                conversationUnderstanding: result.metadata.conversationUnderstanding ?? null,
+              }
+            : {}),
           memories: result.memories.map((memory, index) => ({
             statementIndex: index,
             statement: memory.statement,
@@ -1501,6 +2188,10 @@ async function processMemoryExtraction(
 
     const dbWriteStartedAt = Date.now();
     const candidateMemoryIds: string[] = [];
+    const projectCandidates: ProjectClusterCandidate[] = [];
+    const decisionCandidates: DecisionGraphCandidate[] = [];
+    const goalCandidates: GoalGraphCandidate[] = [];
+    const currentPatternSignals: PatternSignal[] = [];
     for (const [statementIndex, memory] of result.memories.entries()) {
       if (!encrypted) {
         continue;
@@ -1531,13 +2222,79 @@ async function processMemoryExtraction(
           statementIndex,
           statementCount: result.memories.length,
           batchStorage: true,
+          ...(conversationPolicy ? conversationPolicy : {}),
+          ...(result.metadata.conversationUnderstanding
+            ? { conversationUnderstanding: result.metadata.conversationUnderstanding }
+            : {}),
           ...(Object.keys(memory.metadata).length > 0 ? { memoryMetadata: memory.metadata } : {}),
           storage: encrypted.metadata,
         },
       });
       candidateMemoryIds.push(candidate.id);
       storedCount += 1;
+      const projectCandidate = readProjectCandidateFromMemory(memory);
+
+      if (projectCandidate) {
+        projectCandidates.push(projectCandidate);
+      }
+
+      if (memory.memoryType === "decision") {
+        decisionCandidates.push({
+          memory,
+          candidateMemoryId: candidate.id,
+          statementIndex,
+        });
+      }
+
+      if (memory.memoryType === "goal") {
+        goalCandidates.push({
+          memory,
+          candidateMemoryId: candidate.id,
+          statementIndex,
+        });
+      }
+
+      const patternSignal = toPatternSignal(input.artifact, input.memoryFragmentId, candidate.id, memory);
+
+      if (patternSignal) {
+        currentPatternSignals.push(patternSignal);
+      }
     }
+    const artifactNode = projectCandidates.length > 0 || decisionCandidates.length > 0 || goalCandidates.length > 0
+      ? await upsertArtifactGraphNode(repository, input.artifact, input.memoryFragmentId)
+      : null;
+    const projectClustering = artifactNode && projectCandidates.length > 0
+      ? await clusterProjectsFromCandidates(repository, {
+          artifact: input.artifact,
+          memoryFragmentId: input.memoryFragmentId,
+          artifactNodeId: artifactNode.id,
+          candidates: projectCandidates,
+        })
+      : null;
+    const decisionExtraction = artifactNode && decisionCandidates.length > 0
+      ? await linkDecisionGraphNodes(repository, {
+          artifact: input.artifact,
+          memoryFragmentId: input.memoryFragmentId,
+          artifactNodeId: artifactNode.id,
+          decisions: decisionCandidates,
+        })
+      : null;
+    const goalInference = artifactNode && goalCandidates.length > 0
+      ? await linkGoalGraphNodes(repository, {
+          artifact: input.artifact,
+          memoryFragmentId: input.memoryFragmentId,
+          artifactNodeId: artifactNode.id,
+          goals: goalCandidates,
+        })
+      : null;
+    const patternDetection = artifactNode && currentPatternSignals.length > 0
+      ? await detectAndLinkPatterns(repository, {
+          artifact: input.artifact,
+          memoryFragmentId: input.memoryFragmentId,
+          artifactNodeId: artifactNode.id,
+          currentSignals: currentPatternSignals,
+        })
+      : null;
     candidateMemoryDbWriteMs = Date.now() - dbWriteStartedAt;
 
     if (encrypted && candidateMemoryIds.length > 0 && input.candidateMemoryArchiveQueue) {
@@ -1568,6 +2325,20 @@ async function processMemoryExtraction(
         candidateMemoryEncryptMs,
         candidateMemoryDbWriteMs,
         candidateMemoryArchiveQueued: archiveQueued,
+        ...(projectClustering ? { projectClustering } : {}),
+        ...(decisionExtraction ? { decisionExtraction } : {}),
+        ...(goalInference ? { goalInference } : {}),
+        ...(patternDetection ? { patternDetection } : {}),
+        ...(conversationPolicy
+          ? {
+              sourceKind: conversationPolicy.sourceKind,
+              conversationSourceType: conversationPolicy.conversationSourceType,
+              attributionAware: conversationPolicy.attributionAware,
+              speakerRolePolicy: conversationPolicy.speakerRolePolicy,
+              voiceDerived: conversationPolicy.voiceDerived,
+              conversationUnderstanding: result.metadata.conversationUnderstanding,
+            }
+          : {}),
       },
     });
 
@@ -1582,6 +2353,20 @@ async function processMemoryExtraction(
       candidateMemoryEncryptMs,
       candidateMemoryDbWriteMs,
       candidateMemoryArchiveQueued: archiveQueued,
+      ...(projectClustering ? { projectClustering } : {}),
+      ...(decisionExtraction ? { decisionExtraction } : {}),
+      ...(goalInference ? { goalInference } : {}),
+      ...(patternDetection ? { patternDetection } : {}),
+      ...(conversationPolicy
+        ? {
+            sourceKind: conversationPolicy.sourceKind,
+            conversationSourceType: conversationPolicy.conversationSourceType,
+            attributionAware: conversationPolicy.attributionAware,
+            speakerRolePolicy: conversationPolicy.speakerRolePolicy,
+            voiceDerived: conversationPolicy.voiceDerived,
+            conversationUnderstanding: result.metadata.conversationUnderstanding,
+          }
+        : {}),
     };
   } catch (error) {
     console.warn("artifact memory extraction failed", {
@@ -1715,6 +2500,236 @@ export async function processCandidateMemoryArchive(
   };
 }
 
+export async function generateWeeklyReflection(
+  repository: ArtifactRepository,
+  input: {
+    reflectionRunId?: string;
+    twinId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    generator?: StructuredGenerator;
+    privateFragmentStorage?: PrivateFragmentStorage;
+  },
+): Promise<Record<string, unknown>> {
+  const signals = await repository.findWeeklyReflectionSignals({
+    twinId: input.twinId,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+  });
+  const signalCount = reflectionSignalCount(signals);
+
+  if (signalCount === 0) {
+    const run = await upsertReflectionRun(repository, {
+      reflectionRunId: input.reflectionRunId,
+      twinId: input.twinId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      status: "skipped",
+      metadata: {
+        reason: "no_weekly_reflection_signals",
+        signals,
+      },
+    });
+
+    return {
+      status: "skipped",
+      reflectionRunId: run.id,
+      reason: "no_weekly_reflection_signals",
+      signalCount,
+    };
+  }
+
+  if (!input.generator) {
+    const run = await upsertReflectionRun(repository, {
+      reflectionRunId: input.reflectionRunId,
+      twinId: input.twinId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      status: "skipped",
+      metadata: {
+        reason: "reflection_generator_not_configured",
+        signals,
+      },
+    });
+
+    return {
+      status: "skipped",
+      reflectionRunId: run.id,
+      reason: "reflection_generator_not_configured",
+      signalCount,
+    };
+  }
+
+  if (!input.privateFragmentStorage) {
+    const run = await upsertReflectionRun(repository, {
+      reflectionRunId: input.reflectionRunId,
+      twinId: input.twinId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      status: "failed",
+      metadata: {
+        reason: "encrypted_reflection_storage_not_configured",
+        signals,
+      },
+    });
+
+    return {
+      status: "failed",
+      reflectionRunId: run.id,
+      reason: "encrypted_reflection_storage_not_configured",
+      signalCount,
+    };
+  }
+
+  const startedAt = Date.now();
+  if (input.reflectionRunId) {
+    await repository.updateReflectionRun({
+      id: input.reflectionRunId,
+      status: "processing",
+      metadata: {
+        startedAt: new Date().toISOString(),
+        signals,
+      },
+    });
+  }
+  const generationStartedAt = Date.now();
+  const generation = await input.generator.generateJson({
+    system: [
+      "You generate weekly reflections for Sivraj, a private AI Twin.",
+      "Use only the provided aggregate metadata and IDs.",
+      "Do not invent private facts or quote memory text.",
+      "Return JSON with: reflection, highlights, questions, warnings.",
+    ].join(" "),
+    prompt: JSON.stringify({
+      twinId: input.twinId,
+      periodStart: input.periodStart.toISOString(),
+      periodEnd: input.periodEnd.toISOString(),
+      signals,
+    }),
+    temperature: 0.2,
+  });
+  const generationMs = Date.now() - generationStartedAt;
+  const reflectionText = readReflectionText(generation.json);
+
+  if (!reflectionText) {
+    const run = await upsertReflectionRun(repository, {
+      reflectionRunId: input.reflectionRunId,
+      twinId: input.twinId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      status: "failed",
+      metadata: {
+        reason: "reflection_generation_empty",
+        provider: generation.provider,
+        model: generation.model,
+        generationMs,
+        signals,
+      },
+    });
+
+    return {
+      status: "failed",
+      reflectionRunId: run.id,
+      reason: "reflection_generation_empty",
+      signalCount,
+    };
+  }
+
+  const storageStartedAt = Date.now();
+  const stored = await input.privateFragmentStorage.storePrivateFragment({
+    twinId: input.twinId,
+    sourceArtifactId: "00000000-0000-0000-0000-000000000000",
+    sourceType: "weekly_reflection",
+    content: JSON.stringify({
+      kind: "weekly_reflection",
+      version: 1,
+      periodStart: input.periodStart.toISOString(),
+      periodEnd: input.periodEnd.toISOString(),
+      reflection: reflectionText,
+      metadata: sanitizeReflectionOutput(generation.json),
+    }),
+    contentKind: "reflection",
+  });
+  const storageMs = Date.now() - storageStartedAt;
+  const totalMs = Date.now() - startedAt;
+  const run = await upsertReflectionRun(repository, {
+    reflectionRunId: input.reflectionRunId,
+    twinId: input.twinId,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    status: "completed",
+    summaryStorageRef: stored.contentStorageRef,
+    summarySha256: stored.contentSha256,
+    metadata: {
+      storageMode: "encrypted_walrus",
+      sensitivity: "private",
+      provider: generation.provider,
+      model: generation.model,
+      generationMs,
+      storageMs,
+      totalMs,
+      signalCount,
+      signals,
+      output: sanitizeReflectionOutput(generation.json),
+      storage: stored.metadata,
+    },
+  });
+
+  await repository.createAuditEvent({
+    twinId: input.twinId,
+    eventType: "reflection.weekly_generated",
+    resourceId: run.id,
+    metadata: {
+      periodStart: input.periodStart.toISOString(),
+      periodEnd: input.periodEnd.toISOString(),
+      provider: generation.provider,
+      model: generation.model,
+      generationMs,
+      storageMs,
+      signalCount,
+      summaryStorageRef: stored.contentStorageRef,
+    },
+  });
+
+  return {
+    status: "completed",
+    reflectionRunId: run.id,
+    summaryStorageRef: stored.contentStorageRef,
+    signalCount,
+    generationMs,
+    storageMs,
+    totalMs,
+  };
+}
+
+async function upsertReflectionRun(
+  repository: ArtifactRepository,
+  input: {
+    reflectionRunId?: string;
+    twinId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    status: "completed" | "failed" | "skipped";
+    summaryStorageRef?: string | null;
+    summarySha256?: string | null;
+    metadata: Record<string, unknown>;
+  },
+): Promise<{ id: string }> {
+  if (!input.reflectionRunId) {
+    return repository.createReflectionRun(input);
+  }
+
+  await repository.updateReflectionRun({
+    id: input.reflectionRunId,
+    status: input.status,
+    summaryStorageRef: input.summaryStorageRef ?? null,
+    summarySha256: input.summarySha256 ?? null,
+    metadata: input.metadata,
+  });
+
+  return { id: input.reflectionRunId };
+}
+
 export function createEntityExtractor(generator: StructuredGenerator): EntityExtractor {
   return {
     extract(input) {
@@ -1776,7 +2791,7 @@ function pendingCandidateMemoryArchiveRef(artifactId: string, memoryFragmentId: 
 async function parseProcessableContent(
   artifact: QueuedArtifact,
   payload: PrivateSourcePayload,
-): Promise<{ content: string; parser?: ParserMetadata }> {
+): Promise<ParsedProcessableContent> {
   switch (artifact.sourceType) {
     case "markdown": {
       const parsed = parseMarkdown({
@@ -1787,6 +2802,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "upload": {
@@ -1798,6 +2814,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "docx": {
@@ -1809,6 +2826,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "csv": {
@@ -1820,6 +2838,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "email": {
@@ -1831,6 +2850,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "ocr_pdf": {
@@ -1842,6 +2862,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "image": {
@@ -1887,6 +2908,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "slack_export": {
@@ -1898,6 +2920,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     case "whatsapp_export": {
@@ -1909,6 +2932,7 @@ async function parseProcessableContent(
       return {
         content: parsed.content,
         parser: parsed.parser,
+        conversation: parsed.conversation,
       };
     }
     default:
@@ -2054,6 +3078,30 @@ function readSourceLabel(sourceType: string): string {
   return "Source";
 }
 
+function readConversationMemoryPolicy(content: string, sourceType: string): Record<string, unknown> | null {
+  const attributionMarkersPresent =
+    /(^|\n)(?:\[[^\]]+\]\s+)?(?:self|other|unknown|system)\/[^:\n]+:/i.test(content);
+  const voiceDerived = sourceType === "voice_conversation";
+  const conversationSource =
+    voiceDerived || sourceType === "chat_export" || sourceType === "slack_export" || sourceType === "whatsapp_export";
+
+  if (!attributionMarkersPresent && !conversationSource) {
+    return null;
+  }
+
+  return {
+    sourceKind: "conversation",
+    conversationSourceType: sourceType,
+    ...(voiceDerived ? { voiceDerived: true } : {}),
+    ...(attributionMarkersPresent
+      ? {
+          attributionAware: true,
+          speakerRolePolicy: "self_claims_only_for_user_memory",
+        }
+      : {}),
+  };
+}
+
 function isSpeechToTextSource(sourceType: string): boolean {
   return sourceType === "voice_note" || sourceType === "voice_conversation";
 }
@@ -2108,6 +3156,52 @@ function withIntelligenceState(
       intelligence,
     },
   };
+}
+
+function reflectionSignalCount(signals: WeeklyReflectionSignals): number {
+  return signals.sourceArtifactCount +
+    signals.memoryFragmentCount +
+    signals.candidateMemoryCount +
+    signals.graphNodeCount +
+    signals.feedbackCount;
+}
+
+function readReflectionText(value: unknown): string | null {
+  const record = asRecord(value);
+  const reflection = record.reflection;
+
+  return typeof reflection === "string" && reflection.trim().length > 0
+    ? reflection.trim()
+    : null;
+}
+
+function sanitizeReflectionOutput(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "reflection") {
+      continue;
+    }
+
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean" || item === null) {
+      sanitized[key] = item;
+      continue;
+    }
+
+    if (Array.isArray(item)) {
+      sanitized[key] = item
+        .filter((arrayItem) =>
+          typeof arrayItem === "string" ||
+          typeof arrayItem === "number" ||
+          typeof arrayItem === "boolean" ||
+          arrayItem === null,
+        )
+        .slice(0, 20);
+    }
+  }
+
+  return sanitized;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

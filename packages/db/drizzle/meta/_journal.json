@@ -120,6 +120,27 @@
       "when": 1779368400000,
       "tag": "0016_candidate_memories",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779454800000,
+      "tag": "0017_twin_identity_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779458400000,
+      "tag": "0018_source_speaker_mappings",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779462000000,
+      "tag": "0019_user_feedback_and_reflections",
+      "breakpoints": true
     }
   ]
 }

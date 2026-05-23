@@ -1,6 +1,8 @@
 import type { StructuredGenerator } from "@sivraj/llm";
 import { createHash } from "node:crypto";
 
+export * from "./patterns/index.js";
+
 export const ENTITY_TYPES = [
   "person",
   "organization",
@@ -109,6 +111,17 @@ export type MemoryExtractionResult = {
     returnedMemories: number;
     acceptedMemories: number;
     warnings: string[];
+    attributionAware?: boolean;
+    sourceKind?: "conversation";
+    conversationUnderstanding?: {
+      enabled: true;
+      sourceType: string;
+      goalCount: number;
+      decisionCount: number;
+      preferenceCount: number;
+      commitmentCount: number;
+      followUpCount: number;
+    };
   };
 };
 
@@ -146,7 +159,14 @@ export async function extractMemories(input: MemoryExtractionInput, params: {
     prompt: buildMemoryExtractionPrompt(input, maxMemories),
     temperature: 0,
   });
-  const { memories, warnings } = parseMemoryResponse(generation.json, maxMemories);
+  const attributionAware = isAttributionAwareContent(input.content);
+  const conversationAware = isConversationSource(input.sourceType) || attributionAware;
+  const { memories, warnings } = parseMemoryResponse(generation.json, maxMemories, {
+    attributionAware,
+  });
+  const conversationUnderstanding = conversationAware
+    ? buildConversationUnderstandingMetadata(input.sourceType, memories)
+    : null;
 
   return {
     memories,
@@ -158,6 +178,9 @@ export async function extractMemories(input: MemoryExtractionInput, params: {
       returnedMemories: readReturnedMemoryCount(generation.json),
       acceptedMemories: memories.length,
       warnings,
+      ...(attributionAware ? { attributionAware: true } : {}),
+      ...(conversationAware ? { sourceKind: "conversation" as const } : {}),
+      ...(conversationUnderstanding ? { conversationUnderstanding } : {}),
     },
   };
 }
@@ -184,6 +207,184 @@ export function normalizeEntityName(value: string): string {
     .replace(/\s+/g, " ")
     .toLowerCase();
 }
+
+export type TwinIdentityProfile = {
+  displayName?: string | null;
+  aliases?: string[];
+  emails?: string[];
+  phones?: string[];
+  handles?: Record<string, string[]>;
+  knownOtherSpeakers?: string[];
+};
+
+export type SpeakerRole = "self" | "other" | "unknown" | "system";
+
+export type SpeakerAttributionMethod =
+  | "exact_name"
+  | "alias"
+  | "email"
+  | "phone"
+  | "handle"
+  | "source_mapping"
+  | "known_other"
+  | "system_label"
+  | "unknown";
+
+export type SpeakerAttribution = {
+  role: SpeakerRole;
+  confidence: number;
+  method: SpeakerAttributionMethod;
+  normalizedLabel: string;
+};
+
+export type SourceSpeakerMapping = {
+  sourceSpeaker: string;
+  sourceSpeakerId?: string | null;
+  role: SpeakerRole;
+  mappedName?: string | null;
+};
+
+export function resolveSpeakerAttribution(input: {
+  label: string | null | undefined;
+  sourceSpeakerId?: string | null;
+  profile: TwinIdentityProfile;
+  mappings?: SourceSpeakerMapping[];
+}): SpeakerAttribution {
+  const mapping = findSpeakerMapping(input.label, input.sourceSpeakerId, input.mappings ?? []);
+
+  if (mapping) {
+    return speakerAttribution(
+      mapping.role,
+      1,
+      "source_mapping",
+      normalizeSpeakerLabel(mapping.mappedName || mapping.sourceSpeaker),
+    );
+  }
+
+  return classifySpeaker(input.label, input.profile);
+}
+
+export function classifySpeaker(
+  label: string | null | undefined,
+  profile: TwinIdentityProfile,
+): SpeakerAttribution {
+  const normalizedLabel = normalizeSpeakerLabel(label);
+
+  if (!normalizedLabel) {
+    return speakerAttribution("unknown", 0, "unknown", "");
+  }
+
+  if (SYSTEM_SPEAKER_LABELS.has(normalizedLabel)) {
+    return speakerAttribution("system", 0.98, "system_label", normalizedLabel);
+  }
+
+  const displayName = normalizeSpeakerLabel(profile.displayName);
+
+  if (displayName && normalizedLabel === displayName) {
+    return speakerAttribution("self", 0.99, "exact_name", normalizedLabel);
+  }
+
+  if (profile.aliases?.some((alias) => normalizeSpeakerLabel(alias) === normalizedLabel)) {
+    return speakerAttribution("self", 0.96, "alias", normalizedLabel);
+  }
+
+  const labelEmail = normalizeEmail(label);
+  if (labelEmail && profile.emails?.some((email) => normalizeEmail(email) === labelEmail)) {
+    return speakerAttribution("self", 0.99, "email", normalizedLabel);
+  }
+
+  const labelPhone = normalizePhone(label);
+  if (labelPhone && profile.phones?.some((phone) => normalizePhone(phone) === labelPhone)) {
+    return speakerAttribution("self", 0.98, "phone", normalizedLabel);
+  }
+
+  if (matchesHandle(label, profile.handles)) {
+    return speakerAttribution("self", 0.95, "handle", normalizedLabel);
+  }
+
+  if (profile.knownOtherSpeakers?.some((speaker) => normalizeSpeakerLabel(speaker) === normalizedLabel)) {
+    return speakerAttribution("other", 0.9, "known_other", normalizedLabel);
+  }
+
+  return speakerAttribution("unknown", 0.15, "unknown", normalizedLabel);
+}
+
+function speakerAttribution(
+  role: SpeakerRole,
+  confidence: number,
+  method: SpeakerAttributionMethod,
+  normalizedLabel: string,
+): SpeakerAttribution {
+  return {
+    role,
+    confidence,
+    method,
+    normalizedLabel,
+  };
+}
+
+function normalizeSpeakerLabel(value: string | null | undefined): string {
+  return typeof value === "string"
+    ? value
+        .trim()
+        .replace(/^@/, "")
+        .replace(/\s+/g, " ")
+        .toLowerCase()
+    : "";
+}
+
+function normalizeEmail(value: string | null | undefined): string {
+  const label = normalizeSpeakerLabel(value);
+  return label.includes("@") ? label : "";
+}
+
+function normalizePhone(value: string | null | undefined): string {
+  const digits = typeof value === "string" ? value.replace(/[^\d+]/g, "") : "";
+  return digits.length >= 7 ? digits : "";
+}
+
+function matchesHandle(
+  label: string | null | undefined,
+  handles: Record<string, string[]> | undefined,
+): boolean {
+  const normalizedLabel = normalizeSpeakerLabel(label);
+
+  if (!normalizedLabel || !handles) {
+    return false;
+  }
+
+  return Object.values(handles)
+    .flat()
+    .some((handle) => normalizeSpeakerLabel(handle) === normalizedLabel);
+}
+
+function findSpeakerMapping(
+  label: string | null | undefined,
+  sourceSpeakerId: string | null | undefined,
+  mappings: SourceSpeakerMapping[],
+): SourceSpeakerMapping | null {
+  const normalizedLabel = normalizeSpeakerLabel(label);
+  const normalizedId = normalizeSpeakerLabel(sourceSpeakerId);
+
+  return mappings.find((mapping) => {
+    const mappingId = normalizeSpeakerLabel(mapping.sourceSpeakerId);
+
+    if (normalizedId && mappingId && normalizedId === mappingId) {
+      return true;
+    }
+
+    return normalizedLabel && normalizeSpeakerLabel(mapping.sourceSpeaker) === normalizedLabel;
+  }) ?? null;
+}
+
+const SYSTEM_SPEAKER_LABELS = new Set([
+  "system",
+  "bot",
+  "slackbot",
+  "github",
+  "notification",
+  "unknown user",
+]);
 
 const ENTITY_EXTRACTION_SYSTEM_PROMPT = `You are Sivraj's private entity extraction engine.
 Extract source-backed entities from the user's memory text.
@@ -235,8 +436,10 @@ function buildEntityExtractionPrompt(input: EntityExtractionInput, maxEntities: 
 }
 
 function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: number): string {
+  const attributionAware = isAttributionAwareContent(input.content);
+  const conversationAware = isConversationSource(input.sourceType) || attributionAware;
   return JSON.stringify({
-    task: "extract_candidate_memories",
+    task: conversationAware ? "extract_conversation_candidate_memories" : "extract_candidate_memories",
     instructions: [
       "Return a JSON object with a memories array.",
       "Each memory must include statement, type, subject, confidence, evidence, and metadata.",
@@ -246,10 +449,47 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
       "Evidence must be a short exact snippet from the source text.",
       "Do not include generic topics, filler, or claims without evidence.",
       "Do not treat every sentence as a memory; prefer durable facts, goals, preferences, decisions, commitments, relationships, and project history.",
+      ...(conversationAware
+        ? [
+            "This source is a conversation transcript. Understand the exchange, but extract only durable candidate memories.",
+            "Prefer user goals, decisions, preferences, commitments, unresolved follow-ups, relationship context, and project updates.",
+            "Do not store ordinary chit-chat, greetings, filler, or transcript summaries as memories.",
+            "For unresolved follow-ups or next actions, use type commitment when the user committed, or project_update when it is an open project context.",
+            "Set metadata.conversationSignal to one of goal, decision, preference, commitment, follow_up, relationship, project_update, or fact.",
+            "Set metadata.requiresApproval to true for memories that would update the Twin from a conversation.",
+          ]
+        : []),
+      ...(attributionAware
+        ? [
+            "This source uses speaker attribution markers such as self/Name, other/Name, unknown/Name, and system/Name.",
+            "Only self/* first-person claims may become user identity, preference, goal, or experience memories.",
+            "Do not convert other/* first-person claims into memories about the user.",
+            "Use unknown/* claims cautiously and at lower confidence unless they clearly describe a project or relationship.",
+            "Ignore system/* unless it provides important source context.",
+            "Project commitments involving the user and another party may become project or relationship memories when evidence supports them.",
+          ]
+        : []),
     ],
     source: {
       sourceType: input.sourceType,
       title: input.title ?? null,
+      ...(conversationAware
+        ? {
+            conversation: {
+              sourceType: input.sourceType,
+              policy: "extract_durable_user_memory_from_transcript",
+            },
+          }
+        : {}),
+      ...(attributionAware
+        ? {
+            attribution: {
+              markerFormat: "role/speaker: message",
+              roles: ["self", "other", "unknown", "system"],
+              policy: "self_claims_only_for_user_memory",
+            },
+          }
+        : {}),
       content: truncateForExtraction(input.content),
     },
     outputShape: {
@@ -262,6 +502,12 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
           evidence: "Full Stack Developer, Polytope Labs (Hyperbridge)",
           metadata: {
             category: "work_history",
+            ...(conversationAware
+              ? {
+                  conversationSignal: "project_update",
+                  requiresApproval: true,
+                }
+              : {}),
           },
         },
       ],
@@ -301,7 +547,9 @@ function parseEntityResponse(value: unknown, maxEntities: number): {
   };
 }
 
-function parseMemoryResponse(value: unknown, maxMemories: number): {
+function parseMemoryResponse(value: unknown, maxMemories: number, options: {
+  attributionAware?: boolean;
+} = {}): {
   memories: ExtractedMemory[];
   warnings: string[];
 } {
@@ -317,11 +565,17 @@ function parseMemoryResponse(value: unknown, maxMemories: number): {
       continue;
     }
 
-    const key = `${memory.memoryType}:${memory.normalizedStatement}`;
+    const filtered = options.attributionAware ? applyAttributionMemoryPolicy(memory, warnings) : memory;
+
+    if (!filtered) {
+      continue;
+    }
+
+    const key = `${filtered.memoryType}:${filtered.normalizedStatement}`;
     const previous = deduped.get(key);
 
-    if (!previous || memory.confidence > previous.confidence) {
-      deduped.set(key, memory);
+    if (!previous || filtered.confidence > previous.confidence) {
+      deduped.set(key, filtered);
     }
   }
 
@@ -330,6 +584,48 @@ function parseMemoryResponse(value: unknown, maxMemories: number): {
       .sort((left, right) => right.confidence - left.confidence)
       .slice(0, maxMemories),
     warnings,
+  };
+}
+
+function applyAttributionMemoryPolicy(memory: ExtractedMemory, warnings: string[]): ExtractedMemory | null {
+  const role = readEvidenceSpeakerRole(memory.metadata["evidenceSpeakerRole"]);
+
+  if (!role) {
+    return memory;
+  }
+
+  if (role === "system") {
+    warnings.push("memory_rejected_system_speaker");
+    return null;
+  }
+
+  const userStatement = refersToUser(memory.statement);
+
+  if (role === "other" && userStatement && isPersonalClaimMemory(memory)) {
+    warnings.push("memory_rejected_other_party_self_claim");
+    return null;
+  }
+
+  if (role === "unknown" && userStatement && isPersonalClaimMemory(memory)) {
+    warnings.push("memory_downgraded_unknown_speaker_claim");
+    return {
+      ...memory,
+      confidence: Math.min(memory.confidence, 0.35),
+      metadata: {
+        ...memory.metadata,
+        speakerRole: role,
+        attributionPolicy: "unknown_speaker_claim_downgraded",
+      },
+    };
+  }
+
+  return {
+    ...memory,
+    metadata: {
+      ...memory.metadata,
+      speakerRole: role,
+      attributionPolicy: "self_claims_only_for_user_memory",
+    },
   };
 }
 
@@ -383,6 +679,9 @@ function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
     return null;
   }
 
+  const evidenceSpeakerRole = readEvidenceSpeakerRole(evidence);
+  const metadata = sanitizeMetadata(record["metadata"]);
+
   return {
     statement: statement.trim().replace(/\s+/g, " "),
     normalizedStatement,
@@ -391,7 +690,10 @@ function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
     confidence: clampConfidence(readNumber(record["confidence"])),
     evidenceHash: sha256Hex(evidence),
     evidenceLength: evidence.length,
-    metadata: sanitizeMetadata(record["metadata"]),
+    metadata: {
+      ...metadata,
+      ...(evidenceSpeakerRole ? { evidenceSpeakerRole } : {}),
+    },
   };
 }
 
@@ -466,6 +768,74 @@ function clampMaxMemories(value: number | undefined): number {
 
 function truncateForExtraction(value: string): string {
   return value.length > 30_000 ? value.slice(0, 30_000) : value;
+}
+
+function isConversationSource(sourceType: string): boolean {
+  return sourceType === "voice_conversation" || sourceType === "chat_export" || sourceType === "slack_export" || sourceType === "whatsapp_export";
+}
+
+function buildConversationUnderstandingMetadata(
+  sourceType: string,
+  memories: ExtractedMemory[],
+): NonNullable<MemoryExtractionResult["metadata"]["conversationUnderstanding"]> {
+  return {
+    enabled: true,
+    sourceType,
+    goalCount: countMemoriesByType(memories, "goal"),
+    decisionCount: countMemoriesByType(memories, "decision"),
+    preferenceCount: countMemoriesByType(memories, "preference"),
+    commitmentCount: countMemoriesByType(memories, "commitment"),
+    followUpCount: memories.filter((memory) => memory.metadata["conversationSignal"] === "follow_up").length,
+  };
+}
+
+function countMemoriesByType(memories: ExtractedMemory[], type: MemoryType): number {
+  return memories.filter((memory) => memory.memoryType === type).length;
+}
+
+function isAttributionAwareContent(value: string): boolean {
+  return /(^|\n)(?:\[[^\]]+\]\s+)?(?:self|other|unknown|system)\/[^:\n]+:/i.test(value);
+}
+
+function readEvidenceSpeakerRole(value: unknown): SpeakerRole | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (
+    normalized === "self"
+    || normalized === "other"
+    || normalized === "unknown"
+    || normalized === "system"
+  ) {
+    return normalized;
+  }
+
+  const match = /(?:^|\n)(?:\[[^\]]+\]\s+)?(self|other|unknown|system)\/[^:\n]+:/i.exec(normalized);
+  const role = match?.[1]?.toLowerCase();
+
+  return role === "self" || role === "other" || role === "unknown" || role === "system"
+    ? role
+    : null;
+}
+
+function refersToUser(statement: string): boolean {
+  return /\b(the user|user|fortune|he|she|they|their|them)\b/i.test(statement);
+}
+
+function isPersonalClaimMemory(memory: ExtractedMemory): boolean {
+  if (
+    memory.memoryType === "preference"
+    || memory.memoryType === "goal"
+    || memory.memoryType === "experience"
+  ) {
+    return true;
+  }
+
+  return /\b(prefers?|wants?|likes?|dislikes?|believes?|plans?|hopes?|needs?|worked with|is working on)\b/i
+    .test(memory.normalizedStatement);
 }
 
 function normalizeStatement(value: string): string {

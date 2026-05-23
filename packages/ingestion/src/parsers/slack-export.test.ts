@@ -15,6 +15,15 @@ describe("parseSlackExport", () => {
 
     expect(parsed.content).toBe("[1711965600.000000] U123: Lead with trust in #strategy.");
     expect(parsed.parser.warnings).toEqual([]);
+    expect(parsed.parser.speakers).toEqual(["U123"]);
+    expect(parsed.conversation?.messages).toEqual([
+      {
+        timestamp: "1711965600.000000",
+        speaker: "U123",
+        sourceSpeakerId: "U123",
+        text: "Lead with trust in #strategy.",
+      },
+    ]);
   });
 
   it("falls back to plain readable text for non-json exports", () => {

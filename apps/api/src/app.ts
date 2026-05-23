@@ -4,20 +4,26 @@ import {
   createLazyArtifactProcessingQueue,
   createLazyArtifactStatusPublisher,
   createLazyArtifactStatusSubscriber,
+  createLazyWeeklyReflectionQueue,
   type ArtifactProcessingQueue,
   type ArtifactStatusPublisher,
   type ArtifactStatusSubscriber,
+  type WeeklyReflectionQueue,
 } from "@sivraj/queue";
 import { db } from "./db.js";
 import { createArtifactRoutes } from "./routes/artifacts.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createGitHubImportRoutes, type GitHubImporter } from "./routes/github-imports.js";
 import { healthRoutes } from "./routes/health.js";
+import { createIdentityProfileRoutes } from "./routes/identity-profile.js";
 import { createMemoryRoutes } from "./routes/memories.js";
+import { createReflectionRoutes } from "./routes/reflections.js";
+import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
 import { createConfiguredPrivateMemoryReader, type PrivateMemoryReader } from "./services/private-memory-reader.js";
 import { createPrivateMemoryStorage } from "./services/private-memory-storage.js";
 
-export type ApiDb = Pick<typeof db, "insert" | "select" | "update">;
+export type ApiDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
 export type AppDependencies = {
   db: ApiDb;
@@ -27,6 +33,7 @@ export type AppDependencies = {
   artifactStatusSubscriber?: ArtifactStatusSubscriber;
   githubImporter?: GitHubImporter;
   privateMemoryReader?: PrivateMemoryReader;
+  weeklyReflectionQueue?: WeeklyReflectionQueue;
 };
 
 export type SupportedArtifactSourceType =
@@ -39,6 +46,7 @@ export type SupportedArtifactSourceType =
   | "image"
   | "voice_note"
   | "voice_conversation"
+  | "onboarding_self_description"
   | "docx"
   | "csv"
   | "email"
@@ -94,6 +102,7 @@ export function createApp(dependencies: AppDependencies = {
   artifactStatusPublisher: createLazyArtifactStatusPublisher(process.env["REDIS_URL"]),
   artifactStatusSubscriber: createLazyArtifactStatusSubscriber(process.env["REDIS_URL"]),
   privateMemoryReader: createConfiguredPrivateMemoryReader(process.env),
+  weeklyReflectionQueue: createLazyWeeklyReflectionQueue(process.env["REDIS_URL"]),
 }) {
   const app = new Hono();
 
@@ -102,15 +111,19 @@ export function createApp(dependencies: AppDependencies = {
     cors({
       origin: readCorsOrigins(process.env["CORS_ORIGINS"]),
       allowHeaders: ["content-type", "authorization"],
-      allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     }),
   );
 
   app.route("/health", healthRoutes);
   app.route("/v1/auth", createAuthRoutes(dependencies));
+  app.route("/v1/twins/:twinId", createIdentityProfileRoutes(dependencies));
   app.route("/v1/twins/:twinId/imports/github", createGitHubImportRoutes(dependencies));
   app.route("/v1/twins/:twinId/artifacts", createArtifactRoutes(dependencies));
+  app.route("/v1/twins/:twinId/artifacts", createSpeakerMappingRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));
+  app.route("/v1/twins/:twinId/feedback", createFeedbackRoutes(dependencies));
+  app.route("/v1/twins/:twinId/reflections", createReflectionRoutes(dependencies));
 
   return app;
 }

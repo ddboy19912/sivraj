@@ -74,7 +74,18 @@ type SourceType =
   | 'image'
   | 'voice_note'
   | 'voice_conversation'
+  | 'onboarding_self_description'
   | 'browser_history'
+
+type TwinIdentityProfile = {
+  twinId: string
+  displayName: string | null
+  aliases: string[]
+  emails: string[]
+  phones: string[]
+  handles: Record<string, string[]>
+  selfDescriptionArtifactId: string | null
+}
 
 type UploadMetadata = {
   fileName: string
@@ -148,6 +159,8 @@ function App() {
   })
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSavingIdentityProfile, setIsSavingIdentityProfile] = useState(false)
+  const [isSavingSelfDescription, setIsSavingSelfDescription] = useState(false)
   const [isImportingGitHub, setIsImportingGitHub] = useState(false)
   const [isRetryingArtifact, setIsRetryingArtifact] = useState(false)
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
@@ -159,6 +172,14 @@ function App() {
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null)
   const [storageHealthError, setStorageHealthError] = useState<string | null>(null)
   const [statusStreamNonce, setStatusStreamNonce] = useState(0)
+  const [identityDisplayName, setIdentityDisplayName] = useState('')
+  const [identityAliases, setIdentityAliases] = useState('')
+  const [identityEmails, setIdentityEmails] = useState('')
+  const [identityPhones, setIdentityPhones] = useState('')
+  const [identityGithub, setIdentityGithub] = useState('')
+  const [identitySlack, setIdentitySlack] = useState('')
+  const [identityX, setIdentityX] = useState('')
+  const [identitySelfDescription, setIdentitySelfDescription] = useState('')
   const recorderRef = useRef<MediaRecorder | null>(null)
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingStartedAtRef = useRef<number | null>(null)
@@ -171,6 +192,8 @@ function App() {
       session.walletAddress.toLowerCase() === account.address.toLowerCase(),
   )
   const canSubmit = isSessionForWallet && content.trim().length > 0 && !isSubmitting
+  const canSaveIdentityProfile = isSessionForWallet && !isSavingIdentityProfile
+  const canSaveSelfDescription = isSessionForWallet && identitySelfDescription.trim().length > 0 && !isSavingSelfDescription
   const canImportGitHub = isSessionForWallet && githubRepoUrl.trim().length > 0 && !isImportingGitHub
   const canStartRecording = isSessionForWallet && recordingState !== 'recording' && recordingState !== 'requesting_permission' && recordingState !== 'saving'
   const canSaveRecording = isSessionForWallet && recordingState === 'recorded' && Boolean(recordedVoiceBlob)
@@ -217,6 +240,43 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!session || !isSessionForWallet) {
+      return
+    }
+
+    let cancelled = false
+
+    getAuthedJson<TwinIdentityProfile>(
+      `/v1/twins/${session.twinId}/identity-profile`,
+      session,
+      (refreshed) => {
+        setSession(refreshed)
+        storeSession(refreshed)
+      },
+    )
+      .then((profile) => {
+        if (cancelled) {
+          return
+        }
+
+        setIdentityDisplayName(profile.displayName ?? '')
+        setIdentityAliases(profile.aliases.join(', '))
+        setIdentityEmails(profile.emails.join(', '))
+        setIdentityPhones(profile.phones.join(', '))
+        setIdentityGithub((profile.handles.github ?? []).join(', '))
+        setIdentitySlack((profile.handles.slack ?? []).join(', '))
+        setIdentityX((profile.handles.x ?? []).join(', '))
+      })
+      .catch(() => {
+        // A missing profile is normal for first-run onboarding.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [session?.twinId, session?.token, isSessionForWallet])
 
   useEffect(() => {
     if (!receipt || !session || !isSessionForWallet) {
@@ -403,6 +463,119 @@ function App() {
       })
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  async function handleSaveIdentityProfile() {
+    if (!session || !isSessionForWallet) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before saving Twin identity context.',
+      })
+      return
+    }
+
+    setIsSavingIdentityProfile(true)
+
+    try {
+      const profile = await putAuthedJson<TwinIdentityProfile>(
+        `/v1/twins/${session.twinId}/identity-profile`,
+        {
+          displayName: identityDisplayName.trim() || null,
+          aliases: parseCommaList(identityAliases),
+          emails: parseCommaList(identityEmails),
+          phones: parseCommaList(identityPhones),
+          handles: {
+            github: parseCommaList(identityGithub),
+            slack: parseCommaList(identitySlack),
+            x: parseCommaList(identityX),
+          },
+        },
+        session,
+        (refreshed) => {
+          setSession(refreshed)
+          storeSession(refreshed)
+        },
+      )
+
+      setIdentityDisplayName(profile.displayName ?? '')
+      setIdentityAliases(profile.aliases.join(', '))
+      setIdentityEmails(profile.emails.join(', '))
+      setIdentityPhones(profile.phones.join(', '))
+      setIdentityGithub((profile.handles.github ?? []).join(', '))
+      setIdentitySlack((profile.handles.slack ?? []).join(', '))
+      setIdentityX((profile.handles.x ?? []).join(', '))
+      setNotice({
+        tone: 'success',
+        title: 'Twin identity saved.',
+        body: 'Sivraj can use these aliases later to attribute chat speakers to you or to other people.',
+      })
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: 'Twin identity save failed.',
+        body: errorMessage(error),
+      })
+    } finally {
+      setIsSavingIdentityProfile(false)
+    }
+  }
+
+  async function handleSaveSelfDescription() {
+    if (!session || !isSessionForWallet) {
+      setNotice({
+        tone: 'error',
+        title: 'Sign in required.',
+        body: 'Verify the connected wallet before telling Sivraj about yourself.',
+      })
+      return
+    }
+
+    setIsSavingSelfDescription(true)
+    setReceipt(null)
+
+    try {
+      setUploadProgress('encrypting_uploading', 'Encrypting your onboarding context before storing it.')
+      const encryptedBody = await buildClientEncryptedArtifactBody({
+        sourceType: 'onboarding_self_description',
+        title: 'Twin onboarding self-description',
+        content: identitySelfDescription.trim(),
+        metadata: {
+          onboarding: {
+            kind: 'self_description',
+          },
+        },
+      })
+      const result = await postAuthedJson<ArtifactReceipt>(
+        `/v1/twins/${session.twinId}/artifacts`,
+        encryptedBody,
+        session,
+        (refreshed) => {
+          setSession(refreshed)
+          storeSession(refreshed)
+        },
+      )
+
+      setReceipt(result)
+      setStatusStreamNonce((value) => value + 1)
+      setIdentitySelfDescription('')
+      setUploadProgress('queued', 'Encrypted onboarding context stored and queued for Twin learning.')
+      setNotice({
+        tone: 'success',
+        title: 'Onboarding context queued.',
+        body: 'Sivraj stored this as encrypted private memory for your Twin to learn from.',
+      })
+    } catch (error) {
+      const message = errorMessage(error)
+      setUploadProgress('failed', message)
+      setNotice({
+        tone: 'error',
+        title: 'Onboarding context save failed.',
+        body: message,
+      })
+    } finally {
+      setIsSavingSelfDescription(false)
     }
   }
 
@@ -898,6 +1071,108 @@ function App() {
             <h2>Capture text, files, or voice</h2>
           </div>
 
+          <section className="inline-source-panel" aria-label="Twin identity onboarding">
+            <div className="section-heading compact">
+              <p className="eyebrow">Twin identity</p>
+              <h2>Tell Sivraj who you are</h2>
+            </div>
+            <div className="identity-grid">
+              <label>
+                <span>Display name</span>
+                <input
+                  value={identityDisplayName}
+                  onChange={(event) => setIdentityDisplayName(event.target.value)}
+                  placeholder="Fortune Ogunsusi"
+                  autoComplete="name"
+                />
+              </label>
+              <label>
+                <span>Aliases</span>
+                <input
+                  value={identityAliases}
+                  onChange={(event) => setIdentityAliases(event.target.value)}
+                  placeholder="Fortune, DDBoy"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <span>Emails</span>
+                <input
+                  value={identityEmails}
+                  onChange={(event) => setIdentityEmails(event.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+              </label>
+              <label>
+                <span>Phones</span>
+                <input
+                  value={identityPhones}
+                  onChange={(event) => setIdentityPhones(event.target.value)}
+                  placeholder="+234..."
+                  autoComplete="tel"
+                />
+              </label>
+              <label>
+                <span>GitHub handles</span>
+                <input
+                  value={identityGithub}
+                  onChange={(event) => setIdentityGithub(event.target.value)}
+                  placeholder="ddboy19912"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <span>Slack handles</span>
+                <input
+                  value={identitySlack}
+                  onChange={(event) => setIdentitySlack(event.target.value)}
+                  placeholder="@fortune"
+                  autoComplete="off"
+                />
+              </label>
+              <label>
+                <span>X handles</span>
+                <input
+                  value={identityX}
+                  onChange={(event) => setIdentityX(event.target.value)}
+                  placeholder="@fortune"
+                  autoComplete="off"
+                />
+              </label>
+            </div>
+            <div className="identity-actions">
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={handleSaveIdentityProfile}
+                disabled={!canSaveIdentityProfile}
+              >
+                {isSavingIdentityProfile ? 'Saving...' : 'Save identity'}
+              </button>
+            </div>
+            <label>
+              <span>What should Sivraj know about you?</span>
+              <textarea
+                value={identitySelfDescription}
+                onChange={(event) => setIdentitySelfDescription(event.target.value)}
+                placeholder="Tell Sivraj about your work, goals, background, preferences, or anything it should understand about you."
+                rows={6}
+              />
+            </label>
+            <div className="form-footer compact">
+              <p>This context is encrypted as private memory and processed as Twin learning.</p>
+              <button
+                className="primary-action"
+                type="button"
+                onClick={handleSaveSelfDescription}
+                disabled={!canSaveSelfDescription}
+              >
+                {isSavingSelfDescription ? 'Encrypting...' : 'Save about me'}
+              </button>
+            </div>
+          </section>
+
           <section className="inline-source-panel" aria-label="Voice conversation">
             <div className="section-heading compact">
               <p className="eyebrow">Voice</p>
@@ -1208,6 +1483,28 @@ async function postJson<TResponse>(
   return payload as TResponse
 }
 
+async function putJson<TResponse>(
+  path: string,
+  body: Record<string, unknown>,
+  token?: string,
+): Promise<TResponse> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  return payload as TResponse
+}
+
 async function buildClientEncryptedArtifactBody(input: {
   sourceType: SourceType
   title: string | null
@@ -1296,8 +1593,62 @@ async function postAuthedJson<TResponse>(
   }
 }
 
+async function putAuthedJson<TResponse>(
+  path: string,
+  body: Record<string, unknown>,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<TResponse> {
+  try {
+    return await putJson<TResponse>(path, body, session.token)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+
+    return putJson<TResponse>(path, body, refreshed.token)
+  }
+}
+
 async function getJson<TResponse>(path: string): Promise<TResponse> {
   const response = await fetch(`${API_URL}${path}`)
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  return payload as TResponse
+}
+
+async function getAuthedJson<TResponse>(
+  path: string,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<TResponse> {
+  try {
+    return await getJsonAuthed<TResponse>(path, session.token)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+
+    return getJsonAuthed<TResponse>(path, refreshed.token)
+  }
+}
+
+async function getJsonAuthed<TResponse>(path: string, token: string): Promise<TResponse> {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+  })
   const payload = await response.json().catch(() => ({}))
 
   if (!response.ok) {
@@ -1491,6 +1842,15 @@ function storeSession(session: Session) {
 
 function clearSession() {
   localStorage.removeItem(SESSION_STORAGE_KEY)
+}
+
+function parseCommaList(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ))
 }
 
 function isStoredSession(value: Partial<Session>): value is Session {

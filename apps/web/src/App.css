@@ -182,6 +182,17 @@ textarea:focus-visible {
   align-items: end;
 }
 
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.identity-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .voice-recorder {
   display: grid;
   gap: 12px;
@@ -348,6 +359,10 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.form-footer.compact {
+  align-items: flex-start;
 }
 
 .form-footer p {

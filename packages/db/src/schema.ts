@@ -25,6 +25,7 @@ export const sourceTypeEnum = pgEnum("source_type", [
   "image",
   "voice_note",
   "voice_conversation",
+  "onboarding_self_description",
   "markdown",
   "docx",
   "csv",
@@ -86,6 +87,13 @@ export const candidateMemoryStatusEnum = pgEnum("candidate_memory_status", [
   "superseded",
 ]);
 
+export const speakerRoleEnum = pgEnum("speaker_role", [
+  "self",
+  "other",
+  "system",
+  "unknown",
+]);
+
 export const accessPolicySubjectTypeEnum = pgEnum("access_policy_subject_type", [
   "user",
   "client",
@@ -101,6 +109,34 @@ export const agentWritebackStatusEnum = pgEnum("agent_writeback_status", [
   "rejected",
   "expired",
   "superseded",
+]);
+
+export const feedbackTargetTypeEnum = pgEnum("feedback_target_type", [
+  "candidate_memory",
+  "graph_node",
+  "pattern",
+  "insight",
+  "reflection",
+  "source_artifact",
+]);
+
+export const feedbackTypeEnum = pgEnum("feedback_type", [
+  "useful",
+  "wrong",
+  "not_me",
+  "too_generic",
+  "too_sensitive",
+  "approved",
+  "rejected",
+  "edited_later",
+]);
+
+export const reflectionStatusEnum = pgEnum("reflection_status", [
+  "queued",
+  "processing",
+  "completed",
+  "failed",
+  "skipped",
 ]);
 
 export const users = pgTable("users", {
@@ -144,6 +180,39 @@ export const twins = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("twins_user_id_idx").on(t.userId)],
+);
+
+export const twinIdentityProfiles = pgTable(
+  "twin_identity_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    displayName: text("display_name"),
+    aliases: text("aliases")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    emails: text("emails")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    phones: text("phones")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    handles: jsonb("handles").$type<unknown>(),
+    selfDescriptionArtifactId: uuid("self_description_artifact_id").references(
+      () => sourceArtifacts.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("twin_identity_profiles_twin_id_idx").on(t.twinId),
+  ],
 );
 
 export const refreshSessions = pgTable(
@@ -294,6 +363,34 @@ export const memoryFragments = pgTable(
   ],
 );
 
+export const sourceSpeakerMappings = pgTable(
+  "source_speaker_mappings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    sourceSpeaker: text("source_speaker").notNull(),
+    sourceSpeakerId: text("source_speaker_id"),
+    role: speakerRoleEnum("role").notNull(),
+    mappedName: text("mapped_name"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("source_speaker_mappings_twin_id_idx").on(t.twinId),
+    index("source_speaker_mappings_source_artifact_id_idx").on(t.sourceArtifactId),
+    uniqueIndex("source_speaker_mappings_artifact_speaker_idx").on(
+      t.sourceArtifactId,
+      t.sourceSpeaker,
+    ),
+  ],
+);
+
 export const graphNodes = pgTable(
   "graph_nodes",
   {
@@ -415,6 +512,52 @@ export const candidateMemories = pgTable(
       t.memoryType,
       t.evidenceHash,
     ),
+  ],
+);
+
+export const userFeedbackEvents = pgTable(
+  "user_feedback_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    targetType: feedbackTargetTypeEnum("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    feedbackType: feedbackTypeEnum("feedback_type").notNull(),
+    actorType: text("actor_type").notNull().default("user"),
+    actorId: text("actor_id").notNull(),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("user_feedback_events_twin_id_idx").on(t.twinId),
+    index("user_feedback_events_target_idx").on(t.targetType, t.targetId),
+    index("user_feedback_events_feedback_type_idx").on(t.feedbackType),
+    index("user_feedback_events_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export const reflectionRuns = pgTable(
+  "reflection_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    status: reflectionStatusEnum("status").notNull(),
+    summaryStorageRef: text("summary_storage_ref"),
+    summarySha256: text("summary_sha256"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("reflection_runs_twin_id_idx").on(t.twinId),
+    index("reflection_runs_period_idx").on(t.periodStart, t.periodEnd),
+    index("reflection_runs_status_idx").on(t.status),
   ],
 );
 

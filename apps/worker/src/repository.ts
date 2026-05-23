@@ -1,11 +1,15 @@
-import { and, asc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
 import {
   auditEvents,
   candidateMemories,
   graphEdges,
   graphNodes,
   memoryFragments,
+  reflectionRuns,
   sourceArtifacts,
+  sourceSpeakerMappings,
+  twinIdentityProfiles,
+  userFeedbackEvents,
   type Db,
 } from "@sivraj/db";
 import type {
@@ -18,6 +22,8 @@ const CLAIMABLE_ARTIFACT_STATUSES: Array<"queued" | "pending"> = [
   "pending",
 ];
 const RECOVERABLE_PROCESSING_AGE_MS = 5 * 60 * 1000;
+type CandidateMemoryRow = typeof candidateMemories.$inferSelect;
+type FeedbackEventRow = typeof userFeedbackEvents.$inferSelect;
 
 export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
   return {
@@ -138,6 +144,86 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
         .limit(1);
 
       return fragment ?? null;
+    },
+    async findTwinIdentityProfile(twinId) {
+      const [profile] = await db
+        .select()
+        .from(twinIdentityProfiles)
+        .where(eq(twinIdentityProfiles.twinId, twinId))
+        .limit(1);
+
+      return profile
+        ? {
+            displayName: profile.displayName,
+            aliases: profile.aliases,
+            emails: profile.emails,
+            phones: profile.phones,
+            handles: readHandles(profile.handles),
+          }
+        : null;
+    },
+    async findSourceSpeakerMappings(twinId, sourceArtifactId) {
+      const rows = await db
+        .select()
+        .from(sourceSpeakerMappings)
+        .where(
+          and(
+            eq(sourceSpeakerMappings.twinId, twinId),
+            eq(sourceSpeakerMappings.sourceArtifactId, sourceArtifactId),
+          ),
+        );
+
+      return rows.map((row) => ({
+        sourceSpeaker: row.sourceSpeaker,
+        sourceSpeakerId: row.sourceSpeakerId,
+        role: row.role,
+        mappedName: row.mappedName,
+      }));
+    },
+    async findRecentPatternSignals(twinId, limit) {
+      const rows = await db
+        .select({
+          id: candidateMemories.id,
+          sourceArtifactId: candidateMemories.sourceArtifactId,
+          memoryFragmentId: candidateMemories.memoryFragmentId,
+          memoryType: candidateMemories.memoryType,
+          evidenceHash: candidateMemories.evidenceHash,
+          evidenceLength: candidateMemories.evidenceLength,
+          confidenceScore: candidateMemories.confidenceScore,
+          metadata: candidateMemories.metadata,
+          createdAt: candidateMemories.createdAt,
+        })
+        .from(candidateMemories)
+        .where(eq(candidateMemories.twinId, twinId))
+        .orderBy(asc(candidateMemories.createdAt))
+        .limit(limit);
+
+      return rows
+        .map((row) => {
+          const metadata = asRecord(row.metadata);
+          const subject = typeof metadata.subject === "string" ? metadata.subject : null;
+          const sourceType = typeof metadata.sourceType === "string" ? metadata.sourceType : "unknown";
+
+          if (!subject) {
+            return null;
+          }
+
+          return {
+            twinId,
+            sourceArtifactId: row.sourceArtifactId,
+            memoryFragmentId: row.memoryFragmentId,
+            candidateMemoryId: row.id,
+            memoryType: row.memoryType,
+            subject,
+            confidence: row.confidenceScore ?? 0.5,
+            evidenceHash: row.evidenceHash,
+            evidenceLength: row.evidenceLength,
+            sourceType,
+            createdAt: row.createdAt.toISOString(),
+            metadata,
+          };
+        })
+        .filter((signal): signal is NonNullable<typeof signal> => Boolean(signal));
     },
     async createMemoryFragment(input) {
       const [fragment] = await db
@@ -350,6 +436,140 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
           .where(eq(candidateMemories.id, row.id));
       }
     },
+    async findWeeklyReflectionSignals(input) {
+      const artifactRows = await db
+        .select({ id: sourceArtifacts.id })
+        .from(sourceArtifacts)
+        .where(
+          and(
+            eq(sourceArtifacts.twinId, input.twinId),
+            gte(sourceArtifacts.createdAt, input.periodStart),
+            lt(sourceArtifacts.createdAt, input.periodEnd),
+          ),
+        );
+      const fragmentRows = await db
+        .select({ id: memoryFragments.id })
+        .from(memoryFragments)
+        .where(
+          and(
+            eq(memoryFragments.twinId, input.twinId),
+            gte(memoryFragments.createdAt, input.periodStart),
+            lt(memoryFragments.createdAt, input.periodEnd),
+          ),
+        );
+      const candidateRows = await db
+        .select({
+          id: candidateMemories.id,
+          status: candidateMemories.status,
+          memoryType: candidateMemories.memoryType,
+          metadata: candidateMemories.metadata,
+        })
+        .from(candidateMemories)
+        .where(
+          and(
+            eq(candidateMemories.twinId, input.twinId),
+            gte(candidateMemories.createdAt, input.periodStart),
+            lt(candidateMemories.createdAt, input.periodEnd),
+          ),
+        );
+      const graphRows = await db
+        .select({
+          id: graphNodes.id,
+          nodeType: graphNodes.nodeType,
+          name: graphNodes.name,
+          properties: graphNodes.properties,
+        })
+        .from(graphNodes)
+        .where(
+          and(
+            eq(graphNodes.twinId, input.twinId),
+            gte(graphNodes.createdAt, input.periodStart),
+            lt(graphNodes.createdAt, input.periodEnd),
+          ),
+        );
+      const feedbackRows = await db
+        .select({
+          id: userFeedbackEvents.id,
+          feedbackType: userFeedbackEvents.feedbackType,
+        })
+        .from(userFeedbackEvents)
+        .where(
+          and(
+            eq(userFeedbackEvents.twinId, input.twinId),
+            gte(userFeedbackEvents.createdAt, input.periodStart),
+            lt(userFeedbackEvents.createdAt, input.periodEnd),
+          ),
+        );
+
+      const candidateSubjects = summarizeCandidateSubjects(candidateRows);
+      const feedbackBreakdown = summarizeFeedbackTypes(feedbackRows);
+
+      return {
+        sourceArtifactCount: artifactRows.length,
+        memoryFragmentCount: fragmentRows.length,
+        candidateMemoryCount: candidateRows.length,
+        approvedCandidateMemoryCount: candidateRows.filter((row) => row.status === "approved").length,
+        rejectedCandidateMemoryCount: candidateRows.filter((row) => row.status === "rejected").length,
+        graphNodeCount: graphRows.length,
+        projectCount: graphRows.filter((row) => row.nodeType === "project").length,
+        goalCount: graphRows.filter((row) => row.nodeType === "goal").length,
+        decisionCount: graphRows.filter((row) => row.nodeType === "decision").length,
+        patternCount: graphRows.filter((row) => asRecord(row.properties).kind === "pattern").length,
+        feedbackCount: feedbackRows.length,
+        usefulFeedbackCount: feedbackRows.filter((row) => row.feedbackType === "useful" || row.feedbackType === "approved").length,
+        negativeFeedbackCount: feedbackRows.filter((row) =>
+          row.feedbackType === "wrong" ||
+          row.feedbackType === "not_me" ||
+          row.feedbackType === "too_generic" ||
+          row.feedbackType === "too_sensitive" ||
+          row.feedbackType === "rejected",
+        ).length,
+        candidateSubjects,
+        graphSubjects: graphRows
+          .map((row) => ({
+            name: row.name,
+            nodeType: row.nodeType,
+          }))
+          .slice(0, 30),
+        feedbackBreakdown,
+        sourceArtifactIds: artifactRows.map((row) => row.id),
+        memoryFragmentIds: fragmentRows.map((row) => row.id),
+        candidateMemoryIds: candidateRows.map((row) => row.id),
+        graphNodeIds: graphRows.map((row) => row.id),
+      };
+    },
+    async createReflectionRun(input) {
+      const [run] = await db
+        .insert(reflectionRuns)
+        .values({
+          twinId: input.twinId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          status: input.status,
+          summaryStorageRef: input.summaryStorageRef ?? null,
+          summarySha256: input.summarySha256 ?? null,
+          metadata: input.metadata,
+        })
+        .returning({ id: reflectionRuns.id });
+
+      if (!run) {
+        throw new Error("Failed to create reflection run");
+      }
+
+      return run;
+    },
+    async updateReflectionRun(input) {
+      await db
+        .update(reflectionRuns)
+        .set({
+          status: input.status,
+          summaryStorageRef: input.summaryStorageRef ?? null,
+          summarySha256: input.summarySha256 ?? null,
+          metadata: input.metadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(reflectionRuns.id, input.id));
+    },
     async createAuditEvent(input) {
       await db.insert(auditEvents).values({
         twinId: input.twinId,
@@ -437,12 +657,78 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function summarizeCandidateSubjects(
+  rows: Array<{
+    memoryType: CandidateMemoryRow["memoryType"];
+    metadata: unknown;
+  }>,
+): Array<{
+  subject: string;
+  memoryType: CandidateMemoryRow["memoryType"];
+  count: number;
+}> {
+  const counts = new Map<string, {
+    subject: string;
+    memoryType: CandidateMemoryRow["memoryType"];
+    count: number;
+  }>();
+
+  for (const row of rows) {
+    const subject = asRecord(row.metadata).subject;
+
+    if (typeof subject !== "string" || !subject.trim()) {
+      continue;
+    }
+
+    const key = `${row.memoryType}:${subject.trim().toLowerCase()}`;
+    const current = counts.get(key);
+
+    if (current) {
+      current.count += 1;
+      continue;
+    }
+
+    counts.set(key, {
+      subject: subject.trim(),
+      memoryType: row.memoryType,
+      count: 1,
+    });
+  }
+
+  return Array.from(counts.values())
+    .sort((a, b) => b.count - a.count || a.subject.localeCompare(b.subject))
+    .slice(0, 30);
+}
+
+function summarizeFeedbackTypes(
+  rows: Array<{ feedbackType: FeedbackEventRow["feedbackType"] }>,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+
+  for (const row of rows) {
+    counts[row.feedbackType] = (counts[row.feedbackType] ?? 0) + 1;
+  }
+
+  return counts;
+}
+
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function readHandles(value: unknown): Record<string, string[]> {
+  const record = asRecord(value);
+  const handles: Record<string, string[]> = {};
+
+  for (const [key, item] of Object.entries(record)) {
+    handles[key] = readStringArray(item);
+  }
+
+  return handles;
 }
 
 function mergeStringArrays(...arrays: string[][]): string[] {

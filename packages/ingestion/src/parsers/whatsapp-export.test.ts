@@ -17,6 +17,19 @@ describe("parseWhatsAppExport", () => {
       ].join("\n"),
     );
     expect(parsed.parser.warnings).toEqual([]);
+    expect(parsed.parser.speakers).toEqual(["Tunde", "Ada"]);
+    expect(parsed.conversation?.messages).toEqual([
+      {
+        timestamp: "01/04/2024 10:00",
+        speaker: "Tunde",
+        text: "Lead with compliance.",
+      },
+      {
+        timestamp: "01/04/2024 10:02",
+        speaker: "Ada",
+        text: "Trust reduces procurement friction.",
+      },
+    ]);
   });
 
   it("keeps multiline messages attached to the previous sender", () => {

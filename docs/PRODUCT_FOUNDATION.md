@@ -65,6 +65,34 @@ Sivraj builds your sovereign AI Twin: a private, encrypted intelligence layer th
 
 Unlike ordinary AI tools, Sivraj is designed around continuity. Your Twin does not reset with every app, model, or session. It compounds from your uploaded context, processed memories, retrieval history, graph, goals, and permissions.
 
+### Onboarding Principle
+
+Sivraj should not begin as an empty dashboard. It should begin like meeting a Twin.
+
+The first-run experience should help the user create accommodation for the Twin:
+
+- What should Sivraj call you?
+- What names, aliases, handles, emails, or numbers should Sivraj recognize as you?
+- What do you want your Twin to understand about you before it reads your files?
+- What should it be careful not to assume?
+
+This onboarding context is not just profile decoration. It becomes attribution infrastructure. It helps Sivraj decide which messages in chats, emails, voice transcripts, and imports belong to the user versus other people.
+
+The user should also be able to speak freely:
+
+> "Here is what matters about me."
+
+Sivraj should treat that self-description as private memory input, extract candidate memories from it, and preserve the original context through the encrypted storage path.
+
+For the POC, this can be lightweight:
+
+- A Twin identity profile with display name, aliases, handles, emails, and optional phone numbers.
+- An open-ended self-description field.
+- A source-specific speaker mapping step when imported conversations contain multiple speakers.
+- Candidate memory extraction from onboarding self-description.
+
+Later, the UX can become conversational and warmer. The product requirement remains the same: Sivraj should learn who "me" is before it starts interpreting other people's words as the user's identity.
+
 ### Voice and Tone
 
 Sivraj should sound:

@@ -12,6 +12,7 @@ import {
   createCandidateMemoryArchiveWorker,
   createIntelligenceProcessingQueue,
   createIntelligenceProcessingWorker,
+  createWeeklyReflectionWorker,
 } from "@sivraj/queue";
 import { eq } from "drizzle-orm";
 import { createWorkerDb } from "./db.js";
@@ -22,6 +23,7 @@ import {
   createMemoryExtractor,
   processArtifactIntelligence,
   processQueuedArtifacts,
+  generateWeeklyReflection,
   RetryableArtifactProcessingError,
 } from "./ingestion-processor.js";
 import { runHealthJob } from "./jobs/health";
@@ -232,6 +234,41 @@ async function main() {
   candidateMemoryArchiveWorker.onCompleted((jobId) => {
     console.log(`${serviceName} candidate memory archive job completed`, { jobId });
   });
+
+  const weeklyReflectionWorker = createWeeklyReflectionWorker(
+    redisUrl,
+    async (data, job) => {
+      const startedAt = Date.now();
+      const result = await generateWeeklyReflection(repository, {
+        reflectionRunId: data.reflectionRunId,
+        twinId: data.twinId,
+        periodStart: new Date(data.periodStart),
+        periodEnd: new Date(data.periodEnd),
+        generator: structuredGenerator ?? undefined,
+        privateFragmentStorage,
+      });
+
+      console.log(`${serviceName} weekly reflection job processed`, {
+        jobId: job.id,
+        reflectionRunId: data.reflectionRunId,
+        result: result.status,
+        durationMs: Date.now() - startedAt,
+      });
+    },
+    { concurrency: readPositiveInt(process.env["WEEKLY_REFLECTION_CONCURRENCY"], 1) },
+  );
+
+  weeklyReflectionWorker.onCompleted((jobId) => {
+    console.log(`${serviceName} weekly reflection job completed`, { jobId });
+  });
+  weeklyReflectionWorker.onFailed((jobId, error, attemptsMade) => {
+    console.error(`${serviceName} weekly reflection job failed`, {
+      jobId,
+      attemptsMade,
+      errorName: error.name,
+      errorMessage: error.message,
+    });
+  });
   candidateMemoryArchiveWorker.onFailed((jobId, error, attemptsMade) => {
     console.error(`${serviceName} candidate memory archive job failed`, {
       jobId,
@@ -245,6 +282,7 @@ async function main() {
     queue: "sivraj-artifact-processing",
     intelligenceQueue: "sivraj-intelligence-processing",
     candidateMemoryArchiveQueue: "sivraj-candidate-memory-archive",
+    weeklyReflectionQueue: "sivraj-weekly-reflection",
     concurrency,
     entityExtraction: entityExtractor ? "enabled" : "disabled",
     memoryExtraction: memoryExtractor ? "enabled" : "disabled",
@@ -256,6 +294,7 @@ async function main() {
 
   await waitForShutdown();
   await candidateMemoryArchiveWorker.close();
+  await weeklyReflectionWorker.close();
   await intelligenceWorker.close();
   await worker.close();
   await candidateMemoryArchiveQueue.close();

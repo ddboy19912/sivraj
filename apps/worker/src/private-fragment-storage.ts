@@ -29,14 +29,14 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<PrivateFragmentStorageOutput>;
   encryptPrivateFragment(input: {
     twinId: string;
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<PrivateEncryptedFragmentOutput>;
   storeEncryptedPrivateFragment(input: {
     twinId: string;
@@ -45,7 +45,7 @@ export type PrivateFragmentStorage = {
     encryptedBytesBase64: string;
     contentSha256: string;
     metadata: Record<string, unknown>;
-    contentKind?: "memory_fragment" | "candidate_memory";
+    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
   }): Promise<PrivateFragmentStorageOutput>;
 };
 

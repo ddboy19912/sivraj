@@ -173,6 +173,457 @@ describe("browser API access", () => {
   });
 });
 
+describe("feedback routes", () => {
+  it("records candidate memory approval and updates candidate status", async () => {
+    const db = createFeedbackDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "11111111-1111-4111-8111-111111111111",
+        walletAddress: "0xabc",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/11111111-1111-4111-8111-111111111111/feedback", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        targetType: "candidate_memory",
+        targetId: "22222222-2222-4222-8222-222222222222",
+        feedbackType: "approved",
+        metadata: {
+          surface: "candidate_memory_review",
+          rank: 1,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      feedbackId: "feedback-id",
+      targetType: "candidate_memory",
+      targetId: "22222222-2222-4222-8222-222222222222",
+      feedbackType: "approved",
+      candidateMemoryStatus: "approved",
+    });
+    expect(db.insertCalls).toHaveLength(2);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      twinId: "11111111-1111-4111-8111-111111111111",
+      targetType: "candidate_memory",
+      targetId: "22222222-2222-4222-8222-222222222222",
+      feedbackType: "approved",
+      actorType: "user",
+      actorId: "user-id",
+      metadata: {
+        surface: "candidate_memory_review",
+        rank: 1,
+      },
+    });
+    expect(db.updateCalls).toHaveLength(1);
+    expect(updateValue(db.updateCalls[0])).toMatchObject({ status: "approved" });
+  });
+
+  it("rejects freeform plaintext feedback metadata", async () => {
+    const app = createApp({ db: createFeedbackDb() });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "11111111-1111-4111-8111-111111111111",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/11111111-1111-4111-8111-111111111111/feedback", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        targetType: "candidate_memory",
+        targetId: "22222222-2222-4222-8222-222222222222",
+        feedbackType: "wrong",
+        metadata: {
+          note: "This is private correction text and must not enter Postgres here.",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_feedback_metadata" });
+  });
+});
+
+describe("reflection routes", () => {
+  it("creates an on-demand weekly reflection run and queues worker generation", async () => {
+    const queue = createFakeWeeklyReflectionQueue();
+    const db = createReflectionDb({ existing: null });
+    const app = createApp({ db, weeklyReflectionQueue: queue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "11111111-1111-4111-8111-111111111111",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/11111111-1111-4111-8111-111111111111/reflections/weekly", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        periodStart: "2026-05-01T00:00:00.000Z",
+        periodEnd: "2026-05-08T00:00:00.000Z",
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      reflectionRunId: "reflection-run-id",
+      jobId: "reflection-run-id",
+      status: "queued",
+      periodStart: "2026-05-01T00:00:00.000Z",
+      periodEnd: "2026-05-08T00:00:00.000Z",
+      reused: false,
+    });
+    expect(queue.enqueueCalls).toEqual([
+      {
+        reflectionRunId: "reflection-run-id",
+        twinId: "11111111-1111-4111-8111-111111111111",
+        periodStart: "2026-05-01T00:00:00.000Z",
+        periodEnd: "2026-05-08T00:00:00.000Z",
+      },
+    ]);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      twinId: "11111111-1111-4111-8111-111111111111",
+      status: "queued",
+    });
+  });
+
+  it("reuses an existing weekly reflection run for the same period", async () => {
+    const queue = createFakeWeeklyReflectionQueue();
+    const db = createReflectionDb({
+      existing: {
+        id: "existing-reflection-run-id",
+        twinId: "11111111-1111-4111-8111-111111111111",
+        periodStart: new Date("2026-05-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+        status: "completed",
+        summaryStorageRef: "walrus://blob/reflection",
+        summarySha256: "sha256",
+        metadata: {},
+        createdAt: new Date("2026-05-08T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+      },
+    });
+    const app = createApp({ db, weeklyReflectionQueue: queue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "11111111-1111-4111-8111-111111111111",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/11111111-1111-4111-8111-111111111111/reflections/weekly", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        periodStart: "2026-05-01T00:00:00.000Z",
+        periodEnd: "2026-05-08T00:00:00.000Z",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      reflectionRunId: "existing-reflection-run-id",
+      status: "completed",
+      reused: true,
+    });
+    expect(queue.enqueueCalls).toEqual([]);
+  });
+
+  it("lists reflection runs without decrypting private reflection text", async () => {
+    const db = createReflectionDb({
+      existing: {
+        id: "reflection-run-id",
+        twinId: "11111111-1111-4111-8111-111111111111",
+        periodStart: new Date("2026-05-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+        status: "completed",
+        summaryStorageRef: "walrus://blob/reflection",
+        summarySha256: "sha256",
+        metadata: { signalCount: 3 },
+        createdAt: new Date("2026-05-08T00:00:00.000Z"),
+        updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+      },
+    });
+    const app = createApp({ db, weeklyReflectionQueue: createFakeWeeklyReflectionQueue() });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "11111111-1111-4111-8111-111111111111",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/11111111-1111-4111-8111-111111111111/reflections", {
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      reflections: [
+        {
+          id: "reflection-run-id",
+          twinId: "11111111-1111-4111-8111-111111111111",
+          periodStart: "2026-05-01T00:00:00.000Z",
+          periodEnd: "2026-05-08T00:00:00.000Z",
+          status: "completed",
+          summaryStorageRef: "walrus://blob/reflection",
+          summarySha256: "sha256",
+          metadata: { signalCount: 3 },
+          createdAt: "2026-05-08T00:00:00.000Z",
+          updatedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+});
+
+describe("Twin identity profile route", () => {
+  it("creates identity hints for speaker attribution", async () => {
+    const db = createIdentityProfileDb({ profile: null });
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "twin-id",
+        walletAddress: "0xabc",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/identity-profile", {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        displayName: "Fortune Ogunsusi",
+        aliases: ["Fortune", "DDBoy", "Fortune"],
+        emails: ["ddboy19912@gmail.com"],
+        phones: ["+2348169342193"],
+        handles: {
+          github: ["ddboy19912"],
+          slack: ["@fortune"],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      twinId: "twin-id",
+      displayName: "Fortune Ogunsusi",
+      aliases: ["Fortune", "DDBoy"],
+      emails: ["ddboy19912@gmail.com"],
+      phones: ["+2348169342193"],
+      handles: {
+        github: ["ddboy19912"],
+        slack: ["@fortune"],
+      },
+      selfDescriptionArtifactId: null,
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      twinId: "twin-id",
+      displayName: "Fortune Ogunsusi",
+      aliases: ["Fortune", "DDBoy"],
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "twin_identity_profile.updated",
+      resourceType: "twin_identity_profile",
+    });
+  });
+
+  it("rejects identity profile access for another twin", async () => {
+    const app = createApp({ db: createIdentityProfileDb({ profile: null }) });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "other-twin",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/identity-profile", {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "twin_scope_mismatch" });
+  });
+});
+
+describe("source speaker mapping route", () => {
+  it("replaces source-specific speaker mappings for an artifact", async () => {
+    const db = createSpeakerMappingDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts/artifact-id/speaker-mappings", {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mappings: [
+          {
+            sourceSpeaker: "Fortune",
+            role: "self",
+            mappedName: "Fortune Ogunsusi",
+          },
+          {
+            sourceSpeaker: "Ada",
+            sourceSpeakerId: "U123",
+            role: "other",
+            mappedName: "Ada Lovelace",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      artifactId: "artifact-id",
+      detectedSpeakers: ["Fortune", "Ada"],
+      mappings: [
+        {
+          id: "mapping-0",
+          sourceSpeaker: "Fortune",
+          sourceSpeakerId: null,
+          role: "self",
+          mappedName: "Fortune Ogunsusi",
+          metadata: {},
+        },
+        {
+          id: "mapping-1",
+          sourceSpeaker: "Ada",
+          sourceSpeakerId: "U123",
+          role: "other",
+          mappedName: "Ada Lovelace",
+          metadata: {},
+        },
+      ],
+    });
+    expect(db.deleteCalls).toHaveLength(1);
+    expect(insertValue(db.insertCalls[0])).toEqual([
+      expect.objectContaining({
+        twinId: "twin-id",
+        sourceArtifactId: "artifact-id",
+        sourceSpeaker: "Fortune",
+        role: "self",
+      }),
+      expect.objectContaining({
+        twinId: "twin-id",
+        sourceArtifactId: "artifact-id",
+        sourceSpeaker: "Ada",
+        sourceSpeakerId: "U123",
+        role: "other",
+      }),
+    ]);
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "source_speaker_mappings.updated",
+      resourceId: "artifact-id",
+    });
+  });
+
+  it("returns detected speakers and existing mappings", async () => {
+    const app = createApp({ db: createSpeakerMappingDb({
+      mappings: [
+        {
+          id: "mapping-id",
+          sourceSpeaker: "Fortune",
+          sourceSpeakerId: null,
+          role: "self",
+          mappedName: "Fortune Ogunsusi",
+          metadata: {},
+        },
+      ],
+    }) });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts/artifact-id/speaker-mappings", {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      artifactId: "artifact-id",
+      detectedSpeakers: ["Fortune", "Ada"],
+      mappings: [
+        {
+          id: "mapping-id",
+          sourceSpeaker: "Fortune",
+          sourceSpeakerId: null,
+          role: "self",
+          mappedName: "Fortune Ogunsusi",
+          metadata: {},
+        },
+      ],
+    });
+  });
+});
+
 describe("protected artifact route", () => {
   it("rejects missing token", async () => {
     const app = createApp({ db: createFakeDb() });
@@ -1106,6 +1557,312 @@ function createFakeDb(memoryRows: unknown[] = []) {
   } as unknown as AppDependencies["db"] & { insertCalls: unknown[] };
 }
 
+function createIdentityProfileDb({ profile }: { profile: Record<string, unknown> | null }) {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  let currentProfile = profile;
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              currentProfile = {
+                id: "identity-profile-id",
+                selfDescriptionArtifactId: null,
+                ...(value as Record<string, unknown>),
+              };
+
+              return Promise.resolve([currentProfile]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+          return {
+            where() {
+              return {
+                returning() {
+                  currentProfile = {
+                    id: currentProfile?.id ?? "identity-profile-id",
+                    twinId: currentProfile?.twinId ?? "twin-id",
+                    selfDescriptionArtifactId: currentProfile?.selfDescriptionArtifactId ?? null,
+                    ...(value as Record<string, unknown>),
+                  };
+
+                  return Promise.resolve([currentProfile]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                limit() {
+                  return Promise.resolve(currentProfile ? [currentProfile] : []);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
+  };
+}
+
+function createFeedbackDb() {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              return Promise.resolve([{ id: "feedback-id" }]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          return {
+            where() {
+              return {
+                returning() {
+                  return Promise.resolve([{ status: (value as Record<string, unknown>).status }]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                limit() {
+                  return Promise.resolve([]);
+                },
+                then(resolve: (value: unknown[]) => void) {
+                  return Promise.resolve([]).then(resolve);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
+  };
+}
+
+function createFakeWeeklyReflectionQueue() {
+  const enqueueCalls: Array<{
+    reflectionRunId: string;
+    twinId: string;
+    periodStart: string;
+    periodEnd: string;
+  }> = [];
+
+  return {
+    enqueueCalls,
+    async enqueueWeeklyReflection(input: typeof enqueueCalls[number]) {
+      enqueueCalls.push(input);
+      return { jobId: input.reflectionRunId };
+    },
+    async close() {},
+  };
+}
+
+function createReflectionDb({ existing }: { existing: Record<string, unknown> | null }) {
+  const insertCalls: unknown[] = [];
+  let current = existing;
+
+  return {
+    insertCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              current = {
+                id: "reflection-run-id",
+                createdAt: new Date("2026-05-08T00:00:00.000Z"),
+                updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+                ...(value as Record<string, unknown>),
+              };
+
+              return Promise.resolve([{ id: "reflection-run-id" }]);
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              const rows = current ? [current] : [];
+
+              return {
+                orderBy() {
+                  return {
+                    limit() {
+                      return Promise.resolve(rows);
+                    },
+                  };
+                },
+                limit() {
+                  return Promise.resolve(rows);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update() {
+      return {
+        set(value: unknown) {
+          current = {
+            ...(current ?? {}),
+            ...(value as Record<string, unknown>),
+          };
+
+          return {
+            where() {
+              return Promise.resolve([]);
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+  };
+}
+
+function createSpeakerMappingDb({
+  artifact = {
+    id: "artifact-id",
+    twinId: "twin-id",
+    metadata: {
+      processing: {
+        parser: {
+          speakers: ["Fortune", "Ada"],
+        },
+      },
+    },
+  },
+  mappings = [],
+}: {
+  artifact?: Record<string, unknown> | null;
+  mappings?: Record<string, unknown>[];
+} = {}) {
+  const insertCalls: unknown[] = [];
+  const deleteCalls: unknown[] = [];
+  let currentMappings = mappings;
+  let selectCount = 0;
+
+  return {
+    insertCalls,
+    deleteCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              if (Array.isArray(value)) {
+                currentMappings = value.map((item, index) => ({
+                  id: `mapping-${index}`,
+                  ...(item as Record<string, unknown>),
+                }));
+
+                return Promise.resolve(currentMappings);
+              }
+
+              return Promise.resolve([]);
+            },
+          };
+        },
+      };
+    },
+    delete(table: unknown) {
+      return {
+        where(value: unknown) {
+          deleteCalls.push({ table, value });
+          currentMappings = [];
+          return Promise.resolve([]);
+        },
+      };
+    },
+    select() {
+      selectCount += 1;
+      return {
+        from() {
+          return {
+            where() {
+              const result = selectCount === 1
+                ? artifact ? [artifact] : []
+                : currentMappings;
+
+              return {
+                limit() {
+                  return Promise.resolve(result);
+                },
+                then(resolve: (value: unknown[]) => void) {
+                  return Promise.resolve(result).then(resolve);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    deleteCalls: unknown[];
+  };
+}
+
 function createRetryDb(artifact: Record<string, unknown> | null) {
   const insertCalls: unknown[] = [];
   const updateCalls: unknown[] = [];
@@ -1249,6 +2006,10 @@ function memoryRow(overrides: Record<string, unknown> = {}) {
 }
 
 function insertValue(call: unknown): Record<string, unknown> {
+  return (call as { value: Record<string, unknown> }).value;
+}
+
+function updateValue(call: unknown): Record<string, unknown> {
   return (call as { value: Record<string, unknown> }).value;
 }
 

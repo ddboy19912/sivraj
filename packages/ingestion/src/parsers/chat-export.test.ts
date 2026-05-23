@@ -26,6 +26,18 @@ describe("parseChatExport", () => {
       ].join("\n"),
     );
     expect(parsed.parser.warnings).toEqual([]);
+    expect(parsed.parser.speakers).toEqual(["user", "assistant"]);
+    expect(parsed.conversation?.messages).toEqual([
+      {
+        timestamp: "2024-03-01T10:00:00Z",
+        speaker: "user",
+        text: "What angle should I use?",
+      },
+      {
+        speaker: "assistant",
+        text: "Lead with compliance and trust.",
+      },
+    ]);
   });
 
   it("falls back to readable text for non-json exports", () => {

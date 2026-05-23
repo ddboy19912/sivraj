@@ -16,6 +16,7 @@ import {
   processCandidateMemoryArchive,
   processArtifactIntelligence,
   processQueuedArtifacts,
+  generateWeeklyReflection,
   RetryableArtifactProcessingError,
   type ArtifactRepository,
   type QueuedArtifact,
@@ -649,6 +650,675 @@ describe("processQueuedArtifacts", () => {
     ]));
   });
 
+  it("clusters project graph nodes from extracted project and product entities", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "repo.md",
+            content: "Sivraj uses Walrus and Seal for private memory.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Sivraj uses Walrus and Seal for private memory.";
+        },
+      },
+      entityExtractor: {
+        async extract(input) {
+          return {
+            entities: [
+              {
+                name: "Sivraj",
+                normalizedName: "sivraj",
+                type: "product" as const,
+                graphNodeType: "concept" as const,
+                aliases: [],
+                confidence: 0.9,
+                evidenceHash: "sivraj-evidence",
+                evidenceLength: 6,
+                metadata: {},
+              },
+              {
+                name: "Walrus",
+                normalizedName: "walrus",
+                type: "technology" as const,
+                graphNodeType: "concept" as const,
+                aliases: [],
+                confidence: 0.88,
+                evidenceHash: "walrus-evidence",
+                evidenceLength: 6,
+                metadata: {},
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_entity_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedEntities: 2,
+              acceptedEntities: 2,
+              warnings: [],
+            },
+          };
+        },
+      },
+    });
+
+    const projectNodes = repository.graphNodes.filter((node) => node.nodeType === "project");
+    expect(projectNodes).toHaveLength(1);
+    expect(projectNodes[0]).toMatchObject({
+      name: "Sivraj",
+      normalizedName: "sivraj",
+      properties: {
+        projectCluster: true,
+        clusterMethod: "deterministic_project_clustering",
+        clusterSignals: ["product_entity"],
+      },
+    });
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        fromNodeId: "node-1",
+        toNodeId: projectNodes[0]?.id,
+        edgeType: "belongs_to_project",
+      }),
+      expect.objectContaining({
+        fromNodeId: projectNodes[0]?.id,
+        edgeType: "project_context",
+      }),
+    ]));
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          entityExtraction: {
+            projectClustering: {
+              projectClusterCount: 1,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("clusters project graph nodes from candidate memory subjects", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Founder note",
+            content: "Sivraj positioning changed to owned memory.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Sivraj positioning changed to owned memory.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          return {
+            memories: [
+              {
+                statement: "The user changed Sivraj positioning to owned memory.",
+                normalizedStatement: "the user changed sivraj positioning to owned memory.",
+                memoryType: "project_update" as const,
+                subject: "Sivraj",
+                confidence: 0.88,
+                evidenceHash: "evidence-hash",
+                evidenceLength: 42,
+                metadata: {},
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    const projectNodes = repository.graphNodes.filter((node) => node.nodeType === "project");
+    expect(projectNodes).toHaveLength(1);
+    expect(projectNodes[0]).toMatchObject({
+      name: "Sivraj",
+      normalizedName: "sivraj",
+      properties: {
+        projectCluster: true,
+        clusterSignals: ["project_update_subject"],
+        clusterSources: ["candidate_memory"],
+      },
+    });
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: projectNodes[0]?.id,
+        edgeType: "belongs_to_project",
+      }),
+    ]));
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            projectClustering: {
+              projectClusterCount: 1,
+              projectLinkCount: 1,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("creates private-safe decision graph nodes from decision candidate memories", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Architecture note",
+            content: "We decided to use Vite instead of Next.js for Sivraj web.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "We decided to use Vite instead of Next.js for Sivraj web.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          return {
+            memories: [
+              {
+                statement: "The user decided to use Vite instead of Next.js for Sivraj web.",
+                normalizedStatement: "the user decided to use vite instead of next.js for sivraj web.",
+                memoryType: "decision" as const,
+                subject: "Sivraj",
+                confidence: 0.94,
+                evidenceHash: "decision-evidence-hash",
+                evidenceLength: 59,
+                metadata: {
+                  category: "architecture",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    const decisionNodes = repository.graphNodes.filter((node) => node.nodeType === "decision");
+    const projectNodes = repository.graphNodes.filter((node) => node.nodeType === "project");
+    expect(decisionNodes).toHaveLength(1);
+    expect(decisionNodes[0]).toMatchObject({
+      name: expect.stringMatching(/^decision:[a-f0-9]{12}$/),
+      normalizedName: expect.stringMatching(/^decision:[a-f0-9]{64}$/),
+      properties: {
+        sourceArtifactId: "artifact-id",
+        memoryFragmentId: "fragment-1",
+        candidateMemoryId: "candidate-memory-1",
+        subject: "Sivraj",
+        evidenceHash: "decision-evidence-hash",
+        privateStatementStoredEncrypted: true,
+      },
+    });
+    expect(projectNodes).toHaveLength(1);
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: decisionNodes[0]?.id,
+        edgeType: "records_decision",
+      }),
+      expect.objectContaining({
+        fromNodeId: projectNodes[0]?.id,
+        toNodeId: decisionNodes[0]?.id,
+        edgeType: "project_decision",
+      }),
+    ]));
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            decisionExtraction: {
+              decisionCount: 1,
+              decisionLinkCount: 1,
+              projectDecisionLinkCount: 1,
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(repository.graphNodes)).not.toContain("Vite instead of Next");
+  });
+
+  it("creates private-safe goal graph nodes from goal candidate memories", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Goal note",
+            content: "I want Sivraj to help coding agents understand my architecture decisions.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "I want Sivraj to help coding agents understand my architecture decisions.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          return {
+            memories: [
+              {
+                statement: "The user wants Sivraj to help coding agents understand their architecture decisions.",
+                normalizedStatement: "the user wants sivraj to help coding agents understand their architecture decisions.",
+                memoryType: "goal" as const,
+                subject: "Sivraj",
+                confidence: 0.91,
+                evidenceHash: "goal-evidence-hash",
+                evidenceLength: 72,
+                metadata: {
+                  conversationSignal: "goal",
+                  requiresApproval: true,
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+              sourceKind: "conversation" as const,
+              conversationUnderstanding: {
+                enabled: true as const,
+                sourceType: "voice_conversation",
+                goalCount: 1,
+                decisionCount: 0,
+                preferenceCount: 0,
+                commitmentCount: 0,
+                followUpCount: 0,
+              },
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    const goalNodes = repository.graphNodes.filter((node) => node.nodeType === "goal");
+    const projectNodes = repository.graphNodes.filter((node) => node.nodeType === "project");
+    expect(goalNodes).toHaveLength(1);
+    expect(goalNodes[0]).toMatchObject({
+      name: expect.stringMatching(/^goal:[a-f0-9]{12}$/),
+      normalizedName: expect.stringMatching(/^goal:[a-f0-9]{64}$/),
+      properties: {
+        sourceArtifactId: "artifact-id",
+        memoryFragmentId: "fragment-1",
+        candidateMemoryId: "candidate-memory-1",
+        subject: "Sivraj",
+        evidenceHash: "goal-evidence-hash",
+        inferenceMethod: "candidate_memory_goal_graph_linking",
+        privateStatementStoredEncrypted: true,
+      },
+    });
+    expect(projectNodes).toHaveLength(1);
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: goalNodes[0]?.id,
+        edgeType: "states_goal",
+      }),
+      expect.objectContaining({
+        fromNodeId: projectNodes[0]?.id,
+        toNodeId: goalNodes[0]?.id,
+        edgeType: "project_goal",
+      }),
+    ]));
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            goalInference: {
+              goalCount: 1,
+              goalLinkCount: 1,
+              projectGoalLinkCount: 1,
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(repository.graphNodes)).not.toContain("help coding agents");
+  });
+
+  it("detects repeated subject patterns from current and historical candidate memories", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+    await repository.createCandidateMemory({
+      twinId: "twin-id",
+      sourceArtifactId: "old-artifact-id",
+      memoryFragmentId: "old-fragment-id",
+      memoryType: "goal",
+      statementStorageRef: "walrus://blob/old-candidate",
+      statementSha256: "old-statement-sha",
+      evidenceHash: "old-goal-evidence",
+      evidenceLength: 42,
+      confidenceScore: 0.84,
+      metadata: {
+        subject: "Sivraj",
+        sourceType: "note",
+        normalizedStatementHash: "old-normalized-hash",
+      },
+    });
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Goal note",
+            content: "I want Sivraj to become the memory layer for coding agents.",
+          });
+        },
+      },
+    });
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "I want Sivraj to become the memory layer for coding agents.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          return {
+            memories: [
+              {
+                statement: "The user wants Sivraj to become the memory layer for coding agents.",
+                normalizedStatement: "the user wants sivraj to become the memory layer for coding agents.",
+                memoryType: "goal" as const,
+                subject: "Sivraj",
+                confidence: 0.91,
+                evidenceHash: "new-goal-evidence",
+                evidenceLength: 61,
+                metadata: {},
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    const patternNodes = repository.graphNodes.filter(
+      (node) => node.nodeType === "other" && readTestRecord(node.properties).kind === "pattern",
+    );
+    const projectNodes = repository.graphNodes.filter((node) => node.nodeType === "project");
+    expect(patternNodes).toHaveLength(1);
+    expect(patternNodes[0]).toMatchObject({
+      name: expect.stringMatching(/^pattern:[a-f0-9]{12}$/),
+      normalizedName: expect.stringMatching(/^pattern:[a-f0-9]{64}$/),
+      properties: {
+        kind: "pattern",
+        patternType: "repeated_goal_subject",
+        subject: "Sivraj",
+        normalizedSubject: "sivraj",
+        evidenceCount: 2,
+        privateStatementStoredEncrypted: true,
+      },
+    });
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: patternNodes[0]?.id,
+        edgeType: "supports_pattern",
+      }),
+      expect.objectContaining({
+        fromNodeId: projectNodes[0]?.id,
+        toNodeId: patternNodes[0]?.id,
+        edgeType: "project_pattern",
+      }),
+    ]));
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            patternDetection: {
+              patternCount: 1,
+              patternLinkCount: 1,
+              projectPatternLinkCount: 1,
+            },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(patternNodes)).not.toContain("memory layer for coding agents");
+  });
+
+  it("marks candidate memories from attributed conversations with speaker policy metadata", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "chat_export",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "Conversation export",
+            content: "self/Fortune: I prefer async work.\nother/Ada: I prefer async work too.",
+          });
+        },
+      },
+    });
+
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "chat_export",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "self/Fortune: I prefer async work.\nother/Ada: I prefer async work too.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          expect(input.content).toContain("self/Fortune:");
+          expect(input.content).toContain("other/Ada:");
+
+          return {
+            memories: [
+              {
+                statement: "The user prefers async work.",
+                normalizedStatement: "the user prefers async work.",
+                memoryType: "preference" as const,
+                subject: null,
+                confidence: 0.9,
+                evidenceHash: "evidence-hash",
+                evidenceLength: 34,
+                metadata: {
+                  evidenceSpeakerRole: "self",
+                  speakerRole: "self",
+                  attributionPolicy: "self_claims_only_for_user_memory",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+              attributionAware: true,
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    expect(repository.candidateMemories).toHaveLength(1);
+    expect(repository.candidateMemories[0]?.metadata).toMatchObject({
+      sourceKind: "conversation",
+      attributionAware: true,
+      speakerRolePolicy: "self_claims_only_for_user_memory",
+      memoryMetadata: {
+        evidenceSpeakerRole: "self",
+        speakerRole: "self",
+        attributionPolicy: "self_claims_only_for_user_memory",
+      },
+    });
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            sourceKind: "conversation",
+            attributionAware: true,
+            speakerRolePolicy: "self_claims_only_for_user_memory",
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("I prefer async work");
+  });
+
   it("does not fail ingestion when memory extraction fails", async () => {
     const repository = createRepository([
       {
@@ -1034,12 +1704,87 @@ describe("processQueuedArtifacts", () => {
 
     expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
     expect(repository.fragments[0]).toMatchObject({
-      content: "user: What angle should I use?\nassistant: Lead with trust.",
+      content: "unknown/user: What angle should I use?\nunknown/assistant: Lead with trust.",
     });
     expect(repository.artifacts[0]?.metadata).toMatchObject({
       processing: {
+        conversation: {
+          messageCount: 2,
+          counts: {
+            unknown: 2,
+          },
+          unknownSpeakers: ["user", "assistant"],
+        },
         parser: {
           name: "chat_export",
+          speakers: ["user", "assistant"],
+        },
+      },
+    });
+  });
+
+  it("applies identity profile and source mappings to chat speaker attribution", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "chat_export",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+    repository.setTwinIdentityProfile({
+      displayName: "Fortune Ogunsusi",
+      aliases: ["Fortune"],
+      emails: [],
+      phones: [],
+      handles: {},
+    });
+    repository.setSourceSpeakerMappings([
+      {
+        sourceSpeaker: "Ada",
+        role: "other",
+        mappedName: "Ada Lovelace",
+      },
+    ]);
+
+    const result = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return JSON.stringify({
+            messages: [
+              { author: "Fortune", content: "I want to lead with compliance." },
+              { author: "Ada", content: "That reduces procurement friction." },
+              { author: "Mystery", content: "Ship it." },
+            ],
+          });
+        },
+      },
+    });
+
+    expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(repository.fragments[0]).toMatchObject({
+      content: [
+        "self/Fortune: I want to lead with compliance.",
+        "other/Ada: That reduces procurement friction.",
+        "unknown/Mystery: Ship it.",
+      ].join("\n"),
+    });
+    expect(repository.fragments[0]).toMatchObject({
+      metadata: {
+        conversation: {
+          messageCount: 3,
+          counts: {
+            self: 1,
+            other: 1,
+            unknown: 1,
+          },
+          unknownSpeakers: ["Mystery"],
+          mappedSpeakers: 1,
         },
       },
     });
@@ -1076,7 +1821,7 @@ describe("processQueuedArtifacts", () => {
 
     expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
     expect(repository.fragments[0]).toMatchObject({
-      content: "[1711965600.000000] U123: Lead with trust in #strategy.",
+      content: "[1711965600.000000] unknown/U123: Lead with trust in #strategy.",
     });
     expect(repository.artifacts[0]?.metadata).toMatchObject({
       processing: {
@@ -1116,8 +1861,8 @@ describe("processQueuedArtifacts", () => {
     expect(result).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
     expect(repository.fragments[0]).toMatchObject({
       content: [
-        "[01/04/2024 10:00] Tunde: Lead with compliance.",
-        "[01/04/2024 10:02] Ada: Trust reduces procurement friction.",
+        "[01/04/2024 10:00] unknown/Tunde: Lead with compliance.",
+        "[01/04/2024 10:02] unknown/Ada: Trust reduces procurement friction.",
       ].join("\n"),
     });
     expect(repository.artifacts[0]?.metadata).toMatchObject({
@@ -1625,6 +2370,157 @@ describe("processQueuedArtifacts", () => {
     });
   });
 
+  it("extracts encrypted candidate memories from voice conversation transcripts", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "voice_conversation",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: "voice-conversation-2026-05-20.webm",
+          fileType: "audio/webm",
+        },
+      },
+    ]);
+    const candidateMemoryArchiveQueue = createFakeCandidateMemoryArchiveQueue();
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            content: "ZmFrZSBhdWRpbw==",
+            title: "voice-conversation-2026-05-20.webm",
+            metadata: {
+              fileName: "voice-conversation-2026-05-20.webm",
+              fileType: "audio/webm",
+            },
+          });
+        },
+      },
+      speechToTextTranscriber: {
+        async transcribe() {
+          return {
+            text: "I decided to position Sivraj around owned memory. Remind me to write the demo script.",
+            provider: "openai",
+            model: "gpt-4o-mini-transcribe",
+          };
+        },
+      },
+    });
+
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "voice_conversation",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "I decided to position Sivraj around owned memory. Remind me to write the demo script.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          expect(input.sourceType).toBe("voice_conversation");
+          expect(input.content).toContain("owned memory");
+
+          return {
+            memories: [
+              {
+                statement: "The user decided to position Sivraj around owned memory.",
+                normalizedStatement: "the user decided to position sivraj around owned memory.",
+                memoryType: "decision" as const,
+                subject: "Sivraj positioning",
+                confidence: 0.9,
+                evidenceHash: "decision-evidence-hash",
+                evidenceLength: 52,
+                metadata: {
+                  conversationSignal: "decision",
+                  requiresApproval: true,
+                },
+              },
+              {
+                statement: "The user needs to write the Sivraj demo script.",
+                normalizedStatement: "the user needs to write the sivraj demo script.",
+                memoryType: "commitment" as const,
+                subject: "Sivraj demo script",
+                confidence: 0.82,
+                evidenceHash: "follow-up-evidence-hash",
+                evidenceLength: 34,
+                metadata: {
+                  conversationSignal: "follow_up",
+                  requiresApproval: true,
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 2,
+              acceptedMemories: 2,
+              warnings: [],
+              sourceKind: "conversation" as const,
+              conversationUnderstanding: {
+                enabled: true as const,
+                sourceType: "voice_conversation",
+                goalCount: 0,
+                decisionCount: 1,
+                preferenceCount: 0,
+                commitmentCount: 1,
+                followUpCount: 1,
+              },
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue,
+    });
+
+    expect(repository.candidateMemories).toHaveLength(2);
+    expect(repository.candidateMemories[0]?.metadata).toMatchObject({
+      sourceKind: "conversation",
+      conversationSourceType: "voice_conversation",
+      voiceDerived: true,
+      conversationUnderstanding: {
+        sourceType: "voice_conversation",
+        decisionCount: 1,
+        commitmentCount: 1,
+        followUpCount: 1,
+      },
+      memoryMetadata: {
+        conversationSignal: "decision",
+        requiresApproval: true,
+      },
+    });
+    expect(repository.artifacts[0]?.metadata).toMatchObject({
+      processing: {
+        intelligence: {
+          memoryExtraction: {
+            sourceKind: "conversation",
+            conversationSourceType: "voice_conversation",
+            voiceDerived: true,
+            candidateMemoryCount: 2,
+            conversationUnderstanding: {
+              sourceType: "voice_conversation",
+              decisionCount: 1,
+              commitmentCount: 1,
+              followUpCount: 1,
+            },
+          },
+        },
+      },
+    });
+    expect(candidateMemoryArchiveQueue.enqueueCalls).toHaveLength(1);
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("I decided");
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("Remind me");
+  });
+
   it("fails encrypted voice notes when transcription fails", async () => {
     const repository = createRepository([
       {
@@ -1729,6 +2625,153 @@ describe("processQueuedArtifacts", () => {
   });
 });
 
+describe("generateWeeklyReflection", () => {
+  it("stores weekly reflection text encrypted and records safe metadata only", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/source",
+        metadata: {},
+      },
+    ]);
+    repository.fragments.push({
+      id: "fragment-id",
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-id",
+      contentStorageRef: "walrus://blob/fragment",
+      contentSha256: "sha256:fragment",
+    });
+    repository.candidateMemories.push({
+      id: "candidate-memory-id",
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-id",
+      memoryFragmentId: "fragment-id",
+      memoryType: "goal",
+      status: "approved",
+      evidenceHash: "evidence-hash",
+      evidenceLength: 12,
+      confidenceScore: 0.8,
+      metadata: { subject: "Sivraj" },
+    });
+
+    const result = await generateWeeklyReflection(repository, {
+      twinId: "twin-id",
+      periodStart: new Date("2026-05-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      generator: {
+        async generateJson() {
+          return {
+            provider: "openrouter",
+            model: "google/gemini-3.1-flash-lite",
+            json: {
+              reflection: "You made steady progress on Sivraj this week.",
+              highlights: ["1 artifact", "1 candidate memory"],
+              questions: ["What should be approved next?"],
+            },
+          };
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      reflectionRunId: "reflection-run-1",
+      summaryStorageRef: "walrus://blob/encrypted-reflection",
+    });
+    expect(repository.reflectionRuns).toHaveLength(1);
+    expect(repository.reflectionRuns[0]).toMatchObject({
+      status: "completed",
+      summaryStorageRef: "walrus://blob/encrypted-reflection",
+      summarySha256: "sha256:reflection",
+      metadata: {
+        storageMode: "encrypted_walrus",
+        sensitivity: "private",
+        provider: "openrouter",
+        model: "google/gemini-3.1-flash-lite",
+      },
+    });
+    expect(JSON.stringify(repository.reflectionRuns)).not.toContain("steady progress");
+    expect(repository.auditEvents).toContainEqual(
+      expect.objectContaining({
+        eventType: "reflection.weekly_generated",
+        resourceId: "reflection-run-1",
+      }),
+    );
+  });
+
+  it("skips weekly reflection when there are no signals", async () => {
+    const repository = createRepository([]);
+
+    const result = await generateWeeklyReflection(repository, {
+      twinId: "twin-id",
+      periodStart: new Date("2026-05-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      generator: {
+        async generateJson() {
+          throw new Error("should not generate");
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "no_weekly_reflection_signals",
+    });
+    expect(repository.reflectionRuns[0]).toMatchObject({
+      status: "skipped",
+      metadata: {
+        reason: "no_weekly_reflection_signals",
+      },
+    });
+  });
+
+  it("updates an existing on-demand reflection run instead of creating another row", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/source",
+        metadata: {},
+      },
+    ]);
+
+    const result = await generateWeeklyReflection(repository, {
+      reflectionRunId: "reflection-run-existing",
+      twinId: "twin-id",
+      periodStart: new Date("2026-05-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      generator: {
+        async generateJson() {
+          return {
+            provider: "openrouter",
+            model: "google/gemini-3.1-flash-lite",
+            json: {
+              reflection: "A private reflection for an existing request.",
+            },
+          };
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      reflectionRunId: "reflection-run-existing",
+    });
+    expect(repository.reflectionRuns).toHaveLength(1);
+    expect(repository.reflectionRuns[0]).toMatchObject({
+      id: "reflection-run-existing",
+      status: "completed",
+      summaryStorageRef: "walrus://blob/encrypted-reflection",
+    });
+  });
+});
+
 function createRepository(artifacts: QueuedArtifact[]) {
   const state = artifacts.map((artifact) => ({
     ...artifact,
@@ -1739,6 +2782,9 @@ function createRepository(artifacts: QueuedArtifact[]) {
   const graphEdges: Array<Record<string, unknown> & { id: string }> = [];
   const candidateMemories: Array<Record<string, unknown> & { id: string }> = [];
   const auditEvents: unknown[] = [];
+  const reflectionRuns: Array<Record<string, unknown> & { id: string }> = [];
+  let twinIdentityProfile = null as Record<string, unknown> | null;
+  let sourceSpeakerMappings = [] as Array<Record<string, unknown>>;
 
   const repository: ArtifactRepository & {
     artifacts: typeof state;
@@ -1747,6 +2793,9 @@ function createRepository(artifacts: QueuedArtifact[]) {
     graphEdges: typeof graphEdges;
     candidateMemories: typeof candidateMemories;
     auditEvents: unknown[];
+    reflectionRuns: typeof reflectionRuns;
+    setTwinIdentityProfile(profile: Record<string, unknown> | null): void;
+    setSourceSpeakerMappings(mappings: Array<Record<string, unknown>>): void;
   } = {
     artifacts: state,
     fragments,
@@ -1754,6 +2803,7 @@ function createRepository(artifacts: QueuedArtifact[]) {
     graphEdges,
     candidateMemories,
     auditEvents,
+    reflectionRuns,
     async findArtifactById(id) {
       return state.find((artifact) => artifact.id === id) ?? null;
     },
@@ -1818,6 +2868,46 @@ function createRepository(artifacts: QueuedArtifact[]) {
         | undefined;
 
       return fragment ?? null;
+    },
+    async findTwinIdentityProfile() {
+      return twinIdentityProfile;
+    },
+    async findSourceSpeakerMappings() {
+      return sourceSpeakerMappings.map((mapping) => ({
+        sourceSpeaker: String(mapping.sourceSpeaker),
+        sourceSpeakerId: typeof mapping.sourceSpeakerId === "string" ? mapping.sourceSpeakerId : null,
+        role: mapping.role as "self" | "other" | "system" | "unknown",
+        mappedName: typeof mapping.mappedName === "string" ? mapping.mappedName : null,
+      }));
+    },
+    async findRecentPatternSignals(twinId, limit) {
+      return candidateMemories
+        .filter((candidate) => candidate.twinId === twinId)
+        .slice(0, limit)
+        .map((candidate) => {
+          const metadata = readTestRecord(candidate.metadata);
+          const subject = typeof metadata.subject === "string" ? metadata.subject : null;
+          const sourceType = typeof metadata.sourceType === "string" ? metadata.sourceType : "unknown";
+
+          if (!subject) {
+            return null;
+          }
+
+          return {
+            twinId,
+            sourceArtifactId: String(candidate.sourceArtifactId),
+            memoryFragmentId: String(candidate.memoryFragmentId),
+            candidateMemoryId: candidate.id,
+            memoryType: candidate.memoryType as "fact" | "preference" | "goal" | "decision" | "commitment" | "experience" | "project_update" | "relationship" | "other",
+            subject,
+            confidence: typeof candidate.confidenceScore === "number" ? candidate.confidenceScore : 0.5,
+            evidenceHash: String(candidate.evidenceHash),
+            evidenceLength: typeof candidate.evidenceLength === "number" ? candidate.evidenceLength : null,
+            sourceType,
+            metadata,
+          };
+        })
+        .filter((signal): signal is NonNullable<typeof signal> => Boolean(signal));
     },
     async createMemoryFragment(input) {
       const testPlaintext = readTestPlaintext(input.metadata);
@@ -1929,8 +3019,72 @@ function createRepository(artifacts: QueuedArtifact[]) {
         });
       }
     },
+    async findWeeklyReflectionSignals() {
+      return {
+        sourceArtifactCount: state.length,
+        memoryFragmentCount: fragments.length,
+        candidateMemoryCount: candidateMemories.length,
+        approvedCandidateMemoryCount: candidateMemories.filter((candidate) => candidate.status === "approved").length,
+        rejectedCandidateMemoryCount: candidateMemories.filter((candidate) => candidate.status === "rejected").length,
+        graphNodeCount: graphNodes.length,
+        projectCount: graphNodes.filter((node) => node.nodeType === "project").length,
+        goalCount: graphNodes.filter((node) => node.nodeType === "goal").length,
+        decisionCount: graphNodes.filter((node) => node.nodeType === "decision").length,
+        patternCount: graphNodes.filter((node) => readTestRecord(node.properties).kind === "pattern").length,
+        feedbackCount: 0,
+        usefulFeedbackCount: 0,
+        negativeFeedbackCount: 0,
+        candidateSubjects: candidateMemories
+          .map((candidate) => ({
+            subject: readTestRecord(candidate.metadata).subject,
+            memoryType: candidate.memoryType,
+          }))
+          .filter((item): item is { subject: string; memoryType: "fact" | "preference" | "goal" | "decision" | "commitment" | "experience" | "project_update" | "relationship" | "other" } =>
+            typeof item.subject === "string" && typeof item.memoryType === "string",
+          )
+          .map((item) => ({
+            ...item,
+            count: 1,
+          })),
+        graphSubjects: graphNodes.map((node) => ({
+          name: String(node.name),
+          nodeType: node.nodeType as "person" | "organization" | "project" | "concept" | "event" | "artifact" | "goal" | "decision" | "topic" | "other",
+        })),
+        feedbackBreakdown: {},
+        sourceArtifactIds: state.map((artifact) => artifact.id),
+        memoryFragmentIds: fragments
+          .map((fragment) => readTestRecord(fragment).id)
+          .filter((id): id is string => typeof id === "string"),
+        candidateMemoryIds: candidateMemories.map((candidate) => candidate.id),
+        graphNodeIds: graphNodes.map((node) => node.id),
+      };
+    },
+    async createReflectionRun(input) {
+      const run = {
+        ...input,
+        id: `reflection-run-${reflectionRuns.length + 1}`,
+      };
+      reflectionRuns.push(run);
+      return { id: run.id };
+    },
+    async updateReflectionRun(input) {
+      const run = reflectionRuns.find((candidate) => candidate.id === input.id);
+
+      if (run) {
+        Object.assign(run, input);
+        return;
+      }
+
+      reflectionRuns.push({ ...input, id: input.id });
+    },
     async createAuditEvent(input) {
       auditEvents.push(input);
+    },
+    setTwinIdentityProfile(profile) {
+      twinIdentityProfile = profile;
+    },
+    setSourceSpeakerMappings(mappings) {
+      sourceSpeakerMappings = mappings;
     },
   };
 
@@ -2026,6 +3180,19 @@ function createFakePrivateFragmentStorage() {
             storageMode: "encrypted_walrus",
             sensitivity: "private",
             contentKind: "candidate_memory",
+          },
+        };
+      }
+
+      if (input.contentKind === "reflection") {
+        return {
+          contentStorageRef: "walrus://blob/encrypted-reflection",
+          contentSha256: "sha256:reflection",
+          encryptedBytesBase64: Buffer.from(`reflection:${input.content}`).toString("base64"),
+          metadata: {
+            storageMode: "encrypted_walrus",
+            sensitivity: "private",
+            contentKind: "reflection",
           },
         };
       }

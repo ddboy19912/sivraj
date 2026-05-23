@@ -86,17 +86,58 @@
 - [x] Memory extraction.
 - [x] Run intelligence extraction as background Twin learning job after encrypted fragment storage.
 - [x] Batch encrypted candidate-memory statement storage per artifact.
-- [ ] Speaker attribution for chat/conversation imports.
-- [ ] User-vs-other-party message classification.
-- [ ] Conversation understanding from voice transcripts.
-- [ ] Convert voice conversations into candidate memories.
+- [x] Add Twin identity onboarding profile.
+- [x] Store user names, aliases, handles, emails, and optional phones for attribution.
+- [x] Allow open-ended "tell Sivraj about yourself" onboarding context.
+- [x] Convert onboarding self-description into encrypted candidate memories.
+- [x] Add source-specific speaker mapping for imports.
+- [x] Speaker attribution for chat/conversation imports.
+- [x] User-vs-other-party message classification.
+- [x] Conversation understanding from voice transcripts.
+- [x] Convert voice conversations into candidate memories.
 - [x] Basic memory retrieval ranking.
-- [ ] Project clustering.
-- [ ] Goal inference.
-- [ ] Decision extraction.
-- [ ] Pattern detection.
-- [ ] Weekly reflection generation.
-- [ ] User feedback capture.
+- [x] Project clustering.
+- [x] Goal inference.
+- [x] Decision extraction.
+- [x] Pattern detection.
+- [x] Create pattern detection engine module.
+- [x] Define pattern signal types.
+- [x] Define pattern detector interface.
+- [x] Add repeated subject detector.
+- [x] Add worker graph writer for detected patterns.
+- [x] Add historical signal repository query.
+- [x] Weekly reflection generation.
+- [x] User feedback capture.
+
+## Testing Console UI
+
+Temporary POC UI for verifying the backend and intelligence layer before final product redesign.
+
+- [ ] Create test console navigation/pages.
+- [ ] Add ingestion test page for manual note, file uploads, voice note, and voice conversation.
+- [ ] Add artifact status page with live processing, intelligence status, timings, and retry controls.
+- [ ] Add retrieval test page for `POST /v1/twins/:twinId/memories/search`.
+- [ ] Add candidate memory review page with approve/reject feedback actions.
+- [ ] Add graph inspection page for projects, goals, decisions, concepts, patterns, and edges.
+- [ ] Add weekly reflection test page with generate/list status controls.
+- [ ] Add privacy verification page showing storage refs, hashes, and no-plaintext checklist.
+- [ ] Add API testing guide with curl examples for ingestion, retrieval, feedback, and weekly reflections.
+- [ ] Add UI tests for the testing console critical flows.
+
+## Engineering Intelligence
+
+- [ ] Define engineering memory taxonomy.
+- [ ] Extract coding preferences from repos, chats, PRs, docs, and voice conversations.
+- [ ] Extract architecture decisions.
+- [ ] Extract recurring bugs and failure patterns.
+- [ ] Extract project conventions and style rules.
+- [ ] Extract deployment and environment knowledge.
+- [ ] Extract security and privacy boundaries.
+- [ ] Build repo/project engineering profile.
+- [ ] Generate agent-ready coding context packets.
+- [ ] Add coding-agent context endpoint.
+- [ ] Add Codex/Claude Code/Cursor integration plan.
+- [ ] Add engineering memory verification tests with source-backed evidence.
 
 ## Conversation
 
@@ -105,7 +146,7 @@
 - [x] Stream or upload recorded audio securely.
 - [x] Transcribe audio to text.
 - [ ] Generate conversation summary.
-- [ ] Extract candidate memories, goals, decisions, and preferences from conversation.
+- [x] Extract candidate memories, goals, decisions, and preferences from conversation.
 - [ ] Ask user to approve or edit extracted memories before updating the Twin.
 - [ ] Store approved conversation memories through encrypted Walrus path.
 - [ ] Add audit events for voice-derived memory updates.

@@ -569,6 +569,7 @@ function readSupportedSourceType(
     value === "image" ||
     value === "voice_note" ||
     value === "voice_conversation" ||
+    value === "onboarding_self_description" ||
     value === "docx" ||
     value === "csv" ||
     value === "email" ||

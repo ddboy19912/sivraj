@@ -12,4 +12,4 @@ export { parseOcrScannedPdf } from "./parsers/ocr-scanned-pdf.js";
 export { parsePlainText } from "./parsers/plain-text.js";
 export { parseSlackExport } from "./parsers/slack-export.js";
 export { parseWhatsAppExport } from "./parsers/whatsapp-export.js";
-export type { ParsedArtifact, ParserMetadata } from "./types.js";
+export type { ParsedArtifact, ParsedConversation, ParsedConversationMessage, ParserMetadata } from "./types.js";
