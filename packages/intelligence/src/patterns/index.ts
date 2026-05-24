@@ -1,3 +1,4 @@
+import { createRepeatedBehaviorDetector } from "./detectors/repeated-behavior.js";
 import { createRepeatedSubjectDetector } from "./detectors/repeated-subject.js";
 import type {
   DetectedPattern,
@@ -6,6 +7,8 @@ import type {
   PatternDetector,
   PatternSignal,
 } from "./types.js";
+
+export * from "./behavior-patterns.js";
 
 export type {
   DetectedPattern,
@@ -21,6 +24,7 @@ export function detectPatterns(input: PatternDetectionInput, options: {
 } = {}): PatternDetectionResult {
   const detectors = options.detectors ?? [
     createRepeatedSubjectDetector(),
+    createRepeatedBehaviorDetector(),
   ];
   const signals = dedupeSignals([
     ...input.historicalSignals,

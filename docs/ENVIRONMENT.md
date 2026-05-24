@@ -41,6 +41,10 @@ Root `.env.example` is source of truth.
 - `API_HOST`
 - `API_PORT`
 - `CORS_ORIGINS`
+- `MEMORY_SEARCH_SHORTLIST_LIMIT`
+- `MEMORY_SEARCH_FALLBACK_LIMIT`
+- `MEMORY_SEARCH_DECRYPT_CONCURRENCY`
+- `MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT`
 - `DATABASE_URL`
 - `JWT_SECRET`
 - `TOKEN_ISSUER`
@@ -98,6 +102,10 @@ Root `.env.example` is source of truth.
 - `API_HOST`: Bind host.
 - `API_PORT`: Bind port.
 - `CORS_ORIGINS`: Comma-separated allowed browser origins. Local dev should include both `http://localhost:5173` and `http://127.0.0.1:5173` if you use either host in the browser.
+- `MEMORY_SEARCH_SHORTLIST_LIMIT`: Max indexed memory fragment IDs to shortlist before private evidence decrypt. Defaults to `25`.
+- `MEMORY_SEARCH_FALLBACK_LIMIT`: Max recent encrypted memory fragments to inspect when no index shortlist exists. Defaults to `20`.
+- `MEMORY_SEARCH_DECRYPT_CONCURRENCY`: Max concurrent private fragment decrypts during search. Defaults to `3`.
+- `MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT`: Max unique evidence fragments to decrypt for one search request. Defaults to `3`; keep low while live Walrus/Seal reads are slow.
 
 ### Database
 

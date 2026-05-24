@@ -52,7 +52,7 @@ describe("detectPatterns", () => {
       currentSignalCount: 1,
       historicalSignalCount: 1,
       patternCount: 1,
-      detectors: ["repeated_subject_detector"],
+      detectors: ["repeated_subject_detector", "repeated_behavior_detector"],
     });
   });
 
@@ -72,6 +72,58 @@ describe("detectPatterns", () => {
 
     expect(result.patterns).toEqual([]);
     expect(result.metadata.patternCount).toBe(0);
+  });
+
+  it("detects repeated behavior themes across different project subjects", () => {
+    const result = detectPatterns({
+      twinId: "twin-id",
+      currentSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-gamma",
+          memoryFragmentId: "fragment-gamma",
+          candidateMemoryId: "candidate-gamma",
+          memoryType: "project_update",
+          subject: "Project Gamma",
+          metadata: {
+            patternKey: "launch_delay_ui_polish",
+          },
+        },
+      ],
+      historicalSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-alpha",
+          memoryFragmentId: "fragment-alpha",
+          candidateMemoryId: "candidate-alpha",
+          memoryType: "project_update",
+          subject: "Project Alpha",
+          metadata: {
+            patternKey: "launch_delay_ui_polish",
+          },
+        },
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-beta",
+          memoryFragmentId: "fragment-beta",
+          candidateMemoryId: "candidate-beta",
+          memoryType: "project_update",
+          subject: "Project Beta",
+          metadata: {
+            patternKey: "launch_delay_ui_polish",
+          },
+        },
+      ],
+    });
+
+    expect(result.patterns).toHaveLength(1);
+    expect(result.patterns[0]).toMatchObject({
+      patternType: "repeated_behavior_theme",
+      subject: "Launch delay from UI polish",
+      normalizedSubject: "launch_delay_ui_polish",
+      evidenceCount: 3,
+      candidateMemoryIds: ["candidate-alpha", "candidate-beta", "candidate-gamma"],
+    });
   });
 
   it("keeps pattern output free of private statement text", () => {

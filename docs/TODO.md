@@ -84,6 +84,8 @@
 - [x] Entity extraction.
 - [x] Graph canonicalization and normalized graph node identity.
 - [x] Memory extraction.
+- [x] Canonical memory consolidation for duplicate extracted memories.
+- [x] LLM semantic merge judgment for same-meaning duplicate memories.
 - [x] Run intelligence extraction as background Twin learning job after encrypted fragment storage.
 - [x] Batch encrypted candidate-memory statement storage per artifact.
 - [x] Add Twin identity onboarding profile.
@@ -96,6 +98,7 @@
 - [x] Conversation understanding from voice transcripts.
 - [x] Convert voice conversations into candidate memories.
 - [x] Basic memory retrieval ranking.
+- [x] Retrieval duplicate result suppression.
 - [x] Project clustering.
 - [x] Goal inference.
 - [x] Decision extraction.
@@ -113,16 +116,16 @@
 
 Temporary POC UI for verifying the backend and intelligence layer before final product redesign.
 
-- [ ] Create test console navigation/pages.
-- [ ] Add ingestion test page for manual note, file uploads, voice note, and voice conversation.
-- [ ] Add artifact status page with live processing, intelligence status, timings, and retry controls.
-- [ ] Add retrieval test page for `POST /v1/twins/:twinId/memories/search`.
-- [ ] Add candidate memory review page with approve/reject feedback actions.
-- [ ] Add graph inspection page for projects, goals, decisions, concepts, patterns, and edges.
-- [ ] Add weekly reflection test page with generate/list status controls.
-- [ ] Add privacy verification page showing storage refs, hashes, and no-plaintext checklist.
-- [ ] Add API testing guide with curl examples for ingestion, retrieval, feedback, and weekly reflections.
-- [ ] Add UI tests for the testing console critical flows.
+- [x] Create test console navigation/pages.
+- [x] Add ingestion test page for manual note, file uploads, voice note, and voice conversation.
+- [x] Add artifact status page with live processing, intelligence status, timings, and retry controls.
+- [x] Add retrieval test page for `POST /v1/twins/:twinId/memories/search`.
+- [x] Add candidate memory review page with approve/reject feedback actions.
+- [x] Add graph inspection page for projects, goals, decisions, concepts, patterns, and edges.
+- [x] Add weekly reflection test page with generate/list status controls.
+- [x] Add privacy verification page showing storage refs, hashes, and no-plaintext checklist.
+- [x] Add API testing guide with curl examples for ingestion, retrieval, feedback, and weekly reflections.
+- [x] Add UI tests for the testing console critical flows.
 
 ## Engineering Intelligence
 

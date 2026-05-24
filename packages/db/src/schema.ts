@@ -478,6 +478,32 @@ export const insights = pgTable(
   ],
 );
 
+export const canonicalMemories = pgTable(
+  "canonical_memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    memoryType: candidateMemoryTypeEnum("memory_type").notNull(),
+    canonicalKey: text("canonical_key").notNull(),
+    subject: text("subject"),
+    status: candidateMemoryStatusEnum("status").notNull().default("candidate"),
+    evidenceCount: doublePrecision("evidence_count").notNull().default(1),
+    confidenceScore: doublePrecision("confidence_score"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("canonical_memories_twin_id_idx").on(t.twinId),
+    index("canonical_memories_memory_type_idx").on(t.memoryType),
+    uniqueIndex("canonical_memories_twin_key_idx").on(t.twinId, t.canonicalKey),
+  ],
+);
+
 export const candidateMemories = pgTable(
   "candidate_memories",
   {
@@ -485,6 +511,8 @@ export const candidateMemories = pgTable(
     twinId: uuid("twin_id")
       .notNull()
       .references(() => twins.id, { onDelete: "cascade" }),
+    canonicalMemoryId: uuid("canonical_memory_id")
+      .references(() => canonicalMemories.id, { onDelete: "set null" }),
     sourceArtifactId: uuid("source_artifact_id")
       .notNull()
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
@@ -504,6 +532,7 @@ export const candidateMemories = pgTable(
   },
   (t) => [
     index("candidate_memories_twin_id_idx").on(t.twinId),
+    index("candidate_memories_canonical_memory_id_idx").on(t.canonicalMemoryId),
     index("candidate_memories_source_artifact_id_idx").on(t.sourceArtifactId),
     index("candidate_memories_memory_fragment_id_idx").on(t.memoryFragmentId),
     index("candidate_memories_status_idx").on(t.status),

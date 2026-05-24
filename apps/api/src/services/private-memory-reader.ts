@@ -11,6 +11,7 @@ type PrivateMemoryReaderConfig = {
   suiRpcUrl: string;
   suiPrivateKey: string;
   suiNetwork: "mainnet" | "testnet" | "devnet" | "localnet";
+  walrusAggregatorUrl?: string;
   sealPackageId: string;
   sealPolicyId: string;
   sealKeyServers: string;
@@ -22,6 +23,7 @@ export type PrivateMemoryReader = {
     rawStorageRef: string;
     artifactId: string;
     twinId: string;
+    expectedCiphertextSha256?: string | null;
   }): Promise<string>;
 };
 
@@ -33,14 +35,115 @@ export function createPrivateMemoryReader(params: {
 
   return {
     async readPrivateMemory(input) {
-      const encryptedBytes = await params.walrus.read({
+      const totalStartedAt = Date.now();
+      const encryptedBytes = await retryPrivateMemoryStage({
+        stage: "walrus_read",
+        artifactId: input.artifactId,
         rawStorageRef: input.rawStorageRef,
+        operation: () =>
+          params.walrus.read({
+            rawStorageRef: input.rawStorageRef,
+            expectedSha256: input.expectedCiphertextSha256,
+          }),
       });
-      const decrypted = await params.seal.decrypt({ encryptedBytes });
+      const decrypted = await retryPrivateMemoryStage({
+        stage: "seal_decrypt",
+        artifactId: input.artifactId,
+        rawStorageRef: input.rawStorageRef,
+        operation: () => params.seal.decrypt({ encryptedBytes }),
+      });
+
+      console.info("api private memory read completed", {
+        artifactId: input.artifactId,
+        rawStorageRef: input.rawStorageRef,
+        encryptedBytes: encryptedBytes.length,
+        plaintextBytes: decrypted.plaintext.length,
+        durationMs: Date.now() - totalStartedAt,
+      });
 
       return decoder.decode(decrypted.plaintext);
     },
   };
+}
+
+async function retryPrivateMemoryStage<T>(params: {
+  stage: "walrus_read" | "seal_decrypt";
+  artifactId: string;
+  rawStorageRef: string;
+  operation: () => Promise<T>;
+}): Promise<T> {
+  const maxAttempts = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = Date.now();
+
+    try {
+      const result = await params.operation();
+
+      console.info("api private memory read stage completed", {
+        stage: params.stage,
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        attempt,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn("api private memory read stage failed", {
+        stage: params.stage,
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        attempt,
+        maxAttempts,
+        durationMs: Date.now() - startedAt,
+        retryable: isRetryableError(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: errorMessage(error),
+      });
+
+      if (attempt === maxAttempts || !isRetryableError(error)) {
+        break;
+      }
+
+      await sleep(250 * 2 ** (attempt - 1));
+    }
+  }
+
+  throw new Error(`${params.stage} failed: ${errorMessage(lastError)}`, {
+    cause: lastError,
+  });
+}
+
+function isRetryableError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+
+  return [
+    "fetch failed",
+    "network",
+    "timeout",
+    "timed out",
+    "econnreset",
+    "econnrefused",
+    "socket",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+  ].some((fragment) => message.includes(fragment));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown private memory read error";
 }
 
 export function createConfiguredPrivateMemoryReader(
@@ -64,6 +167,7 @@ export function createConfiguredPrivateMemoryReader(
       config: {
         network: config.suiNetwork,
         rpcUrl: config.suiRpcUrl,
+        aggregatorUrl: config.walrusAggregatorUrl,
       },
     }),
     seal: createSealDecryptor({
@@ -102,11 +206,21 @@ function readPrivateMemoryReaderConfig(
     suiRpcUrl,
     suiPrivateKey,
     suiNetwork: readSuiNetwork(env["SUI_NETWORK"]),
+    walrusAggregatorUrl: readMaybe(env, "WALRUS_AGGREGATOR_URL"),
     sealPackageId,
     sealPolicyId,
     sealKeyServers,
     sealThreshold: readInteger(env["SEAL_THRESHOLD"], 1),
   };
+}
+
+function readMaybe(
+  env: Record<string, string | undefined>,
+  key: string,
+): string | undefined {
+  const value = env[key]?.trim();
+
+  return value ? value : undefined;
 }
 
 function readSuiNetwork(

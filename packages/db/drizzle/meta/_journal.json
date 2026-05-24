@@ -141,6 +141,13 @@
       "when": 1779462000000,
       "tag": "0019_user_feedback_and_reflections",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779465600000,
+      "tag": "0020_canonical_memories",
+      "breakpoints": true
     }
   ]
 }

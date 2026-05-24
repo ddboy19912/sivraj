@@ -152,12 +152,13 @@ Edge examples:
 
 Represents a source-backed extracted memory candidate.
 
-Candidate memories are not final approved Twin memory yet. They are extracted from one processed memory fragment, stored with provenance, and can later be approved, rejected, edited, or superseded by the user.
+Candidate memories are not final approved Twin memory yet. They are extracted from one processed memory fragment, stored with provenance, linked to a canonical memory record when possible, and can later be approved, rejected, edited, or superseded by the user.
 
 Fields:
 
 - `id`
 - `twin_id`
+- `canonical_memory_id`
 - `source_artifact_id`
 - `memory_fragment_id`
 - `memory_type`
@@ -172,6 +173,30 @@ Fields:
 - `updated_at`
 
 The extracted statement is private content. It is encrypted before archive processing. Postgres stores only the encrypted statement reference, hashes, status, confidence, and provenance metadata. During fast Twin learning, `statement_storage_ref` may briefly be a `pending://candidate-memory-archive/...` ref; the archive worker later replaces it with the durable encrypted `walrus://blob/...` ref.
+
+### CanonicalMemory
+
+Represents the Twin's consolidated understanding of repeated candidate memories.
+
+Sivraj may ingest the same underlying memory many times from repeated uploads, imports, or reworded notes. Candidate memories preserve source-level evidence. Canonical memories merge repeated evidence into one durable knowledge record so the Twin does not behave like a pile of duplicate fragments.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `memory_type`
+- `canonical_key`
+- `subject`
+- `status`
+- `evidence_count`
+- `confidence_score`
+- `metadata`
+- `first_seen_at`
+- `last_seen_at`
+- `created_at`
+- `updated_at`
+
+Canonicalization starts with deterministic keys: extracted memory type, normalized subject, safe memory category when available, and normalized statement hash as fallback. When that does not find a match, the worker can ask the configured structured LLM to judge whether the new candidate has the same meaning as an existing canonical memory of the same type. The LLM may merge `same` memories, mark `related` or `conflicting` memories for later handling, or create a separate canonical memory. Plaintext candidate statements are used only during background processing and are not stored in Postgres.
 
 Memory types:
 
@@ -206,7 +231,7 @@ Fields:
 - `evidence_memory_ids`
 - `related_node_ids`
 - `confidence_score`
-- `user_feedback`
+- `user_feedback_events`
 - `created_at`
 - `updated_at`
 

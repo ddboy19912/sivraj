@@ -1,5 +1,14 @@
 import { signSessionToken, verifySessionToken } from "@sivraj/auth";
 import {
+  candidateMemories,
+  graphEdges,
+  graphNodes,
+  memoryFragments,
+  reflectionRuns,
+  sourceArtifacts,
+  userFeedbackEvents,
+} from "@sivraj/db";
+import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
@@ -214,6 +223,7 @@ describe("feedback routes", () => {
       candidateMemoryStatus: "approved",
     });
     expect(db.insertCalls).toHaveLength(2);
+    expect(db.insertCalls[0]).toMatchObject({ table: userFeedbackEvents });
     expect(insertValue(db.insertCalls[0])).toMatchObject({
       twinId: "11111111-1111-4111-8111-111111111111",
       targetType: "candidate_memory",
@@ -407,6 +417,149 @@ describe("reflection routes", () => {
           metadata: { signalCount: 3 },
           createdAt: "2026-05-08T00:00:00.000Z",
           updatedAt: "2026-05-08T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+});
+
+describe("console read routes", () => {
+  const twinId = "11111111-1111-4111-8111-111111111111";
+  const artifactId = "22222222-2222-4222-8222-222222222222";
+
+  it("returns safe artifact detail metadata", async () => {
+    const db = createConsoleReadDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/artifacts/${artifactId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      policy: {
+        rawArtifactsIncluded: false,
+        scope: "memory:read",
+      },
+      artifact: {
+        id: artifactId,
+        twinId,
+        ingestionStatus: "completed",
+        intelligenceStatus: "completed",
+        rawStorageRef: "walrus://blob/raw",
+        memoryFragment: {
+          id: "fragment-id",
+          contentStorageRef: "walrus://blob/fragment",
+        },
+        counts: {
+          candidateMemories: 1,
+        },
+      },
+    });
+  });
+
+  it("returns privacy checklist without plaintext fields", async () => {
+    const db = createConsoleReadDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/artifacts/${artifactId}/privacy-check`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      allChecksPassed: true,
+      checklist: {
+        sourceArtifactHasRawStorageRef: true,
+        sourceArtifactHasCiphertextHash: true,
+        sourceArtifactMetadataHasNoPlaintextFields: true,
+        memoryFragmentHasContentStorageRef: true,
+        candidateMemoriesUseStatementStorageRef: true,
+        completedReflectionsUseSummaryStorageRef: true,
+      },
+    });
+  });
+
+  it("lists candidate memories with safe metadata only", async () => {
+    const db = createConsoleReadDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/candidate-memories`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      candidateMemories: [
+        {
+          id: "candidate-id",
+          sourceArtifactId: artifactId,
+          memoryType: "fact",
+          status: "candidate",
+          statementStorageRef: "walrus://blob/statement",
+          subject: "Project Alpha",
+        },
+      ],
+    });
+  });
+
+  it("returns graph nodes and edges for a twin", async () => {
+    const db = createConsoleReadDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/graph`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      nodes: [
+        {
+          id: "node-id",
+          nodeType: "project",
+          name: "Project Alpha",
+        },
+      ],
+      edges: [
+        {
+          id: "edge-id",
+          edgeType: "mentions",
         },
       ],
     });
@@ -1433,6 +1586,7 @@ describe("memory retrieval route", () => {
             rawStorageRef: "walrus://blob/encrypted-fragment",
             artifactId: "artifact-id",
             twinId: "twin-id",
+            expectedCiphertextSha256: "sha256:encrypted",
           });
 
           return "Launch keeps slipping because UI polish expands late.";
@@ -1504,6 +1658,276 @@ describe("memory retrieval route", () => {
       error: "private_memory_reader_not_configured",
     });
   });
+
+  it("skips unreadable fragments when other encrypted memories can be searched", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-readable",
+        contentStorageRef: "walrus://blob/readable",
+      }),
+      memoryRow({
+        id: "memory-stale",
+        contentStorageRef: "walrus://blob/stale",
+      }),
+    ]);
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          if (input.rawStorageRef === "walrus://blob/stale") {
+            throw new Error("walrus_read failed: fetch failed");
+          }
+
+          return "I worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "Polytope Hyperbridge", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          id: "memory-readable",
+          content: "I worked with Polytope Labs on Hyperbridge.",
+        },
+      ],
+      policy: {
+        privateFragmentsSkipped: 1,
+      },
+    });
+  });
+
+  it("hides duplicate retrieval rows with the same memory content", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-first",
+        contentStorageRef: "walrus://blob/first",
+      }),
+      memoryRow({
+        id: "memory-duplicate",
+        contentStorageRef: "walrus://blob/duplicate",
+      }),
+      memoryRow({
+        id: "memory-related",
+        contentStorageRef: "walrus://blob/related",
+      }),
+    ]);
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          if (input.rawStorageRef === "walrus://blob/related") {
+            return "I used React and Sui on Hyperbridge bridge infrastructure.";
+          }
+
+          return "I worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "Polytope Hyperbridge", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          content: "I worked with Polytope Labs on Hyperbridge.",
+        },
+        {
+          content: "I used React and Sui on Hyperbridge bridge infrastructure.",
+        },
+      ],
+      policy: {
+        duplicateResultsHidden: 1,
+      },
+    });
+  });
+
+  it("hides semantically duplicated retrieval rows that share a canonical memory", async () => {
+    const db = createFakeDb(
+      [
+        memoryRow({
+          id: "memory-original",
+          contentStorageRef: "walrus://blob/original",
+        }),
+        memoryRow({
+          id: "memory-paraphrase",
+          contentStorageRef: "walrus://blob/paraphrase",
+        }),
+        memoryRow({
+          id: "memory-related",
+          contentStorageRef: "walrus://blob/related",
+        }),
+      ],
+      [
+        candidateMemoryRow({
+          memoryFragmentId: "memory-original",
+          canonicalMemoryId: "canonical-polytope-work",
+        }),
+        candidateMemoryRow({
+          memoryFragmentId: "memory-paraphrase",
+          canonicalMemoryId: "canonical-polytope-work",
+        }),
+        candidateMemoryRow({
+          memoryFragmentId: "memory-related",
+          canonicalMemoryId: "canonical-hyperbridge-tech",
+        }),
+      ],
+    );
+    const decryptedRefs: string[] = [];
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          decryptedRefs.push(input.rawStorageRef);
+
+          if (input.rawStorageRef === "walrus://blob/paraphrase") {
+            return "At Hyperbridge, I helped Polytope Labs build cross-chain bridge infrastructure.";
+          }
+
+          if (input.rawStorageRef === "walrus://blob/related") {
+            return "I used React and Sui on Hyperbridge bridge infrastructure.";
+          }
+
+          return "I worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "Polytope Hyperbridge", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          canonicalMemoryId: "canonical-polytope-work",
+        },
+        {
+          canonicalMemoryId: "canonical-hyperbridge-tech",
+        },
+      ],
+      policy: {
+        decryptSkippedCount: 1,
+        selectedForDecryptCount: 2,
+      },
+    });
+    expect(decryptedRefs).toEqual([
+      "walrus://blob/original",
+      "walrus://blob/related",
+    ]);
+  });
+
+  it("uses configured decrypt evidence limit when searching encrypted memories", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-first",
+        contentStorageRef: "walrus://blob/first",
+      }),
+      memoryRow({
+        id: "memory-second",
+        contentStorageRef: "walrus://blob/second",
+      }),
+      memoryRow({
+        id: "memory-third",
+        contentStorageRef: "walrus://blob/third",
+      }),
+    ]);
+    const decryptedRefs: string[] = [];
+    const app = createApp({
+      db,
+      memorySearchConfig: {
+        shortlistLimit: 25,
+        fallbackLimit: 20,
+        decryptConcurrency: 3,
+        decryptEvidenceLimit: 1,
+      },
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          decryptedRefs.push(input.rawStorageRef);
+
+          return "I worked with Polytope Labs on Hyperbridge.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "Polytope Hyperbridge", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      policy: {
+        decryptEvidenceLimit: 1,
+        decryptSkippedCount: 2,
+        selectedForDecryptCount: 1,
+      },
+    });
+    expect(decryptedRefs).toEqual(["walrus://blob/first"]);
+  });
 });
 
 function validArtifactBody() {
@@ -1515,7 +1939,163 @@ function validArtifactBody() {
   };
 }
 
-function createFakeDb(memoryRows: unknown[] = []) {
+function createConsoleReadDb() {
+  const artifact = {
+    id: "22222222-2222-4222-8222-222222222222",
+    twinId: "11111111-1111-4111-8111-111111111111",
+    sourceType: "note",
+    uri: null,
+    rawStorageRef: "walrus://blob/raw",
+    hash: "artifact-hash",
+    metadata: {
+      storageMode: "encrypted_walrus",
+      ciphertextSha256: "a".repeat(64),
+      processing: {
+        reason: "completed",
+        intelligence: {
+          status: "completed",
+          entityExtractionMs: 120,
+          memoryExtractionMs: 240,
+        },
+      },
+    },
+    ingestionStatus: "completed",
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+  const memoryFragment = {
+    id: "fragment-id",
+    twinId: artifact.twinId,
+    sourceArtifactId: artifact.id,
+    contentStorageRef: "walrus://blob/fragment",
+    contentSha256: "b".repeat(64),
+    metadata: {},
+    importanceScore: 0.5,
+    confidenceScore: 0.8,
+    occurredAt: null,
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+  const candidateMemory = {
+    id: "candidate-id",
+    twinId: artifact.twinId,
+    canonicalMemoryId: "canonical-memory-id",
+    sourceArtifactId: artifact.id,
+    memoryFragmentId: memoryFragment.id,
+    memoryType: "fact",
+    status: "candidate",
+    statementStorageRef: "walrus://blob/statement",
+    statementSha256: "c".repeat(64),
+    evidenceHash: "evidence-hash",
+    evidenceLength: 42,
+    confidenceScore: 0.9,
+    metadata: { subject: "Project Alpha" },
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+  const reflection = {
+    id: "reflection-id",
+    twinId: artifact.twinId,
+    periodStart: new Date("2026-05-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-05-08T00:00:00.000Z"),
+    status: "completed",
+    summaryStorageRef: "walrus://blob/reflection",
+    summarySha256: "d".repeat(64),
+    metadata: {},
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+  const graphNode = {
+    id: "node-id",
+    twinId: artifact.twinId,
+    nodeType: "project",
+    name: "Project Alpha",
+    normalizedName: "project alpha",
+    description: null,
+    properties: { sourceType: "note" },
+    confidenceScore: 0.8,
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+  const graphEdge = {
+    id: "edge-id",
+    twinId: artifact.twinId,
+    fromNodeId: graphNode.id,
+    toNodeId: graphNode.id,
+    edgeType: "mentions",
+    description: null,
+    evidenceMemoryIds: [memoryFragment.id],
+    confidenceScore: 0.8,
+    createdAt: new Date("2026-05-08T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-08T00:00:00.000Z"),
+  };
+
+  function rowsForTable(table: unknown) {
+    if (table === sourceArtifacts) {
+      return [artifact];
+    }
+
+    if (table === memoryFragments) {
+      return [memoryFragment];
+    }
+
+    if (table === candidateMemories) {
+      return [candidateMemory];
+    }
+
+    if (table === reflectionRuns) {
+      return [reflection];
+    }
+
+    if (table === graphNodes) {
+      return [graphNode];
+    }
+
+    if (table === graphEdges) {
+      return [graphEdge];
+    }
+
+    return [];
+  }
+
+  return {
+    select(selection?: unknown) {
+      const isCountSelect = Boolean(
+        selection &&
+          typeof selection === "object" &&
+          "count" in (selection as Record<string, unknown>),
+      );
+
+      return {
+        from(table: unknown) {
+          return {
+            where() {
+              const chain = {
+                limit() {
+                  if (isCountSelect && table === candidateMemories) {
+                    return Promise.resolve([{ count: 1 }]);
+                  }
+
+                  return Promise.resolve(rowsForTable(table));
+                },
+                orderBy() {
+                  return chain;
+                },
+                then(resolve: (value: unknown[]) => void) {
+                  return chain.limit().then(resolve);
+                },
+              };
+
+              return chain;
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"];
+}
+
+function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[] = []) {
   const insertCalls: unknown[] = [];
 
   return {
@@ -1541,16 +2121,28 @@ function createFakeDb(memoryRows: unknown[] = []) {
     },
     select() {
       return {
-        from() {
-          return {
+        from(table: unknown) {
+          const rows = table === memoryFragments
+            ? memoryRows
+            : table === candidateMemories
+              ? candidateMemoryRows
+              : [];
+          const chain = {
             where() {
-              return {
-                limit() {
-                  return Promise.resolve(memoryRows);
-                },
-              };
+              return chain;
+            },
+            orderBy() {
+              return chain;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve(rows);
             },
           };
+
+          return chain;
         },
       };
     },
@@ -1999,6 +2591,29 @@ function memoryRow(overrides: Record<string, unknown> = {}) {
     importanceScore: 0.5,
     confidenceScore: 0.5,
     occurredAt: null,
+    createdAt: new Date("2026-05-18T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-18T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function candidateMemoryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "candidate-memory-id",
+    twinId: "twin-id",
+    canonicalMemoryId: "canonical-memory-id",
+    sourceArtifactId: "artifact-id",
+    memoryFragmentId: "memory-id",
+    memoryType: "experience",
+    status: "candidate",
+    statementStorageRef: "walrus://blob/candidate-memory",
+    statementSha256: "sha256:candidate",
+    evidenceHash: "evidence-hash",
+    evidenceLength: 42,
+    confidenceScore: 0.8,
+    metadata: {
+      subject: "Polytope Labs",
+    },
     createdAt: new Date("2026-05-18T00:00:00.000Z"),
     updatedAt: new Date("2026-05-18T00:00:00.000Z"),
     ...overrides,

@@ -19,6 +19,7 @@ import { createWorkerDb } from "./db.js";
 import {
   processArtifact,
   processCandidateMemoryArchive,
+  createCanonicalMemoryMergeJudge,
   createEntityExtractor,
   createMemoryExtractor,
   processArtifactIntelligence,
@@ -49,6 +50,9 @@ async function main() {
     : undefined;
   const memoryExtractor = structuredGenerator
     ? createMemoryExtractor(structuredGenerator)
+    : undefined;
+  const canonicalMemoryMergeJudge = structuredGenerator
+    ? createCanonicalMemoryMergeJudge(structuredGenerator)
     : undefined;
   const redisUrl = readRequired(process.env["REDIS_URL"], "REDIS_URL");
   const artifactStatusPublisher = createArtifactStatusPublisher(redisUrl);
@@ -167,6 +171,7 @@ async function main() {
         privateFragmentStorage,
         entityExtractor,
         memoryExtractor,
+        canonicalMemoryMergeJudge,
         candidateMemoryArchiveQueue,
         intelligenceChunkChars,
         intelligenceChunkConcurrency,
@@ -286,6 +291,7 @@ async function main() {
     concurrency,
     entityExtraction: entityExtractor ? "enabled" : "disabled",
     memoryExtraction: memoryExtractor ? "enabled" : "disabled",
+    semanticMemoryConsolidation: canonicalMemoryMergeJudge ? "enabled" : "disabled",
     intelligenceChunkChars,
     intelligenceChunkConcurrency,
     llmModel: process.env["LLM_MODEL"] || null,

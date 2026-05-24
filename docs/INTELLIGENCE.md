@@ -81,6 +81,28 @@ This lets the Twin begin accumulating structured personal knowledge without rein
 
 Candidate memory statement storage is batched per artifact/chunk. If one artifact produces multiple candidate memories, Sivraj encrypts one candidate-memory batch, inserts candidate rows with `metadata.statementIndex`, and queues a low-priority archive job to write that encrypted batch to Walrus. The intelligence job does not wait for the Walrus archive write, so "Twin learning completed" is not blocked by the second durable-storage round trip. When archival finishes, the archive worker replaces the pending ref with the shared `walrus://blob/...` ref and marks `metadata.archiveStatus = "completed"`.
 
+## Memory Consolidation
+
+Candidate memories preserve source-level evidence. Canonical memories represent the Twin's consolidated understanding.
+
+When the same memory is extracted repeatedly, Sivraj links the new candidate memory to an existing canonical memory and increments its evidence count instead of treating the repeat as totally new knowledge.
+
+The first pass uses deterministic canonical keys:
+
+- memory type
+- normalized subject
+- safe memory category when available
+- normalized statement hash as fallback
+
+The second pass uses an LLM semantic merge judge over a bounded shortlist of existing canonical memories with the same memory type. The judge classifies the candidate as:
+
+- `same` - merge into the existing canonical memory
+- `related` - keep separate but record that it is connected
+- `conflicting` - keep separate for future conflict handling
+- `separate` - create a new canonical memory
+
+This prevents semantically duplicated memories from dominating review and retrieval. It also keeps evidence provenance intact: repeated uploads still add source evidence, but retrieval can show the underlying memory once. The current semantic shortlist is type/subject/recentness based; embedding similarity can replace or augment that shortlist as the corpus grows.
+
 ## Background Processing
 
 Ingestion and intelligence run as separate worker phases:
@@ -94,6 +116,8 @@ This means upload UX is complete once memory is safely encrypted, stored, and re
 For active processing, Sivraj may pass short-lived encrypted ciphertext through Redis/BullMQ to avoid immediately reading the same blob back from Walrus. This transient handoff is bounded by `TRANSIENT_CIPHERTEXT_MAX_BYTES`, contains ciphertext only, and falls back to Walrus reads for retries, large payloads, or missing transient data. Walrus remains the durable source of truth.
 
 Large decrypted fragments are chunked before intelligence extraction. `INTELLIGENCE_CHUNK_CHARS` controls the target chunk size and `INTELLIGENCE_CHUNK_CONCURRENCY` controls bounded in-job parallelism. This keeps extraction below model context limits and lets long documents move through the Twin learning pipeline without becoming one giant LLM request.
+
+Retrieval uses a configurable encrypted-evidence budget. The API shortlists indexed fragments first, then decrypts only a bounded number of unique evidence fragments before ranking. `MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT` controls that evidence budget, while `MEMORY_SEARCH_DECRYPT_CONCURRENCY`, `MEMORY_SEARCH_SHORTLIST_LIMIT`, and `MEMORY_SEARCH_FALLBACK_LIMIT` tune search fan-out. This keeps live Seal/Walrus decrypt latency predictable while the retrieval layer matures.
 
 Status is tracked under `metadata.processing.intelligence`:
 

@@ -2,6 +2,7 @@ import {
   detectPatterns,
   extractEntities,
   extractMemories,
+  inferBehaviorPatternMetadata,
   resolveSpeakerAttribution,
   type DetectedPattern,
   type EntityExtractionResult,
@@ -93,12 +94,15 @@ export type ArtifactRepository = {
     sourceArtifactId: string;
     memoryFragmentId: string;
     memoryType: ExtractedMemory["memoryType"];
+    statement?: string;
+    normalizedStatement?: string;
     statementStorageRef: string;
     statementSha256: string;
     evidenceHash: string;
     evidenceLength: number;
     confidenceScore: number;
     metadata: Record<string, unknown>;
+    mergeJudge?: CanonicalMemoryMergeJudge;
   }): Promise<{ id: string }>;
   markCandidateMemoriesArchived(input: {
     candidateMemoryIds: string[];
@@ -155,6 +159,32 @@ export type MemoryExtractor = {
     content: string;
     title?: string | null;
   }): Promise<MemoryExtractionResult>;
+};
+
+export type CanonicalMemoryMergeJudge = {
+  judge(input: {
+    candidate: {
+      memoryType: ExtractedMemory["memoryType"];
+      statement: string;
+      normalizedStatement: string | null;
+      subject: string | null;
+      normalizedStatementHash: string;
+      metadata: Record<string, unknown>;
+    };
+    existing: Array<{
+      id: string;
+      memoryType: ExtractedMemory["memoryType"];
+      canonicalKey: string;
+      subject: string | null;
+      confidenceScore: number | null;
+      metadata: Record<string, unknown>;
+    }>;
+  }): Promise<{
+    decision: "same" | "related" | "conflicting" | "separate";
+    canonicalMemoryId: string | null;
+    confidence: number;
+    reason: string;
+  }>;
 };
 
 export type WeeklyReflectionSignals = {
@@ -1154,6 +1184,7 @@ export async function processArtifactIntelligence(
     privateMemoryReader?: PrivateMemoryReader;
     entityExtractor?: EntityExtractor;
     memoryExtractor?: MemoryExtractor;
+    canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
     intelligenceChunkChars?: number;
@@ -1270,6 +1301,7 @@ export async function processArtifactIntelligence(
       chunks,
       title: null,
       memoryExtractor: input.memoryExtractor,
+      canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
       concurrency: input.intelligenceChunkConcurrency ?? 2,
@@ -1845,8 +1877,20 @@ function toPatternSignal(
     evidenceHash: memory.evidenceHash,
     evidenceLength: memory.evidenceLength,
     sourceType: artifact.sourceType,
-    metadata: memory.metadata,
+    metadata: {
+      ...memory.metadata,
+      ...patternMetadataForMemory(memory),
+    },
   };
+}
+
+function patternMetadataForMemory(memory: ExtractedMemory): Record<string, unknown> {
+  return inferBehaviorPatternMetadata({
+    statement: memory.statement,
+    normalizedStatement: memory.normalizedStatement,
+    subject: memory.subject,
+    metadata: memory.metadata,
+  }) ?? {};
 }
 
 async function upsertProjectClusterNode(
@@ -2117,6 +2161,7 @@ async function processMemoryExtraction(
     memoryExtractor?: MemoryExtractor;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+    canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
   },
 ): Promise<Record<string, unknown> | null> {
   if (!input.memoryExtractor) {
@@ -2202,6 +2247,8 @@ async function processMemoryExtraction(
         sourceArtifactId: input.artifact.id,
         memoryFragmentId: input.memoryFragmentId,
         memoryType: memory.memoryType,
+        statement: memory.statement,
+        normalizedStatement: memory.normalizedStatement,
         statementStorageRef: pendingCandidateMemoryArchiveRef(input.artifact.id, input.memoryFragmentId),
         statementSha256: encrypted.contentSha256,
         evidenceHash: memory.evidenceHash,
@@ -2227,8 +2274,10 @@ async function processMemoryExtraction(
             ? { conversationUnderstanding: result.metadata.conversationUnderstanding }
             : {}),
           ...(Object.keys(memory.metadata).length > 0 ? { memoryMetadata: memory.metadata } : {}),
+          ...patternMetadataForMemory(memory),
           storage: encrypted.metadata,
         },
+        mergeJudge: input.canonicalMemoryMergeJudge,
       });
       candidateMemoryIds.push(candidate.id);
       storedCount += 1;
@@ -2260,7 +2309,10 @@ async function processMemoryExtraction(
         currentPatternSignals.push(patternSignal);
       }
     }
-    const artifactNode = projectCandidates.length > 0 || decisionCandidates.length > 0 || goalCandidates.length > 0
+    const artifactNode = projectCandidates.length > 0 ||
+      decisionCandidates.length > 0 ||
+      goalCandidates.length > 0 ||
+      currentPatternSignals.length > 0
       ? await upsertArtifactGraphNode(repository, input.artifact, input.memoryFragmentId)
       : null;
     const projectClustering = artifactNode && projectCandidates.length > 0
@@ -2405,6 +2457,7 @@ async function processMemoryExtractionChunks(
     memoryExtractor?: MemoryExtractor;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+    canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
     concurrency: number;
   },
 ): Promise<Record<string, unknown> | null> {
@@ -2417,6 +2470,7 @@ async function processMemoryExtractionChunks(
       memoryExtractor: input.memoryExtractor,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
+      canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
     });
   }
 
@@ -2429,6 +2483,7 @@ async function processMemoryExtractionChunks(
       memoryExtractor: input.memoryExtractor,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
+      canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
     }),
   );
 
@@ -2746,6 +2801,30 @@ export function createMemoryExtractor(generator: StructuredGenerator): MemoryExt
   };
 }
 
+export function createCanonicalMemoryMergeJudge(generator: StructuredGenerator): CanonicalMemoryMergeJudge {
+  return {
+    async judge(input) {
+      if (input.existing.length === 0) {
+        return {
+          decision: "separate",
+          canonicalMemoryId: null,
+          confidence: 1,
+          reason: "No existing canonical memories to compare.",
+        };
+      }
+
+      const generation = await generator.generateJson({
+        system: CANONICAL_MEMORY_MERGE_SYSTEM_PROMPT,
+        prompt: buildCanonicalMemoryMergePrompt(input),
+        temperature: 0,
+        timeoutMs: 20_000,
+      });
+
+      return parseCanonicalMemoryMergeResponse(generation.json, input.existing);
+    },
+  };
+}
+
 async function markPrivateFragmentStorageRequired(
   repository: ArtifactRepository,
   artifact: QueuedArtifact,
@@ -2771,6 +2850,109 @@ async function markPrivateFragmentStorageRequired(
       rawStorageRef: artifact.rawStorageRef,
     },
   });
+}
+
+const CANONICAL_MEMORY_MERGE_SYSTEM_PROMPT = [
+  "You judge whether a newly extracted private memory is semantically the same as an existing canonical memory.",
+  "Return only JSON.",
+  "Use same only when the candidate expresses the same underlying user fact, preference, goal, decision, relationship, experience, or project update, even if wording differs.",
+  "Use related when it is about the same topic but adds a distinct fact.",
+  "Use conflicting when it contradicts an existing canonical memory.",
+  "Use separate when it is new.",
+  "Do not invent facts. Match only against the provided canonical IDs.",
+].join(" ");
+
+function buildCanonicalMemoryMergePrompt(input: Parameters<CanonicalMemoryMergeJudge["judge"]>[0]): string {
+  return JSON.stringify({
+    task: "semantic_canonical_memory_merge_judgment",
+    outputSchema: {
+      decision: "same | related | conflicting | separate",
+      canonicalMemoryId: "existing canonical memory id or null",
+      confidence: "number from 0 to 1",
+      reason: "short source-grounded reason",
+    },
+    candidate: {
+      memoryType: input.candidate.memoryType,
+      statement: input.candidate.statement,
+      normalizedStatement: input.candidate.normalizedStatement,
+      subject: input.candidate.subject,
+      metadata: redactMergeJudgeMetadata(input.candidate.metadata),
+    },
+    existingCanonicalMemories: input.existing.map((memory) => ({
+      id: memory.id,
+      memoryType: memory.memoryType,
+      subject: memory.subject,
+      confidenceScore: memory.confidenceScore,
+      metadata: redactMergeJudgeMetadata(memory.metadata),
+    })),
+  });
+}
+
+function parseCanonicalMemoryMergeResponse(
+  json: unknown,
+  existing: Parameters<CanonicalMemoryMergeJudge["judge"]>[0]["existing"],
+): Awaited<ReturnType<CanonicalMemoryMergeJudge["judge"]>> {
+  const record = asRecord(json);
+  const decision = readMergeDecision(record.decision);
+  const canonicalMemoryId = typeof record.canonicalMemoryId === "string"
+    ? record.canonicalMemoryId
+    : null;
+  const confidence = clampConfidence(record.confidence);
+  const reason = typeof record.reason === "string" && record.reason.trim()
+    ? record.reason.trim().slice(0, 500)
+    : "No reason provided.";
+  const matchedId = canonicalMemoryId && existing.some((memory) => memory.id === canonicalMemoryId)
+    ? canonicalMemoryId
+    : null;
+
+  if (decision === "same" && !matchedId) {
+    return {
+      decision: "separate",
+      canonicalMemoryId: null,
+      confidence: 0,
+      reason: "Merge judge returned an unknown canonical memory id.",
+    };
+  }
+
+  return {
+    decision,
+    canonicalMemoryId: decision === "same" || decision === "related" || decision === "conflicting"
+      ? matchedId
+      : null,
+    confidence,
+    reason,
+  };
+}
+
+function readMergeDecision(value: unknown): "same" | "related" | "conflicting" | "separate" {
+  return value === "same" || value === "related" || value === "conflicting" || value === "separate"
+    ? value
+    : "separate";
+}
+
+function redactMergeJudgeMetadata(value: unknown): Record<string, unknown> {
+  const metadata = asRecord(value);
+  const memoryMetadata = asRecord(metadata.memoryMetadata);
+
+  return {
+    subject: typeof metadata.subject === "string" ? metadata.subject : null,
+    sourceType: typeof metadata.sourceType === "string" ? metadata.sourceType : null,
+    memoryMetadata: {
+      category: typeof memoryMetadata.category === "string" ? memoryMetadata.category : null,
+      importance: typeof memoryMetadata.importance === "string" ? memoryMetadata.importance : null,
+    },
+    consolidationMethod: typeof metadata.consolidationMethod === "string"
+      ? metadata.consolidationMethod
+      : null,
+  };
+}
+
+function clampConfidence(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 function isEncryptedPrivateArtifact(metadata: Record<string, unknown>): boolean {

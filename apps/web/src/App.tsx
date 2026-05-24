@@ -11,6 +11,7 @@ import { SuiGrpcClient } from '@mysten/sui/grpc'
 import * as pdfjs from 'pdfjs-dist'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import './App.css'
+import { ConsoleShell } from './console/ConsoleShell'
 
 type Session = {
   token: string
@@ -140,6 +141,8 @@ const textEncoder = new TextEncoder()
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
+type AppMode = 'memory' | 'console'
+
 function App() {
   const dAppKit = useDAppKit()
   const account = useCurrentAccount()
@@ -172,6 +175,7 @@ function App() {
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null)
   const [storageHealthError, setStorageHealthError] = useState<string | null>(null)
   const [statusStreamNonce, setStatusStreamNonce] = useState(0)
+  const [appMode, setAppMode] = useState<AppMode>('memory')
   const [identityDisplayName, setIdentityDisplayName] = useState('')
   const [identityAliases, setIdentityAliases] = useState('')
   const [identityEmails, setIdentityEmails] = useState('')
@@ -1037,7 +1041,7 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Sivraj</p>
-          <h1>Manual Memory</h1>
+          <h1>{appMode === 'console' ? 'Testing Console' : 'Manual Memory'}</h1>
         </div>
         <div className="wallet-actions">
           <ConnectButton />
@@ -1064,6 +1068,33 @@ function App() {
         <StatusItem label="Session" value={isSessionForWallet ? 'Verified' : 'Not verified'} />
       </section>
 
+      <nav className="app-mode-nav" aria-label="Application mode">
+        <button
+          type="button"
+          className={appMode === 'memory' ? 'app-mode-button active' : 'app-mode-button'}
+          onClick={() => setAppMode('memory')}
+        >
+          Manual Memory
+        </button>
+        <button
+          type="button"
+          className={appMode === 'console' ? 'app-mode-button active' : 'app-mode-button'}
+          onClick={() => setAppMode('console')}
+        >
+          Testing Console
+        </button>
+      </nav>
+
+      {appMode === 'console' ? (
+        <ConsoleShell
+          session={session}
+          isSessionForWallet={isSessionForWallet}
+          onSessionRefreshed={(refreshed) => {
+            setSession(refreshed)
+            storeSession(refreshed)
+          }}
+        />
+      ) : (
       <section className="workspace">
         <form className="memory-form" onSubmit={handleSubmit}>
           <div className="section-heading">
@@ -1321,6 +1352,7 @@ function App() {
           )}
         </aside>
       </section>
+      )}
     </main>
   )
 }

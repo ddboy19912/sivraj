@@ -12,6 +12,7 @@ import {
   SPEECH_TO_TEXT_EMPTY,
   SPEECH_TO_TEXT_FAILED,
   SPEECH_TO_TEXT_REQUIRED,
+  createCanonicalMemoryMergeJudge,
   processArtifact,
   processCandidateMemoryArchive,
   processArtifactIntelligence,
@@ -21,6 +22,93 @@ import {
   type ArtifactRepository,
   type QueuedArtifact,
 } from "./ingestion-processor.js";
+
+describe("createCanonicalMemoryMergeJudge", () => {
+  it("accepts semantic same-memory judgments for known canonical memories", async () => {
+    const judge = createCanonicalMemoryMergeJudge({
+      async generateJson(input) {
+        expect(input.prompt).toContain("Polytope Labs");
+
+        return {
+          json: {
+            decision: "same",
+            canonicalMemoryId: "canonical-1",
+            confidence: 0.92,
+            reason: "Both describe the same Polytope Labs Hyperbridge work memory.",
+          },
+          provider: "openai",
+          model: "test-model",
+        };
+      },
+    });
+
+    await expect(judge.judge({
+      candidate: {
+        memoryType: "experience",
+        statement: "I helped Polytope Labs build Hyperbridge bridge infrastructure.",
+        normalizedStatement: "i helped polytope labs build hyperbridge bridge infrastructure",
+        subject: "Polytope Labs",
+        normalizedStatementHash: "hash-1",
+        metadata: { subject: "Polytope Labs" },
+      },
+      existing: [
+        {
+          id: "canonical-1",
+          memoryType: "experience",
+          canonicalKey: "subject:experience:polytope_labs:general",
+          subject: "Polytope Labs",
+          confidenceScore: 0.9,
+          metadata: { subject: "Polytope Labs" },
+        },
+      ],
+    })).resolves.toMatchObject({
+      decision: "same",
+      canonicalMemoryId: "canonical-1",
+      confidence: 0.92,
+    });
+  });
+
+  it("rejects merge judgments that point at unknown canonical memories", async () => {
+    const judge = createCanonicalMemoryMergeJudge({
+      async generateJson() {
+        return {
+          json: {
+            decision: "same",
+            canonicalMemoryId: "not-real",
+            confidence: 0.99,
+            reason: "Bad id.",
+          },
+          provider: "openai",
+          model: "test-model",
+        };
+      },
+    });
+
+    await expect(judge.judge({
+      candidate: {
+        memoryType: "preference",
+        statement: "I prefer TypeScript.",
+        normalizedStatement: "i prefer typescript",
+        subject: "TypeScript",
+        normalizedStatementHash: "hash-2",
+        metadata: { subject: "TypeScript" },
+      },
+      existing: [
+        {
+          id: "canonical-1",
+          memoryType: "preference",
+          canonicalKey: "subject:preference:typescript:general",
+          subject: "TypeScript",
+          confidenceScore: 0.8,
+          metadata: { subject: "TypeScript" },
+        },
+      ],
+    })).resolves.toMatchObject({
+      decision: "separate",
+      canonicalMemoryId: null,
+    });
+  });
+});
 
 describe("processQueuedArtifacts", () => {
   it("moves encrypted private artifacts to pending without creating plaintext fragments", async () => {
@@ -1217,6 +1305,131 @@ describe("processQueuedArtifacts", () => {
       },
     });
     expect(JSON.stringify(patternNodes)).not.toContain("memory layer for coding agents");
+  });
+
+  it("detects repeated launch-delay behavior patterns across different projects", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-gamma",
+        twinId: "twin-id",
+        sourceType: "note",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+    await repository.createCandidateMemory({
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-alpha",
+      memoryFragmentId: "fragment-alpha",
+      memoryType: "project_update",
+      statementStorageRef: "walrus://blob/alpha-candidate",
+      statementSha256: "alpha-statement-sha",
+      evidenceHash: "alpha-evidence",
+      evidenceLength: 59,
+      confidenceScore: 0.84,
+      metadata: {
+        subject: "Project Alpha",
+        sourceType: "note",
+        normalizedStatementHash: "alpha-normalized-hash",
+        patternKey: "launch_delay_ui_polish",
+        patternTags: ["launch", "delay", "ui_polish"],
+      },
+    });
+    await repository.createCandidateMemory({
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-beta",
+      memoryFragmentId: "fragment-beta",
+      memoryType: "project_update",
+      statementStorageRef: "walrus://blob/beta-candidate",
+      statementSha256: "beta-statement-sha",
+      evidenceHash: "beta-evidence",
+      evidenceLength: 64,
+      confidenceScore: 0.86,
+      metadata: {
+        subject: "Project Beta",
+        sourceType: "note",
+        normalizedStatementHash: "beta-normalized-hash",
+        patternKey: "launch_delay_ui_polish",
+        patternTags: ["launch", "delay", "ui_polish"],
+      },
+    });
+    const gammaFragment = await repository.createMemoryFragment({
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-gamma",
+      contentStorageRef: "walrus://blob/gamma-fragment",
+      contentSha256: "gamma-fragment-sha",
+      importanceScore: 0.5,
+      confidenceScore: 0.8,
+    });
+
+    await processArtifactIntelligence(repository, {
+      artifactId: "artifact-gamma",
+      twinId: "twin-id",
+      sourceType: "note",
+      memoryFragmentId: gammaFragment.id,
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "I delayed launching Project Gamma because I wanted the interface to feel perfect before shipping.";
+        },
+      },
+      memoryExtractor: {
+        async extract(input) {
+          return {
+            memories: [
+              {
+                statement: "The user delayed launching Project Gamma because they wanted the interface to feel perfect before shipping.",
+                normalizedStatement: "the user delayed launching project gamma because they wanted the interface to feel perfect before shipping.",
+                memoryType: "project_update" as const,
+                subject: "Project Gamma",
+                confidence: 0.91,
+                evidenceHash: "gamma-evidence",
+                evidenceLength: 91,
+                metadata: {},
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_memory_extractor" as const,
+              provider: "openai",
+              model: "gpt-4o",
+              originalLength: input.content.length,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    const patternNodes = repository.graphNodes.filter(
+      (node) => node.nodeType === "other" && readTestRecord(node.properties).kind === "pattern",
+    );
+    expect(patternNodes).toHaveLength(1);
+    expect(patternNodes[0]).toMatchObject({
+      properties: {
+        kind: "pattern",
+        patternType: "repeated_behavior_theme",
+        subject: "Launch delay from UI polish",
+        normalizedSubject: "launch_delay_ui_polish",
+        evidenceCount: 3,
+      },
+    });
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: patternNodes[0]?.id,
+        edgeType: "supports_pattern",
+      }),
+      expect.objectContaining({
+        toNodeId: patternNodes[0]?.id,
+        edgeType: "project_pattern",
+      }),
+    ]));
+    expect(JSON.stringify(patternNodes)).not.toContain("interface to feel perfect");
   });
 
   it("marks candidate memories from attributed conversations with speaker policy metadata", async () => {
@@ -2982,6 +3195,12 @@ function createRepository(artifacts: QueuedArtifact[]) {
       return { id: edge.id };
     },
     async createCandidateMemory(input) {
+      const {
+        statement: _statement,
+        normalizedStatement: _normalizedStatement,
+        mergeJudge: _mergeJudge,
+        ...storedInput
+      } = input;
       const existing = candidateMemories.find(
         (candidate) =>
           candidate.memoryFragmentId === input.memoryFragmentId &&
@@ -2990,12 +3209,12 @@ function createRepository(artifacts: QueuedArtifact[]) {
       );
 
       if (existing) {
-        Object.assign(existing, input);
+        Object.assign(existing, storedInput);
         return { id: existing.id };
       }
 
       const candidate = {
-        ...input,
+        ...storedInput,
         id: `candidate-memory-${candidateMemories.length + 1}`,
       };
       candidateMemories.push(candidate);

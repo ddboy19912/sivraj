@@ -2,12 +2,27 @@ import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
-import { auditEvents, sourceArtifacts } from "@sivraj/db";
+import {
+  auditEvents,
+  candidateMemories,
+  memoryFragments,
+  reflectionRuns,
+  sourceArtifacts,
+} from "@sivraj/db";
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppDependencies, SupportedArtifactSourceType } from "../app.js";
+import {
+  metadataContainsPlaintextLikeFields,
+  readIntelligenceMetadata,
+  readIntelligenceStatus,
+  readProcessingMetadata,
+  readProcessingReason,
+  recordMetadata,
+  sanitizeSafeMetadata,
+} from "../lib/safe-metadata.js";
 import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
 
 const DEFAULT_TRANSIENT_CIPHERTEXT_MAX_BYTES = 2 * 1024 * 1024;
@@ -332,6 +347,187 @@ export function createArtifactRoutes({
     });
   });
 
+  artifactRoutes.get("/:artifactId", requireAuth, async (c) => {
+    const scopeError = requireScope(c, "memory:read");
+
+    if (scopeError) {
+      return scopeError;
+    }
+
+    const auth = c.get("auth");
+    const twinId = c.req.param("twinId");
+    const artifactId = c.req.param("artifactId");
+
+    if (!twinId) {
+      return c.json({ error: "missing_twin_id" }, 400);
+    }
+
+    if (!artifactId) {
+      return c.json({ error: "missing_artifact_id" }, 400);
+    }
+
+    if (auth.type !== "service" && auth.twinId !== twinId) {
+      return c.json({ error: "twin_scope_mismatch" }, 403);
+    }
+
+    const artifact = await findArtifact(db, twinId, artifactId);
+
+    if (!artifact) {
+      return c.json({ error: "artifact_not_found" }, 404);
+    }
+
+    const [memoryFragment] = await db
+      .select()
+      .from(memoryFragments)
+      .where(
+        and(
+          eq(memoryFragments.twinId, twinId),
+          eq(memoryFragments.sourceArtifactId, artifactId),
+        ),
+      )
+      .limit(1);
+
+    const [candidateCountRow] = await db
+      .select({ count: count() })
+      .from(candidateMemories)
+      .where(
+        and(
+          eq(candidateMemories.twinId, twinId),
+          eq(candidateMemories.sourceArtifactId, artifactId),
+        ),
+      );
+
+    return c.json({
+      policy: {
+        rawArtifactsIncluded: false,
+        scope: "memory:read",
+      },
+      artifact: formatArtifactDetail(artifact, memoryFragment ?? null, candidateCountRow?.count ?? 0),
+    });
+  });
+
+  artifactRoutes.get("/:artifactId/privacy-check", requireAuth, async (c) => {
+    const scopeError = requireScope(c, "memory:read");
+
+    if (scopeError) {
+      return scopeError;
+    }
+
+    const auth = c.get("auth");
+    const twinId = c.req.param("twinId");
+    const artifactId = c.req.param("artifactId");
+
+    if (!twinId) {
+      return c.json({ error: "missing_twin_id" }, 400);
+    }
+
+    if (!artifactId) {
+      return c.json({ error: "missing_artifact_id" }, 400);
+    }
+
+    if (auth.type !== "service" && auth.twinId !== twinId) {
+      return c.json({ error: "twin_scope_mismatch" }, 403);
+    }
+
+    const artifact = await findArtifact(db, twinId, artifactId);
+
+    if (!artifact) {
+      return c.json({ error: "artifact_not_found" }, 404);
+    }
+
+    const [memoryFragment] = await db
+      .select()
+      .from(memoryFragments)
+      .where(
+        and(
+          eq(memoryFragments.twinId, twinId),
+          eq(memoryFragments.sourceArtifactId, artifactId),
+        ),
+      )
+      .limit(1);
+
+    const candidateRows = await db
+      .select({
+        id: candidateMemories.id,
+        statementStorageRef: candidateMemories.statementStorageRef,
+        statementSha256: candidateMemories.statementSha256,
+      })
+      .from(candidateMemories)
+      .where(
+        and(
+          eq(candidateMemories.twinId, twinId),
+          eq(candidateMemories.sourceArtifactId, artifactId),
+        ),
+      );
+
+    const reflectionRows = await db
+      .select({
+        id: reflectionRuns.id,
+        status: reflectionRuns.status,
+        summaryStorageRef: reflectionRuns.summaryStorageRef,
+        summarySha256: reflectionRuns.summarySha256,
+      })
+      .from(reflectionRuns)
+      .where(
+        and(
+          eq(reflectionRuns.twinId, twinId),
+          eq(reflectionRuns.status, "completed"),
+        ),
+      )
+      .limit(20);
+
+    const metadata = recordMetadata(artifact.metadata);
+    const ciphertextSha256 = optionalString(metadata["ciphertextSha256"]);
+    const checklist = {
+      sourceArtifactHasRawStorageRef: Boolean(artifact.rawStorageRef),
+      sourceArtifactHasCiphertextHash: Boolean(ciphertextSha256),
+      sourceArtifactMetadataHasNoPlaintextFields: !metadataContainsPlaintextLikeFields(metadata),
+      memoryFragmentHasContentStorageRef: Boolean(memoryFragment?.contentStorageRef),
+      candidateMemoriesUseStatementStorageRef: candidateRows.every((row) => Boolean(row.statementStorageRef)),
+      completedReflectionsUseSummaryStorageRef: reflectionRows.every((row) => Boolean(row.summaryStorageRef)),
+    };
+
+    return c.json({
+      policy: {
+        rawArtifactsIncluded: false,
+        scope: "memory:read",
+      },
+      artifactId,
+      twinId,
+      checklist,
+      allChecksPassed: Object.values(checklist).every(Boolean),
+      artifact: {
+        id: artifact.id,
+        sourceType: artifact.sourceType,
+        ingestionStatus: artifact.ingestionStatus,
+        rawStorageRef: artifact.rawStorageRef,
+        hash: artifact.hash,
+        ciphertextSha256,
+        storageMode: optionalString(metadata["storageMode"]),
+        metadata: sanitizeSafeMetadata(metadata),
+      },
+      memoryFragment: memoryFragment
+        ? {
+            id: memoryFragment.id,
+            contentStorageRef: memoryFragment.contentStorageRef,
+            contentSha256: memoryFragment.contentSha256,
+            metadata: sanitizeSafeMetadata(memoryFragment.metadata),
+          }
+        : null,
+      candidateMemories: candidateRows.map((row) => ({
+        id: row.id,
+        statementStorageRef: row.statementStorageRef,
+        statementSha256: row.statementSha256,
+      })),
+      reflections: reflectionRows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        summaryStorageRef: row.summaryStorageRef,
+        summarySha256: row.summarySha256,
+      })),
+    });
+  });
+
   artifactRoutes.get("/:artifactId/events", requireAuth, async (c) => {
     const auth = c.get("auth");
     const twinId = c.req.param("twinId");
@@ -422,6 +618,63 @@ export function createArtifactRoutes({
   return artifactRoutes;
 }
 
+async function findArtifact(
+  db: AppDependencies["db"],
+  twinId: string,
+  artifactId: string,
+) {
+  const [artifact] = await db
+    .select()
+    .from(sourceArtifacts)
+    .where(
+      and(
+        eq(sourceArtifacts.id, artifactId),
+        eq(sourceArtifacts.twinId, twinId),
+      ),
+    )
+    .limit(1);
+
+  return artifact ?? null;
+}
+
+function formatArtifactDetail(
+  artifact: typeof sourceArtifacts.$inferSelect,
+  memoryFragment: typeof memoryFragments.$inferSelect | null,
+  candidateMemoryCount: number,
+) {
+  const metadata = recordMetadata(artifact.metadata);
+
+  return {
+    id: artifact.id,
+    twinId: artifact.twinId,
+    sourceType: artifact.sourceType,
+    uri: artifact.uri,
+    rawStorageRef: artifact.rawStorageRef,
+    hash: artifact.hash,
+    ingestionStatus: artifact.ingestionStatus,
+    storageMode: optionalString(metadata["storageMode"]),
+    ciphertextSha256: optionalString(metadata["ciphertextSha256"]),
+    intelligenceStatus: readIntelligenceStatus(metadata),
+    processingReason: readProcessingReason(metadata),
+    processing: readProcessingMetadata(metadata),
+    intelligence: readIntelligenceMetadata(metadata),
+    metadata: sanitizeSafeMetadata(metadata),
+    memoryFragment: memoryFragment
+      ? {
+          id: memoryFragment.id,
+          contentStorageRef: memoryFragment.contentStorageRef,
+          contentSha256: memoryFragment.contentSha256,
+          metadata: sanitizeSafeMetadata(memoryFragment.metadata),
+        }
+      : null,
+    counts: {
+      candidateMemories: candidateMemoryCount,
+    },
+    createdAt: artifact.createdAt.toISOString(),
+    updatedAt: artifact.updatedAt.toISOString(),
+  };
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown queue error";
 }
@@ -449,12 +702,6 @@ function optionalString(value: unknown): string | null {
 
 function requiredString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function recordMetadata(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }
 
 function readEncryptedPayload(value: unknown): {
@@ -517,26 +764,6 @@ function readEncryptedPayload(value: unknown): {
       keyServerObjectIds,
     },
   };
-}
-
-function readProcessingReason(metadata: unknown): string | undefined {
-  const processing = recordMetadata(recordMetadata(metadata)["processing"]);
-  const reason = processing["reason"];
-
-  return typeof reason === "string" ? reason : undefined;
-}
-
-function readIntelligenceStatus(metadata: unknown): "queued" | "processing" | "completed" | "failed" | "skipped" | undefined {
-  const intelligence = recordMetadata(recordMetadata(recordMetadata(metadata)["processing"])["intelligence"]);
-  const status = intelligence["status"];
-
-  return status === "queued" ||
-    status === "processing" ||
-    status === "completed" ||
-    status === "failed" ||
-    status === "skipped"
-    ? status
-    : undefined;
 }
 
 function isStreamTerminal(

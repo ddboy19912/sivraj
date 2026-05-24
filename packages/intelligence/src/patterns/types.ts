@@ -19,7 +19,8 @@ export type PatternType =
   | "repeated_goal_subject"
   | "repeated_decision_subject"
   | "repeated_preference_subject"
-  | "repeated_project_activity";
+  | "repeated_project_activity"
+  | "repeated_behavior_theme";
 
 export type DetectedPattern = {
   patternType: PatternType;

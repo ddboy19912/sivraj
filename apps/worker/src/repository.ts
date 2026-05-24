@@ -1,7 +1,8 @@
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import {
   auditEvents,
   candidateMemories,
+  canonicalMemories,
   graphEdges,
   graphNodes,
   memoryFragments,
@@ -24,6 +25,7 @@ const CLAIMABLE_ARTIFACT_STATUSES: Array<"queued" | "pending"> = [
 const RECOVERABLE_PROCESSING_AGE_MS = 5 * 60 * 1000;
 type CandidateMemoryRow = typeof candidateMemories.$inferSelect;
 type FeedbackEventRow = typeof userFeedbackEvents.$inferSelect;
+type CandidateMemoryInput = Parameters<ArtifactRepository["createCandidateMemory"]>[0];
 
 export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
   return {
@@ -358,6 +360,7 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
       return edge;
     },
     async createCandidateMemory(input) {
+      const canonicalMemory = await upsertCanonicalMemory(db, input);
       const [existing] = await db
         .select({ id: candidateMemories.id })
         .from(candidateMemories)
@@ -378,7 +381,20 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
             statementSha256: input.statementSha256,
             evidenceLength: input.evidenceLength,
             confidenceScore: input.confidenceScore,
-            metadata: input.metadata,
+            canonicalMemoryId: canonicalMemory.id,
+            metadata: {
+              ...input.metadata,
+              canonicalMemoryId: canonicalMemory.id,
+              canonicalKey: canonicalMemory.canonicalKey,
+              consolidation: canonicalMemory.existing
+                ? canonicalMemory.semanticMerge?.decision === "same"
+                  ? "semantically_merged_into_existing_canonical_memory"
+                  : "merged_into_existing_canonical_memory"
+                : "created_canonical_memory",
+              ...(canonicalMemory.semanticMerge
+                ? { semanticMerge: canonicalMemory.semanticMerge }
+                : {}),
+            },
             updatedAt: new Date(),
           })
           .where(eq(candidateMemories.id, existing.id));
@@ -390,6 +406,7 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
         .insert(candidateMemories)
         .values({
           twinId: input.twinId,
+          canonicalMemoryId: canonicalMemory.id,
           sourceArtifactId: input.sourceArtifactId,
           memoryFragmentId: input.memoryFragmentId,
           memoryType: input.memoryType,
@@ -398,7 +415,19 @@ export function createDrizzleArtifactRepository(db: Db): ArtifactRepository {
           evidenceHash: input.evidenceHash,
           evidenceLength: input.evidenceLength,
           confidenceScore: input.confidenceScore,
-          metadata: input.metadata,
+          metadata: {
+            ...input.metadata,
+            canonicalMemoryId: canonicalMemory.id,
+            canonicalKey: canonicalMemory.canonicalKey,
+            consolidation: canonicalMemory.existing
+              ? canonicalMemory.semanticMerge?.decision === "same"
+                ? "semantically_merged_into_existing_canonical_memory"
+                : "merged_into_existing_canonical_memory"
+              : "created_canonical_memory",
+            ...(canonicalMemory.semanticMerge
+              ? { semanticMerge: canonicalMemory.semanticMerge }
+              : {}),
+          },
         })
         .returning({ id: candidateMemories.id });
 
@@ -698,6 +727,352 @@ function summarizeCandidateSubjects(
   return Array.from(counts.values())
     .sort((a, b) => b.count - a.count || a.subject.localeCompare(b.subject))
     .slice(0, 30);
+}
+
+async function upsertCanonicalMemory(
+  db: Db,
+  input: CandidateMemoryInput,
+): Promise<{
+  id: string;
+  canonicalKey: string;
+  existing: boolean;
+  semanticMerge?: {
+    decision: "same" | "related" | "conflicting" | "separate";
+    confidence: number;
+    reason: string;
+    canonicalMemoryId: string | null;
+  };
+}> {
+  const metadata = asRecord(input.metadata);
+  const subject = typeof metadata.subject === "string" && metadata.subject.trim()
+    ? metadata.subject.trim()
+    : null;
+  const canonicalKey = buildCanonicalMemoryKey(input.memoryType, metadata, subject);
+  const now = new Date();
+  const [existing] = await db
+    .select({
+      id: canonicalMemories.id,
+      evidenceCount: canonicalMemories.evidenceCount,
+      confidenceScore: canonicalMemories.confidenceScore,
+      metadata: canonicalMemories.metadata,
+    })
+    .from(canonicalMemories)
+    .where(
+      and(
+        eq(canonicalMemories.twinId, input.twinId),
+        eq(canonicalMemories.canonicalKey, canonicalKey),
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(canonicalMemories)
+      .set({
+        evidenceCount: sql`${canonicalMemories.evidenceCount} + 1`,
+        confidenceScore: maxNullableNumber(existing.confidenceScore, input.confidenceScore),
+        metadata: mergeCanonicalMemoryMetadata(existing.metadata, input.metadata, {
+          sourceArtifactId: input.sourceArtifactId,
+          memoryFragmentId: input.memoryFragmentId,
+          evidenceHash: input.evidenceHash,
+        }),
+        lastSeenAt: now,
+        updatedAt: now,
+      })
+      .where(eq(canonicalMemories.id, existing.id));
+
+    return {
+      id: existing.id,
+      canonicalKey,
+      existing: true,
+    };
+  }
+
+  const semanticMerge = await judgeSemanticCanonicalMerge(db, input, subject);
+
+  if (semanticMerge?.decision === "same" && semanticMerge.canonicalMemoryId && semanticMerge.confidence >= 0.78) {
+    const [semanticExisting] = await db
+      .select({
+        id: canonicalMemories.id,
+        canonicalKey: canonicalMemories.canonicalKey,
+        evidenceCount: canonicalMemories.evidenceCount,
+        confidenceScore: canonicalMemories.confidenceScore,
+        metadata: canonicalMemories.metadata,
+      })
+      .from(canonicalMemories)
+      .where(
+        and(
+          eq(canonicalMemories.twinId, input.twinId),
+          eq(canonicalMemories.id, semanticMerge.canonicalMemoryId),
+        ),
+      )
+      .limit(1);
+
+    if (semanticExisting) {
+      await db
+        .update(canonicalMemories)
+        .set({
+          evidenceCount: sql`${canonicalMemories.evidenceCount} + 1`,
+          confidenceScore: maxNullableNumber(semanticExisting.confidenceScore, input.confidenceScore),
+          metadata: mergeCanonicalMemoryMetadata(semanticExisting.metadata, input.metadata, {
+            sourceArtifactId: input.sourceArtifactId,
+            memoryFragmentId: input.memoryFragmentId,
+            evidenceHash: input.evidenceHash,
+            semanticMerge,
+          }),
+          lastSeenAt: now,
+          updatedAt: now,
+        })
+        .where(eq(canonicalMemories.id, semanticExisting.id));
+
+      return {
+        id: semanticExisting.id,
+        canonicalKey: semanticExisting.canonicalKey,
+        existing: true,
+        semanticMerge,
+      };
+    }
+  }
+
+  const [created] = await db
+    .insert(canonicalMemories)
+    .values({
+      twinId: input.twinId,
+      memoryType: input.memoryType,
+      canonicalKey,
+      subject,
+      status: "candidate",
+      evidenceCount: 1,
+      confidenceScore: input.confidenceScore,
+      metadata: mergeCanonicalMemoryMetadata(null, input.metadata, {
+        sourceArtifactId: input.sourceArtifactId,
+        memoryFragmentId: input.memoryFragmentId,
+        evidenceHash: input.evidenceHash,
+        semanticMerge: semanticMerge ?? undefined,
+      }),
+      firstSeenAt: now,
+      lastSeenAt: now,
+    })
+    .returning({ id: canonicalMemories.id });
+
+  if (!created) {
+    throw new Error("Failed to create canonical memory");
+  }
+
+  return {
+    id: created.id,
+    canonicalKey,
+    existing: false,
+    semanticMerge: semanticMerge ?? undefined,
+  };
+}
+
+async function judgeSemanticCanonicalMerge(
+  db: Db,
+  input: CandidateMemoryInput,
+  subject: string | null,
+): Promise<{
+  decision: "same" | "related" | "conflicting" | "separate";
+  canonicalMemoryId: string | null;
+  confidence: number;
+  reason: string;
+} | null> {
+  if (!input.mergeJudge || !input.statement?.trim()) {
+    return null;
+  }
+
+  const rows = await db
+    .select({
+      id: canonicalMemories.id,
+      memoryType: canonicalMemories.memoryType,
+      canonicalKey: canonicalMemories.canonicalKey,
+      subject: canonicalMemories.subject,
+      confidenceScore: canonicalMemories.confidenceScore,
+      metadata: canonicalMemories.metadata,
+      updatedAt: canonicalMemories.updatedAt,
+    })
+    .from(canonicalMemories)
+    .where(
+      and(
+        eq(canonicalMemories.twinId, input.twinId),
+        eq(canonicalMemories.memoryType, input.memoryType),
+      ),
+    )
+    .orderBy(desc(canonicalMemories.updatedAt))
+    .limit(24);
+
+  const existing = rankCanonicalMergeCandidates(rows, subject).slice(0, 12);
+
+  if (existing.length === 0) {
+    return null;
+  }
+
+  try {
+    const metadata = asRecord(input.metadata);
+    const normalizedStatementHash = typeof metadata.normalizedStatementHash === "string"
+      ? metadata.normalizedStatementHash
+      : "";
+
+    return await input.mergeJudge.judge({
+      candidate: {
+        memoryType: input.memoryType,
+        statement: input.statement,
+        normalizedStatement: input.normalizedStatement ?? null,
+        subject,
+        normalizedStatementHash,
+        metadata: input.metadata,
+      },
+      existing: existing.map((row) => ({
+        id: row.id,
+        memoryType: row.memoryType,
+        canonicalKey: row.canonicalKey,
+        subject: row.subject,
+        confidenceScore: row.confidenceScore,
+        metadata: row.metadata && typeof row.metadata === "object"
+          ? row.metadata as Record<string, unknown>
+          : {},
+      })),
+    });
+  } catch (error) {
+    console.warn("canonical memory semantic merge judge failed", {
+      twinId: input.twinId,
+      sourceArtifactId: input.sourceArtifactId,
+      memoryType: input.memoryType,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+
+    return null;
+  }
+}
+
+function rankCanonicalMergeCandidates<
+  T extends { subject: string | null; updatedAt: Date | null },
+>(rows: T[], subject: string | null): T[] {
+  if (!subject) {
+    return rows;
+  }
+
+  const normalizedSubject = normalizeCanonicalText(subject);
+
+  return [...rows].sort((a, b) => {
+    const aScore = canonicalSubjectMatchScore(a.subject, normalizedSubject);
+    const bScore = canonicalSubjectMatchScore(b.subject, normalizedSubject);
+
+    if (aScore !== bScore) {
+      return bScore - aScore;
+    }
+
+    return (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0);
+  });
+}
+
+function canonicalSubjectMatchScore(subject: string | null, normalizedSubject: string): number {
+  if (!subject) {
+    return 0;
+  }
+
+  const normalized = normalizeCanonicalText(subject);
+
+  if (normalized === normalizedSubject) {
+    return 3;
+  }
+
+  if (normalized.includes(normalizedSubject) || normalizedSubject.includes(normalized)) {
+    return 2;
+  }
+
+  return 0;
+}
+
+function buildCanonicalMemoryKey(
+  memoryType: CandidateMemoryRow["memoryType"],
+  metadata: Record<string, unknown>,
+  subject: string | null,
+): string {
+  const category = asRecord(metadata.memoryMetadata).category;
+  const normalizedStatementHash = metadata.normalizedStatementHash;
+
+  if (subject) {
+    return [
+      "subject",
+      memoryType,
+      normalizeCanonicalText(subject),
+      typeof category === "string" && category.trim()
+        ? normalizeCanonicalText(category)
+        : "general",
+    ].join(":");
+  }
+
+  if (typeof normalizedStatementHash === "string" && normalizedStatementHash.trim()) {
+    return ["statement", memoryType, normalizedStatementHash.trim().toLowerCase()].join(":");
+  }
+
+  const evidenceHash = metadata.evidenceHash;
+  return ["evidence", memoryType, typeof evidenceHash === "string" ? evidenceHash : "unknown"].join(":");
+}
+
+function mergeCanonicalMemoryMetadata(
+  existingMetadata: unknown,
+  incomingMetadata: unknown,
+  evidence: {
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    evidenceHash: string;
+    semanticMerge?: {
+      decision: "same" | "related" | "conflicting" | "separate";
+      canonicalMemoryId: string | null;
+      confidence: number;
+      reason: string;
+    };
+  },
+): Record<string, unknown> {
+  const existing = asRecord(existingMetadata);
+  const incoming = asRecord(incomingMetadata);
+  const evidenceHashes = mergeStringArrays(
+    readStringArray(existing.evidenceHashes),
+    [evidence.evidenceHash],
+  );
+  const sourceArtifactIds = mergeStringArrays(
+    readStringArray(existing.sourceArtifactIds),
+    [evidence.sourceArtifactId],
+  );
+  const memoryFragmentIds = mergeStringArrays(
+    readStringArray(existing.memoryFragmentIds),
+    [evidence.memoryFragmentId],
+  );
+
+  return {
+    ...existing,
+    subject: incoming.subject ?? existing.subject,
+    sourceType: incoming.sourceType ?? existing.sourceType,
+    memoryMetadata: incoming.memoryMetadata ?? existing.memoryMetadata,
+    consolidationMethod: evidence.semanticMerge?.decision === "same"
+      ? "llm_semantic_merge_judgment"
+      : "deterministic_subject_or_statement_key",
+    ...(evidence.semanticMerge
+      ? {
+          lastSemanticMerge: {
+            decision: evidence.semanticMerge.decision,
+            canonicalMemoryId: evidence.semanticMerge.canonicalMemoryId,
+            confidence: evidence.semanticMerge.confidence,
+            reason: evidence.semanticMerge.reason,
+          },
+        }
+      : {}),
+    evidenceHashes,
+    sourceArtifactIds,
+    memoryFragmentIds,
+    evidenceCount: evidenceHashes.length,
+  };
+}
+
+function normalizeCanonicalText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, "_");
 }
 
 function summarizeFeedbackTypes(

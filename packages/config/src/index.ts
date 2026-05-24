@@ -17,6 +17,13 @@ export type ApiConfig = {
   tokenIssuer: string;
 };
 
+export type MemorySearchConfig = {
+  shortlistLimit: number;
+  fallbackLimit: number;
+  decryptConcurrency: number;
+  decryptEvidenceLimit: number;
+};
+
 export type DatabaseConfig = {
   url: string;
 };
@@ -74,6 +81,7 @@ export type ObservabilityConfig = {
 export type SivrajConfig = {
   app: AppConfig;
   api: ApiConfig;
+  memorySearch: MemorySearchConfig;
   database: DatabaseConfig;
   queue: QueueConfig;
   llm: LlmConfig;
@@ -97,6 +105,7 @@ export function loadConfig(env: EnvSource): SivrajConfig {
       jwtSecret: readRequired(env, "JWT_SECRET"),
       tokenIssuer: readOptional(env, "TOKEN_ISSUER", "sivraj"),
     },
+    memorySearch: loadMemorySearchConfig(env),
     database: {
       url: readRequired(env, "DATABASE_URL"),
     },
@@ -134,6 +143,15 @@ export function loadConfig(env: EnvSource): SivrajConfig {
   };
 }
 
+export function loadMemorySearchConfig(env: EnvSource): MemorySearchConfig {
+  return {
+    shortlistLimit: readPositiveInteger(env, "MEMORY_SEARCH_SHORTLIST_LIMIT", 25),
+    fallbackLimit: readPositiveInteger(env, "MEMORY_SEARCH_FALLBACK_LIMIT", 20),
+    decryptConcurrency: readPositiveInteger(env, "MEMORY_SEARCH_DECRYPT_CONCURRENCY", 3),
+    decryptEvidenceLimit: readPositiveInteger(env, "MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT", 3),
+  };
+}
+
 function readRequired(env: EnvSource, key: string): string {
   const value = env[key];
 
@@ -167,6 +185,16 @@ function readInteger(env: EnvSource, key: string, fallback: number): number {
   }
 
   return parsed;
+}
+
+function readPositiveInteger(env: EnvSource, key: string, fallback: number): number {
+  const value = readInteger(env, key, fallback);
+
+  if (value < 1) {
+    throw new Error(`Invalid positive integer environment variable: ${key}`);
+  }
+
+  return value;
 }
 
 function readBoolean(env: EnvSource, key: string, fallback: boolean): boolean {
