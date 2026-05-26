@@ -240,12 +240,12 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 - [x] Configure testnet Seal policy IDs and key servers.
 - [x] Use Seal policy approval for worker decryption.
 - [x] Move first-party private artifact encryption from API-side to browser/client-side before public beta.
-- [ ] Add audit logs.
-- [ ] Add access revocation.
-- [ ] Design Seal integration.
+- [x] Add audit logs.
+- [x] Add access revocation.
+- [x] Design Seal integration.
 - [x] Design Sui identity integration.
-- [ ] Add data export.
-- [ ] Add data deletion.
+- [x] Add data export.
+- [x] Add data deletion.
 
 ## Demo
 

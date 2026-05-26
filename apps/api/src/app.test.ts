@@ -9,15 +9,22 @@ import {
 } from "@sivraj/auth";
 import {
   apiClients,
+  accessPolicies,
   agentWritebacks,
   auditEvents,
   candidateMemories,
+  connectorAccounts,
+  connectorSources,
+  connectorSyncItems,
+  connectorSyncRuns,
   graphEdges,
   graphNodes,
   memoryFragments,
   permissionGrants,
   reflectionRuns,
+  refreshSessions,
   sourceArtifacts,
+  twins,
   userFeedbackEvents,
 } from "@sivraj/db";
 import {
@@ -614,6 +621,167 @@ describe("browser API access", () => {
         repo: "sivraj",
         identifier: "42",
       },
+    });
+  });
+});
+
+describe("security routes", () => {
+  const twinId = "11111111-1111-4111-8111-111111111111";
+
+  it("lists audit events and exports safe metadata without decrypted content", async () => {
+    const db = createSecurityDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const auditResponse = await app.request(
+      `/v1/twins/${twinId}/security/audit-events?limit=10`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(auditResponse.status).toBe(200);
+    expect(await auditResponse.json()).toEqual({
+      auditEvents: [
+        expect.objectContaining({
+          eventType: "artifact.created",
+          metadata: {
+            sourceType: "markdown",
+            count: 1,
+          },
+        }),
+      ],
+    });
+    expect(insertValue(db.insertCalls.at(-1))).toMatchObject({
+      eventType: "security.audit_log_read",
+      resourceType: "audit_events",
+    });
+
+    const exportResponse = await app.request(
+      `/v1/twins/${twinId}/security/export`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(exportResponse.status).toBe(200);
+    const payload = await exportResponse.json();
+    expect(payload).toMatchObject({
+      twinId,
+      exportKind: "safe_metadata",
+      sourceArtifacts: [
+        expect.objectContaining({
+          rawStorageRef: "walrus://blob/source",
+          metadata: {
+            sourceType: "markdown",
+          },
+        }),
+      ],
+      connectors: {
+        accounts: [
+          expect.objectContaining({
+            tokenRef: "redacted",
+          }),
+        ],
+      },
+      agentWritebacks: [
+        expect.objectContaining({
+          payload: {
+            kind: "coding_agent_writeback",
+            status: "pending",
+            counts: { filesTouched: 1 },
+            storage: { rawStorageRef: "walrus://blob/writeback" },
+          },
+        }),
+      ],
+    });
+    expect(JSON.stringify(payload)).not.toContain("raw private text");
+    expect(JSON.stringify(payload)).not.toContain("secret-token-ref");
+    expect(insertValue(db.insertCalls.at(-1))).toMatchObject({
+      eventType: "security.data_exported",
+      resourceType: "twin",
+    });
+  });
+
+  it("revokes broad access and deletes twin data through the security endpoint", async () => {
+    const db = createSecurityDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const revokeResponse = await app.request(
+      `/v1/twins/${twinId}/security/revoke-access`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(revokeResponse.status).toBe(200);
+    expect(await revokeResponse.json()).toMatchObject({
+      status: "revoked",
+      twinId,
+      revokedScopes: [
+        "permission_grants",
+        "refresh_sessions",
+        "connector_accounts",
+        "connector_sources",
+        "connector_sync_runs",
+        "access_policies",
+      ],
+    });
+    expect(db.updateCalls.map((call) => (call as { table: unknown }).table)).toEqual([
+      permissionGrants,
+      refreshSessions,
+      connectorAccounts,
+      connectorSources,
+      connectorSyncRuns,
+      accessPolicies,
+    ]);
+    expect(updateValue(db.updateCalls[0])).toMatchObject({
+      revokedAt: expect.any(Date),
+    });
+    expect(updateValue(db.updateCalls[2])).toMatchObject({
+      status: "disconnected",
+      tokenRef: null,
+    });
+    expect(insertValue(db.insertCalls.at(-1))).toMatchObject({
+      eventType: "security.access_revoked",
+    });
+
+    const deleteResponse = await app.request(
+      `/v1/twins/${twinId}/security/data`,
+      {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(deleteResponse.status).toBe(200);
+    expect(await deleteResponse.json()).toMatchObject({
+      status: "deleted",
+      twinId,
+      deletionBoundary: "postgres_cascade_with_cryptographic_revocation",
+    });
+    expect(db.deleteCalls).toEqual([{ table: twins }]);
+    expect(insertValue(db.insertCalls.at(-1))).toMatchObject({
+      eventType: "security.data_deletion_requested",
+      resourceType: "twin",
     });
   });
 });
@@ -3496,6 +3664,338 @@ function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[]
       };
     },
   } as unknown as AppDependencies["db"] & { insertCalls: unknown[] };
+}
+
+function createSecurityDb() {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  const deleteCalls: unknown[] = [];
+  const twinId = "11111111-1111-4111-8111-111111111111";
+  const createdAt = new Date("2026-05-26T00:00:00.000Z");
+  const rowsByTable = new Map<unknown, unknown[]>([
+    [
+      twins,
+      [
+        {
+          id: twinId,
+          userId: "user-id",
+          name: "Test Twin",
+          summary: null,
+          currentGoals: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      auditEvents,
+      [
+        {
+          id: "audit-id",
+          twinId,
+          actorType: "user",
+          actorId: "user-id",
+          eventType: "artifact.created",
+          resourceType: "source_artifact",
+          resourceId: "artifact-id",
+          metadata: {
+            sourceType: "markdown",
+            content: "raw private text",
+            count: 1,
+          },
+          createdAt,
+        },
+      ],
+    ],
+    [
+      sourceArtifacts,
+      [
+        {
+          id: "artifact-id",
+          twinId,
+          sourceType: "markdown",
+          uri: null,
+          rawStorageRef: "walrus://blob/source",
+          hash: "artifact-hash",
+          connectorAccountId: null,
+          connectorSourceId: null,
+          connectorSyncRunId: null,
+          metadata: {
+            sourceType: "markdown",
+            content: "raw private text",
+          },
+          ingestionStatus: "completed",
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      memoryFragments,
+      [
+        {
+          id: "fragment-id",
+          twinId,
+          sourceArtifactId: "artifact-id",
+          contentStorageRef: "walrus://blob/fragment",
+          contentSha256: "fragment-sha",
+          embeddingRef: "embedding-ref",
+          metadata: { sourceType: "markdown", text: "raw private text" },
+          importanceScore: 0.7,
+          confidenceScore: 0.9,
+          occurredAt: createdAt,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      candidateMemories,
+      [
+        {
+          id: "candidate-id",
+          twinId,
+          sourceArtifactId: "artifact-id",
+          memoryFragmentId: "fragment-id",
+          memoryType: "fact",
+          status: "candidate",
+          statementStorageRef: "walrus://blob/statement",
+          statementSha256: "statement-sha",
+          evidenceHash: "evidence-sha",
+          evidenceLength: 42,
+          confidenceScore: 0.8,
+          metadata: { subject: "Sivraj", statement: "raw private text" },
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      connectorAccounts,
+      [
+        {
+          id: "connector-account-id",
+          twinId,
+          provider: "github",
+          status: "connected",
+          externalAccountId: "ddboy19912",
+          displayName: "GitHub",
+          scopes: ["github:repo:read"],
+          syncCadence: "manual",
+          tokenRef: "secret-token-ref",
+          cursor: null,
+          lastSyncAt: createdAt,
+          nextSyncAt: null,
+          errorCode: null,
+          metadata: { accountKind: "personal", note: "raw private text" },
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      connectorSources,
+      [
+        {
+          id: "connector-source-id",
+          twinId,
+          connectorAccountId: "connector-account-id",
+          provider: "github",
+          sourceType: "github",
+          externalSourceId: "ddboy19912/sivraj",
+          displayName: "sivraj",
+          uri: null,
+          status: "connected",
+          cursor: null,
+          lastSyncAt: createdAt,
+          nextSyncAt: null,
+          errorCode: null,
+          metadata: { selected: true, path: "private/path" },
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      connectorSyncRuns,
+      [
+        {
+          id: "connector-sync-run-id",
+          twinId,
+          connectorAccountId: "connector-account-id",
+          connectorSourceId: "connector-source-id",
+          provider: "github",
+          mode: "manual",
+          status: "completed",
+          addedCount: 1,
+          updatedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          metadata: { batch: 1 },
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      connectorSyncItems,
+      [
+        {
+          id: "connector-sync-item-id",
+          twinId,
+          connectorSyncRunId: "connector-sync-run-id",
+          connectorAccountId: "connector-account-id",
+          connectorSourceId: "connector-source-id",
+          sourceArtifactId: "artifact-id",
+          externalItemId: "item-1",
+          action: "added",
+          reason: null,
+          contentHash: "item-hash",
+          metadata: { sourceType: "github", body: "raw private text" },
+          createdAt,
+        },
+      ],
+    ],
+    [
+      permissionGrants,
+      [
+        {
+          id: "permission-grant-id",
+          twinId,
+          clientId: "agent-client-id",
+          scopes: ["memory:read"],
+          memoryDomains: [],
+          expiresAt: null,
+          revokedAt: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      accessPolicies,
+      [
+        {
+          id: "access-policy-id",
+          twinId,
+          subjectType: "agent",
+          subjectId: "agent-client-id",
+          scope: "memory:read",
+          allowedNodeTypes: [],
+          allowedSourceTypes: [],
+          deniedTags: [],
+          expiresAt: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+    [
+      agentWritebacks,
+      [
+        {
+          id: "writeback-id",
+          twinId,
+          clientId: "agent-client-id",
+          status: "pending",
+          payload: {
+            kind: "coding_agent_writeback",
+            taskSummary: "raw private text",
+            counts: { filesTouched: 1 },
+            storage: { rawStorageRef: "walrus://blob/writeback" },
+          },
+          approvedAt: null,
+          rejectedAt: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+    ],
+  ]);
+
+  return {
+    insertCalls,
+    updateCalls,
+    deleteCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              return Promise.resolve([{ id: "audit-insert-id", ...(value as Record<string, unknown>) }]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          const result = {
+            returning() {
+              return Promise.resolve([{ id: "updated-id", ...(value as Record<string, unknown>) }]);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve([{ id: "updated-id", ...(value as Record<string, unknown>) }]);
+            },
+          };
+
+          return {
+            where() {
+              return result;
+            },
+          };
+        },
+      };
+    },
+    delete(table: unknown) {
+      return {
+        where() {
+          deleteCalls.push({ table });
+
+          return {
+            returning() {
+              return Promise.resolve([{ id: twinId }]);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve([{ id: twinId }]);
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from(table: unknown) {
+          const rows = rowsByTable.get(table) ?? [];
+          const chain = {
+            where() {
+              return chain;
+            },
+            orderBy() {
+              return chain;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve(rows);
+            },
+          };
+
+          return chain;
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
+    deleteCalls: unknown[];
+  };
 }
 
 function createAgentLayerDb(options: { grantScopes?: string[] } = {}) {

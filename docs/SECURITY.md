@@ -195,6 +195,18 @@ Example:
 6. Sivraj checks policy before retrieving and decrypting only approved fragments.
 7. The agent receives a bounded context packet, not blanket access to the Walrus object.
 
+### Seal Integration Design
+
+Sivraj's Seal boundary is policy-first and source-aware:
+
+- First-party clients encrypt private uploads before sending bytes to the API. Server-side ingestion may encrypt after fetch only for trusted import paths where the API is the component that retrieves source data.
+- Seal identities should be derived from the Sivraj policy object plus a stable artifact scope, with associated data that includes `twinId`, `sourceType`, artifact kind, and version.
+- Postgres stores ciphertext references, hashes, processing status, policy metadata, and safe metadata. It must not store raw private source text or decrypted memory fragments.
+- Workers may decrypt only through the configured Seal policy approval path, after Sivraj authentication, permission grants, access policies, and connector/account status have been checked.
+- Revocation disables future access by revoking permission grants and sessions, disconnecting connector accounts/sources, cancelling active connector syncs, expiring access policies, and denying future Seal approval for that twin scope.
+- Deletion removes local metadata and indexes through Postgres cascades, records the deletion request in the audit trail, and relies on cryptographic access removal for Walrus ciphertext that cannot be physically erased from decentralized storage.
+- User exports expose only metadata, references, hashes, statuses, connector sync outcomes, permission state, and audit rows unless a future user-controlled decrypt/export flow explicitly requests plaintext.
+
 ### Walrus Verification
 
 Walrus should be used to strengthen provenance and integrity:

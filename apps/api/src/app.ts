@@ -33,6 +33,7 @@ import { healthRoutes } from "./routes/health.js";
 import { createIdentityProfileRoutes } from "./routes/identity-profile.js";
 import { createMemoryRoutes } from "./routes/memories.js";
 import { createReflectionRoutes } from "./routes/reflections.js";
+import { createSecurityRoutes } from "./routes/security.js";
 import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
 import {
   createConfiguredPrivateMemoryReader,
@@ -193,6 +194,7 @@ export function createApp(
     "/v1/twins/:twinId/reflections",
     createReflectionRoutes(dependencies),
   );
+  app.route("/v1/twins/:twinId/security", createSecurityRoutes(dependencies));
 
   return app;
 }
