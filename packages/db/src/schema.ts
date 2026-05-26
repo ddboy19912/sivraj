@@ -3,6 +3,7 @@ import {
   boolean,
   doublePrecision,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -30,6 +31,7 @@ export const sourceTypeEnum = pgEnum("source_type", [
   "docx",
   "csv",
   "email",
+  "calendar",
   "github",
   "api",
   "other",
@@ -137,6 +139,50 @@ export const reflectionStatusEnum = pgEnum("reflection_status", [
   "completed",
   "failed",
   "skipped",
+]);
+
+export const connectorProviderEnum = pgEnum("connector_provider", [
+  "github",
+  "notion",
+  "microsoft_onedrive",
+  "google_drive",
+  "slack",
+  "email",
+  "calendar",
+  "browser_history",
+  "chatgpt",
+  "codex",
+  "claude",
+  "other",
+]);
+
+export const connectorAccountStatusEnum = pgEnum("connector_account_status", [
+  "connected",
+  "paused",
+  "needs_reauth",
+  "error",
+  "disconnected",
+]);
+
+export const connectorSyncRunStatusEnum = pgEnum("connector_sync_run_status", [
+  "queued",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const connectorSyncModeEnum = pgEnum("connector_sync_mode", [
+  "initial",
+  "incremental",
+  "manual",
+]);
+
+export const connectorSyncItemActionEnum = pgEnum("connector_sync_item_action", [
+  "added",
+  "updated",
+  "skipped",
+  "failed",
 ]);
 
 export const users = pgTable("users", {
@@ -325,6 +371,15 @@ export const sourceArtifacts = pgTable(
     uri: text("uri"),
     rawStorageRef: text("raw_storage_ref"),
     hash: text("hash"),
+    connectorAccountId: uuid("connector_account_id").references(() => connectorAccounts.id, {
+      onDelete: "set null",
+    }),
+    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
+      onDelete: "set null",
+    }),
+    connectorSyncRunId: uuid("connector_sync_run_id").references(() => connectorSyncRuns.id, {
+      onDelete: "set null",
+    }),
     metadata: jsonb("metadata").$type<unknown>(),
     ingestionStatus: ingestionStatusEnum("ingestion_status").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -333,6 +388,160 @@ export const sourceArtifacts = pgTable(
   (t) => [
     index("source_artifacts_twin_id_idx").on(t.twinId),
     index("source_artifacts_ingestion_status_idx").on(t.ingestionStatus),
+    index("source_artifacts_connector_account_id_idx").on(t.connectorAccountId),
+    index("source_artifacts_connector_source_id_idx").on(t.connectorSourceId),
+    index("source_artifacts_connector_sync_run_id_idx").on(t.connectorSyncRunId),
+  ],
+);
+
+export const connectorAccounts = pgTable(
+  "connector_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    provider: connectorProviderEnum("provider").notNull(),
+    status: connectorAccountStatusEnum("status").notNull().default("connected"),
+    externalAccountId: text("external_account_id"),
+    displayName: text("display_name").notNull(),
+    scopes: text("scopes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    syncCadence: text("sync_cadence").notNull().default("manual"),
+    tokenRef: text("token_ref"),
+    cursor: text("cursor"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("connector_accounts_twin_id_idx").on(t.twinId),
+    index("connector_accounts_provider_idx").on(t.provider),
+    index("connector_accounts_status_idx").on(t.status),
+    uniqueIndex("connector_accounts_twin_provider_external_idx").on(
+      t.twinId,
+      t.provider,
+      t.externalAccountId,
+    ),
+  ],
+);
+
+export const connectorSources = pgTable(
+  "connector_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    connectorAccountId: uuid("connector_account_id")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    provider: connectorProviderEnum("provider").notNull(),
+    sourceType: sourceTypeEnum("source_type").notNull(),
+    externalSourceId: text("external_source_id").notNull(),
+    displayName: text("display_name").notNull(),
+    uri: text("uri"),
+    status: connectorAccountStatusEnum("status").notNull().default("connected"),
+    cursor: text("cursor"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("connector_sources_twin_id_idx").on(t.twinId),
+    index("connector_sources_account_id_idx").on(t.connectorAccountId),
+    index("connector_sources_provider_idx").on(t.provider),
+    index("connector_sources_status_idx").on(t.status),
+    uniqueIndex("connector_sources_account_external_idx").on(
+      t.connectorAccountId,
+      t.externalSourceId,
+    ),
+  ],
+);
+
+export const connectorSyncRuns = pgTable(
+  "connector_sync_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    connectorAccountId: uuid("connector_account_id")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
+      onDelete: "set null",
+    }),
+    provider: connectorProviderEnum("provider").notNull(),
+    mode: connectorSyncModeEnum("mode").notNull(),
+    status: connectorSyncRunStatusEnum("status").notNull(),
+    cursorBefore: text("cursor_before"),
+    cursorAfter: text("cursor_after"),
+    addedCount: integer("added_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    skippedCount: integer("skipped_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("connector_sync_runs_twin_id_idx").on(t.twinId),
+    index("connector_sync_runs_account_id_idx").on(t.connectorAccountId),
+    index("connector_sync_runs_source_id_idx").on(t.connectorSourceId),
+    index("connector_sync_runs_status_idx").on(t.status),
+    index("connector_sync_runs_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export const connectorSyncItems = pgTable(
+  "connector_sync_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    connectorSyncRunId: uuid("connector_sync_run_id")
+      .notNull()
+      .references(() => connectorSyncRuns.id, { onDelete: "cascade" }),
+    connectorAccountId: uuid("connector_account_id")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
+      onDelete: "set null",
+    }),
+    sourceArtifactId: uuid("source_artifact_id").references(() => sourceArtifacts.id, {
+      onDelete: "set null",
+    }),
+    externalItemId: text("external_item_id").notNull(),
+    action: connectorSyncItemActionEnum("action").notNull(),
+    reason: text("reason"),
+    contentHash: text("content_hash"),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("connector_sync_items_twin_id_idx").on(t.twinId),
+    index("connector_sync_items_run_id_idx").on(t.connectorSyncRunId),
+    index("connector_sync_items_account_id_idx").on(t.connectorAccountId),
+    index("connector_sync_items_source_id_idx").on(t.connectorSourceId),
+    index("connector_sync_items_artifact_id_idx").on(t.sourceArtifactId),
+    uniqueIndex("connector_sync_items_run_external_idx").on(
+      t.connectorSyncRunId,
+      t.externalItemId,
+    ),
   ],
 );
 

@@ -12,7 +12,7 @@ import {
   memoryFragments,
 } from "@sivraj/db";
 import { loadMemorySearchConfig, type MemorySearchConfig } from "@sivraj/config";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { hasActiveAgentGrantForScopes } from "../lib/agent-grants.js";
@@ -375,7 +375,8 @@ async function loadSearchRows(input: {
       .where(
         and(
           eq(memoryFragments.twinId, input.twinId),
-          inArray(memoryFragments.id, shortlistedIds.slice(0, input.config.shortlistLimit)),
+          inArray(memoryFragments.id, shortlistedIds),
+          activeMemoryFragmentFilter(),
         ),
       )
       .limit(input.config.shortlistLimit);
@@ -391,7 +392,10 @@ async function loadSearchRows(input: {
   const rows = await input.db
     .select()
     .from(memoryFragments)
-    .where(eq(memoryFragments.twinId, input.twinId))
+    .where(and(
+      eq(memoryFragments.twinId, input.twinId),
+      activeMemoryFragmentFilter(),
+    ))
     .orderBy(desc(memoryFragments.createdAt))
     .limit(input.config.fallbackLimit);
 
@@ -455,6 +459,7 @@ async function loadShortlistedMemoryFragmentIds(input: {
     .where(
       and(
         eq(candidateMemories.twinId, input.twinId),
+        ne(candidateMemories.status, "superseded"),
         or(...terms.map((term) => candidateMemoryMatchesTerm(term))),
       ),
     )
@@ -527,6 +532,10 @@ async function mapSettledWithConcurrency<T, R>(
   );
 
   return results;
+}
+
+function activeMemoryFragmentFilter() {
+  return sql`(${memoryFragments.metadata}->>'supersededByArtifactId') is null`;
 }
 
 function toCandidate(

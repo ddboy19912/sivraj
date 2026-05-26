@@ -5,11 +5,13 @@ import {
   createLazyArtifactProcessingQueue,
   createLazyArtifactStatusPublisher,
   createLazyArtifactStatusSubscriber,
+  createLazyConnectorSyncQueue,
   createLazyTransientCiphertextCache,
   createLazyWeeklyReflectionQueue,
   type ArtifactProcessingQueue,
   type ArtifactStatusPublisher,
   type ArtifactStatusSubscriber,
+  type ConnectorSyncQueue,
   type TransientCiphertextCache,
   type WeeklyReflectionQueue,
 } from "@sivraj/queue";
@@ -19,6 +21,7 @@ import { createAuthRoutes } from "./routes/auth.js";
 import { createAgentTokenRoutes } from "./routes/agent-tokens.js";
 import { createCandidateMemoryRoutes } from "./routes/candidate-memories.js";
 import { createConversationRoutes } from "./routes/conversations.js";
+import { createConnectorRoutes } from "./routes/connectors.js";
 import { createEngineeringRoutes } from "./routes/engineering.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createGraphRoutes } from "./routes/graph.js";
@@ -46,6 +49,7 @@ export type AppDependencies = {
   artifactStatusPublisher?: ArtifactStatusPublisher;
   artifactStatusSubscriber?: ArtifactStatusSubscriber;
   transientCiphertextCache?: TransientCiphertextCache;
+  connectorSyncQueue?: ConnectorSyncQueue;
   githubImporter?: GitHubImporter;
   privateMemoryReader?: PrivateMemoryReader;
   weeklyReflectionQueue?: WeeklyReflectionQueue;
@@ -66,10 +70,13 @@ export type SupportedArtifactSourceType =
   | "docx"
   | "csv"
   | "email"
+  | "calendar"
   | "chat_export"
   | "slack_export"
   | "whatsapp_export"
-  | "github";
+  | "github"
+  | "api"
+  | "other";
 
 export type PrivateMemoryStorageInput = {
   twinId: string;
@@ -131,6 +138,7 @@ export function createApp(
     transientCiphertextCache: createLazyTransientCiphertextCache(
       process.env["REDIS_URL"],
     ),
+    connectorSyncQueue: createLazyConnectorSyncQueue(process.env["REDIS_URL"]),
     privateMemoryReader: createConfiguredPrivateMemoryReader(process.env),
     weeklyReflectionQueue: createLazyWeeklyReflectionQueue(
       process.env["REDIS_URL"],
@@ -169,6 +177,10 @@ export function createApp(
   app.route(
     "/v1/twins/:twinId/conversations",
     createConversationRoutes(dependencies),
+  );
+  app.route(
+    "/v1/twins/:twinId/connectors",
+    createConnectorRoutes(dependencies),
   );
   app.route(
     "/v1/twins/:twinId/engineering",

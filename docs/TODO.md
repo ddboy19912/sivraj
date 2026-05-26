@@ -164,24 +164,33 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 
 ## Connectors
 
-- [ ] Define connector permission and sync model.
-- [ ] Add connector account/link table to data model.
-- [ ] Add connector sync job queue.
-- [ ] Add connector sync audit events.
-- [ ] Add connector settings UI.
-- [ ] Add connected-source health/status UI.
-- [ ] Add Notion connector.
-- [ ] Add GitHub connector with recurring repository sync.
-- [ ] Add Microsoft Docs/OneDrive connector.
-- [ ] Add Google Drive/Docs connector.
-- [ ] Add Slack connector.
-- [ ] Add email connector.
-- [ ] Add calendar connector.
-- [ ] Add browser history connector/import.
-- [ ] Add ChatGPT/Codex history import or connector where APIs allow.
-- [ ] Add Claude history import or connector where APIs allow.
-- [ ] Reprocess changed connector documents into updated memories.
-- [ ] Show user what each sync added, updated, or skipped.
+- [x] Define connector permission and sync model.
+- [x] Add connector account/link table to data model.
+- [x] Add connector sync job queue.
+- [x] Add connector sync audit events.
+- [x] Add connector settings UI.
+- [x] Add connected-source health/status UI.
+- [x] Add provider adapter interface for connector fetch/diff/artifact creation.
+- [x] Add recurring connector scheduling/reconciliation loop.
+- [x] Add Notion connector.
+- [x] Add GitHub connector with recurring repository sync.
+- [x] Add Microsoft Docs/OneDrive connector.
+- [x] Add Google Drive/Docs connector.
+- [x] Add Slack connector.
+- [x] Add email connector.
+- [x] Add calendar connector.
+- [x] Add browser history connector/import.
+- [x] Add ChatGPT export import for `conversations.json`/data-export JSON.
+- [x] Add Claude export import for conversation JSON.
+- [x] Normalize AI chat imports into `chat_export` artifacts.
+- [x] Detect AI chat conversation title, timestamps, roles, and source IDs.
+- [x] Detect and store AI chat provider metadata at import time.
+- [x] Preserve AI chat conversation and message IDs in parser metadata for dedup/review.
+- [x] Add duplicate detection for re-imported AI chat conversations.
+- [x] Add AI chat import review UI showing imported and skipped conversations.
+- [x] Use agent writebacks as the primary Codex history path instead of a brittle Codex history connector.
+- [x] Reprocess changed connector documents into updated memories.
+- [x] Show user what each sync added, updated, or skipped.
 
 ## Agent Layer
 

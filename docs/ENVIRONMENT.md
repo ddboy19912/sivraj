@@ -59,6 +59,9 @@ Root `.env.example` is source of truth.
 - `WORKER_CONCURRENCY`
 - `ARTIFACT_RECONCILE_INTERVAL_MS`
 - `ARTIFACT_RECONCILE_LIMIT`
+- `CONNECTOR_RECONCILE_INTERVAL_MS`
+- `CONNECTOR_RECONCILE_LIMIT`
+- `CONNECTOR_SYNC_CONCURRENCY`
 - `TRANSIENT_CIPHERTEXT_MAX_BYTES`
 - `INTELLIGENCE_CHUNK_CHARS`
 - `INTELLIGENCE_CHUNK_CONCURRENCY`
@@ -84,6 +87,12 @@ Root `.env.example` is source of truth.
 - `SUI_RPC_URL`
 - `SUI_PRIVATE_KEY`
 - `LOG_LEVEL`
+- `NOTION_API_TOKEN`
+- `SLACK_BOT_TOKEN`
+- `GMAIL_ACCESS_TOKEN`
+- `GOOGLE_CALENDAR_ACCESS_TOKEN`
+- `GOOGLE_DRIVE_ACCESS_TOKEN`
+- `MICROSOFT_GRAPH_ACCESS_TOKEN`
 
 ### MCP Server
 
@@ -134,6 +143,18 @@ Root `.env.example` is source of truth.
 - `INTELLIGENCE_CHUNK_CHARS`: Target character size for chunking large memory fragments before entity and memory extraction. Defaults to `18000`.
 - `INTELLIGENCE_CHUNK_CONCURRENCY`: Max concurrent chunk extraction tasks inside one intelligence job. Defaults to `2`.
 - `CANDIDATE_MEMORY_ARCHIVE_CONCURRENCY`: Max concurrent low-priority candidate-memory archive jobs. Defaults to `1`.
+- `CONNECTOR_RECONCILE_INTERVAL_MS`: How often the worker scans connected non-manual connector accounts that are due for sync. Defaults to `60000`.
+- `CONNECTOR_RECONCILE_LIMIT`: Max connector accounts scanned per reconciliation pass. Defaults to `25`.
+- `CONNECTOR_SYNC_CONCURRENCY`: Max concurrent connector sync jobs. Defaults to `1`.
+
+### Connectors
+
+- `NOTION_API_TOKEN`: Server-side Notion integration token for Notion page sync. The integration must have read content access to the selected page or parent workspace.
+- `SLACK_BOT_TOKEN`: Server-side Slack bot token for channel sync. The Slack app needs conversation read scopes such as `channels:read`/`channels:history` for public channels and corresponding private/DM scopes when syncing those surfaces.
+- `GMAIL_ACCESS_TOKEN`: Server-side Gmail OAuth access token for the first email connector path. The token must allow reading message metadata and raw message bodies.
+- `GOOGLE_CALENDAR_ACCESS_TOKEN`: Server-side Google Calendar OAuth access token for the first calendar connector path. The token must allow reading calendar events.
+- `GOOGLE_DRIVE_ACCESS_TOKEN`: Server-side Google Drive OAuth access token for Drive/Docs sync. The token must allow file metadata reads and content/export downloads for the selected folder or file.
+- `MICROSOFT_GRAPH_ACCESS_TOKEN`: Server-side Microsoft Graph OAuth access token for OneDrive sync. The token must allow reading selected drive items and downloading file content.
 
 ### LLM
 

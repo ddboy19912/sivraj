@@ -2244,6 +2244,145 @@ describe("protected artifact route", () => {
     });
   });
 
+  it("stores safe AI chat provider metadata for ChatGPT exports", async () => {
+    const db = createFakeDb();
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({ db, privateMemoryStorage, artifactProcessingQueue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sourceType: "chat_export",
+        title: "conversations.json",
+        content: JSON.stringify([
+          {
+            id: "conversation-1",
+            title: "Private title must stay encrypted",
+            mapping: {
+              message: {
+                message: {
+                  author: { role: "user" },
+                  content: { parts: ["private message"] },
+                },
+              },
+            },
+          },
+        ]),
+        metadata: {
+          fileName: "conversations.json",
+          fileType: "application/json",
+          uploadKind: "file",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      sourceType: "chat_export",
+      hash: expect.any(String),
+      metadata: expect.objectContaining({
+        aiChatProvider: "chatgpt",
+        aiChatImportKind: "export",
+        aiChatImportFingerprintVersion: 1,
+        aiChatConversationCount: 1,
+        aiChatMessageCount: 1,
+        fileType: "application/json",
+        uploadKind: "file",
+      }),
+    });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("Private title must stay encrypted");
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("private message");
+  });
+
+  it("skips duplicate AI chat imports before storing another artifact", async () => {
+    const existingArtifact = {
+      id: "existing-artifact-id",
+      ingestionStatus: "completed",
+    };
+    const db = createFakeDb([], [], [existingArtifact]);
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const artifactProcessingQueue = createFakeArtifactProcessingQueue();
+    const app = createApp({ db, privateMemoryStorage, artifactProcessingQueue });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/artifacts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        sourceType: "chat_export",
+        title: "claude-export.json",
+        content: JSON.stringify({
+          conversations: [
+            {
+              uuid: "claude-conversation-1",
+              name: "Private conversation title",
+              chat_messages: [
+                {
+                  uuid: "message-1",
+                  sender: "human",
+                  created_at: "2024-04-01T12:00:00Z",
+                  text: "private message",
+                },
+              ],
+            },
+          ],
+        }),
+        metadata: {
+          fileType: "application/json",
+          uploadKind: "file",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      artifactId: "existing-artifact-id",
+      status: "completed",
+      skipped: true,
+      reason: "duplicate_ai_chat_import",
+    });
+    expect(privateMemoryStorage.storeCalls).toEqual([]);
+    expect(artifactProcessingQueue.enqueueCalls).toEqual([]);
+    expect(db.insertCalls).toHaveLength(1);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      eventType: "artifact.skipped_duplicate",
+      resourceId: "existing-artifact-id",
+      metadata: expect.objectContaining({
+        reason: "duplicate_ai_chat_import",
+        aiChatProvider: "claude",
+        aiChatConversationCount: 1,
+        aiChatMessageCount: 1,
+      }),
+    });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("Private conversation title");
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("private message");
+  });
+
   it("fails closed when encrypted storage is unavailable", async () => {
     const app = createApp({ db: createFakeDb() });
     const token = await signSessionToken(
@@ -2488,6 +2627,61 @@ describe("GitHub import route", () => {
       twinId: "twin-id",
       sourceType: "github",
     });
+  });
+});
+
+describe("protected connector routes", () => {
+  it("sanitizes plaintext-like connector metadata before storage", async () => {
+    const db = createFakeDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/connectors/accounts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        provider: "browser_history",
+        displayName: "Browser history",
+        metadata: {
+          content: "visited private.example",
+          safeCount: 12,
+        },
+        source: {
+          externalSourceId: "browser-history",
+          displayName: "Browser history",
+          metadata: {
+            content: "visited private.example",
+            uploadKind: "connector_source",
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      provider: "browser_history",
+      metadata: {
+        safeCount: 12,
+      },
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      provider: "browser_history",
+      metadata: {
+        uploadKind: "connector_source",
+      },
+    });
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("visited private.example");
   });
 });
 
@@ -2796,6 +2990,65 @@ describe("memory retrieval route", () => {
         privateFragmentsSkipped: 1,
       },
     });
+  });
+
+  it("excludes superseded connector fragments from memory search", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-current",
+        contentStorageRef: "walrus://blob/current",
+      }),
+      memoryRow({
+        id: "memory-superseded",
+        contentStorageRef: "walrus://blob/superseded",
+        metadata: {
+          supersededByArtifactId: "artifact-current",
+          supersededAt: "2026-05-26T00:00:00.000Z",
+          supersededReason: "connector_source_updated",
+        },
+      }),
+    ]);
+    const decryptedRefs: string[] = [];
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory(input) {
+          decryptedRefs.push(input.rawStorageRef);
+          return input.rawStorageRef === "walrus://blob/current"
+            ? "Current connector memory about Hyperbridge."
+            : "Stale connector memory about Hyperbridge.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "Hyperbridge", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          id: "memory-current",
+          content: "Current connector memory about Hyperbridge.",
+        },
+      ],
+    });
+    expect(decryptedRefs).toEqual(["walrus://blob/current"]);
   });
 
   it("hides duplicate retrieval rows with the same memory content", async () => {
@@ -3178,7 +3431,7 @@ function createConsoleReadDb() {
   } as unknown as AppDependencies["db"];
 }
 
-function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[] = []) {
+function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[] = [], sourceArtifactRows: unknown[] = []) {
   const insertCalls: unknown[] = [];
 
   return {
@@ -3206,9 +3459,11 @@ function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[]
       return {
         from(table: unknown) {
           const rows = table === memoryFragments
-            ? memoryRows
+            ? memoryRows.filter((row) => !isTestSupersededFragment(row))
             : table === candidateMemories
               ? candidateMemoryRows
+              : table === sourceArtifacts
+                ? sourceArtifactRows
               : table === permissionGrants
                 ? [{
                     id: "permission-grant-id",
@@ -4047,6 +4302,21 @@ function memoryRow(overrides: Record<string, unknown> = {}) {
     updatedAt: new Date("2026-05-18T00:00:00.000Z"),
     ...overrides,
   };
+}
+
+function isTestSupersededFragment(value: unknown): boolean {
+  const metadata = value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? (value as Record<string, unknown>)["metadata"]
+    : null;
+
+  return Boolean(
+    metadata &&
+      typeof metadata === "object" &&
+      !Array.isArray(metadata) &&
+      typeof (metadata as Record<string, unknown>)["supersededByArtifactId"] === "string",
+  );
 }
 
 function candidateMemoryRow(overrides: Record<string, unknown> = {}) {

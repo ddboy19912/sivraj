@@ -44,6 +44,8 @@ export function buildUploadMetadata(file: File, sourceType: SourceType) {
     uploadKind: 'file' as const,
     ...(sourceType === 'browser_history'
       ? { importer: 'browser_history_export' as const }
+      : sourceType === 'chat_export'
+        ? { importer: 'ai_chat_export' as const }
       : {}),
   }
 }

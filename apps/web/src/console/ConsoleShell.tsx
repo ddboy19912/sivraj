@@ -8,6 +8,7 @@ import { AgentPermissionsPage } from './pages/AgentPermissionsPage'
 import { AgentWritebacksPage } from './pages/AgentWritebacksPage'
 import { ArtifactStatusPage } from './pages/ArtifactStatusPage'
 import { CandidateMemoriesPage } from './pages/CandidateMemoriesPage'
+import { ConnectorsPage } from './pages/ConnectorsPage'
 import { EngineeringSourcesPage } from './pages/EngineeringSourcesPage'
 import { EngineeringReviewPage } from './pages/EngineeringReviewPage'
 import { GraphPage } from './pages/GraphPage'
@@ -90,6 +91,7 @@ export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }
         {page === 'engineering-sources' ? <EngineeringSourcesPage /> : null}
         {page === 'graph' ? <GraphPage /> : null}
         {page === 'reflections' ? <ReflectionsPage /> : null}
+        {page === 'connectors' ? <ConnectorsPage /> : null}
         {page === 'privacy' ? <PrivacyPage /> : null}
         {page === 'api-guide' ? <ApiGuidePage /> : null}
       </section>
