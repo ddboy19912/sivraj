@@ -375,13 +375,12 @@ async function loadSearchRows(input: {
       .where(
         and(
           eq(memoryFragments.twinId, input.twinId),
-          inArray(memoryFragments.id, shortlistedIds.slice(0, input.config.shortlistLimit)),
+          inArray(memoryFragments.id, shortlistedIds),
+          activeMemoryFragmentFilter(),
         ),
       )
       .limit(input.config.shortlistLimit);
-    const rows = orderRowsById(unorderedRows, shortlistedIds).filter(
-      (row) => !isSupersededMemoryFragment(row.metadata),
-    );
+    const rows = orderRowsById(unorderedRows, shortlistedIds);
 
     return {
       rows,
@@ -390,14 +389,15 @@ async function loadSearchRows(input: {
     };
   }
 
-  const rows = (await input.db
+  const rows = await input.db
     .select()
     .from(memoryFragments)
-    .where(eq(memoryFragments.twinId, input.twinId))
+    .where(and(
+      eq(memoryFragments.twinId, input.twinId),
+      activeMemoryFragmentFilter(),
+    ))
     .orderBy(desc(memoryFragments.createdAt))
-    .limit(input.config.fallbackLimit * 2))
-    .filter((row) => !isSupersededMemoryFragment(row.metadata))
-    .slice(0, input.config.fallbackLimit);
+    .limit(input.config.fallbackLimit);
 
   return {
     rows,
@@ -534,11 +534,8 @@ async function mapSettledWithConcurrency<T, R>(
   return results;
 }
 
-function isSupersededMemoryFragment(metadata: unknown): boolean {
-  return typeof metadata === "object" &&
-    metadata !== null &&
-    !Array.isArray(metadata) &&
-    typeof (metadata as Record<string, unknown>)["supersededByArtifactId"] === "string";
+function activeMemoryFragmentFilter() {
+  return sql`(${memoryFragments.metadata}->>'supersededByArtifactId') is null`;
 }
 
 function toCandidate(

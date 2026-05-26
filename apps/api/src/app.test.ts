@@ -2630,6 +2630,61 @@ describe("GitHub import route", () => {
   });
 });
 
+describe("protected connector routes", () => {
+  it("sanitizes plaintext-like connector metadata before storage", async () => {
+    const db = createFakeDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/connectors/accounts", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        provider: "browser_history",
+        displayName: "Browser history",
+        metadata: {
+          content: "visited private.example",
+          safeCount: 12,
+        },
+        source: {
+          externalSourceId: "browser-history",
+          displayName: "Browser history",
+          metadata: {
+            content: "visited private.example",
+            uploadKind: "connector_source",
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      provider: "browser_history",
+      metadata: {
+        safeCount: 12,
+      },
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      provider: "browser_history",
+      metadata: {
+        uploadKind: "connector_source",
+      },
+    });
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("visited private.example");
+  });
+});
+
 describe("memory retrieval route", () => {
   it("requires memory read scope", async () => {
     const app = createApp({ db: createFakeDb() });
@@ -3404,7 +3459,7 @@ function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[]
       return {
         from(table: unknown) {
           const rows = table === memoryFragments
-            ? memoryRows
+            ? memoryRows.filter((row) => !isTestSupersededFragment(row))
             : table === candidateMemories
               ? candidateMemoryRows
               : table === sourceArtifacts
@@ -4247,6 +4302,21 @@ function memoryRow(overrides: Record<string, unknown> = {}) {
     updatedAt: new Date("2026-05-18T00:00:00.000Z"),
     ...overrides,
   };
+}
+
+function isTestSupersededFragment(value: unknown): boolean {
+  const metadata = value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+    ? (value as Record<string, unknown>)["metadata"]
+    : null;
+
+  return Boolean(
+    metadata &&
+      typeof metadata === "object" &&
+      !Array.isArray(metadata) &&
+      typeof (metadata as Record<string, unknown>)["supersededByArtifactId"] === "string",
+  );
 }
 
 function candidateMemoryRow(overrides: Record<string, unknown> = {}) {

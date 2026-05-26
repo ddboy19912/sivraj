@@ -839,12 +839,7 @@ async function storeImportedConnectorArtifact(
   const [matchingArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(
-      and(
-        eq(sourceArtifacts.connectorSourceId, input.source?.id ?? ""),
-        eq(sourceArtifacts.hash, contentHash),
-      ),
-    )
+    .where(connectorArtifactMatch(input, contentHash))
     .limit(1);
 
   if (matchingArtifact) {
@@ -869,7 +864,7 @@ async function storeImportedConnectorArtifact(
   const [previousArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(eq(sourceArtifacts.connectorSourceId, input.source?.id ?? ""))
+    .where(connectorArtifactScope(input))
     .limit(1);
   const action = previousArtifact ? "updated" : "added";
   const stored = await input.privateSourceStorage.storePrivateSource({
@@ -989,16 +984,10 @@ async function storeTextConnectorArtifact(
   },
 ): Promise<Omit<ConnectorSyncAdapterResult, "cursorAfter" | "nextSyncAt">> {
   const contentHash = sha256(imported.content);
-  const connectorSourceId = input.source?.id ?? "";
   const [matchingArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(
-      and(
-        eq(sourceArtifacts.connectorSourceId, connectorSourceId),
-        eq(sourceArtifacts.hash, contentHash),
-      ),
-    )
+    .where(connectorArtifactMatch(input, contentHash))
     .limit(1);
 
   if (matchingArtifact) {
@@ -1021,7 +1010,7 @@ async function storeTextConnectorArtifact(
   const [previousArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(eq(sourceArtifacts.connectorSourceId, connectorSourceId))
+    .where(connectorArtifactScope(input))
     .limit(1);
   const action = previousArtifact ? "updated" : "added";
   const stored = await input.privateSourceStorage.storePrivateSource({
@@ -1137,11 +1126,6 @@ async function supersedePreviousConnectorArtifacts(
   },
 ) {
   const connectorSourceId = input.source?.id;
-
-  if (!connectorSourceId) {
-    return;
-  }
-
   const now = new Date();
   const previousArtifacts = await input.db
     .select({
@@ -1151,7 +1135,7 @@ async function supersedePreviousConnectorArtifacts(
     .from(sourceArtifacts)
     .where(
       and(
-        eq(sourceArtifacts.connectorSourceId, connectorSourceId),
+        connectorArtifactScope(input),
         ne(sourceArtifacts.id, supersession.newArtifactId),
       ),
     );
@@ -1170,17 +1154,28 @@ async function supersedePreviousConnectorArtifacts(
       })
       .where(eq(sourceArtifacts.id, previousArtifact.id));
 
-    await input.db
-      .update(memoryFragments)
-      .set({
-        metadata: {
-          supersededByArtifactId: supersession.newArtifactId,
-          supersededAt: now.toISOString(),
-          supersededReason: "connector_source_updated",
-        },
-        updatedAt: now,
+    const fragments = await input.db
+      .select({
+        id: memoryFragments.id,
+        metadata: memoryFragments.metadata,
       })
+      .from(memoryFragments)
       .where(eq(memoryFragments.sourceArtifactId, previousArtifact.id));
+
+    for (const fragment of fragments) {
+      await input.db
+        .update(memoryFragments)
+        .set({
+          metadata: {
+            ...asRecord(fragment.metadata),
+            supersededByArtifactId: supersession.newArtifactId,
+            supersededAt: now.toISOString(),
+            supersededReason: "connector_source_updated",
+          },
+          updatedAt: now,
+        })
+        .where(eq(memoryFragments.id, fragment.id));
+    }
 
     await input.db
       .update(candidateMemories)
@@ -1199,7 +1194,7 @@ async function supersedePreviousConnectorArtifacts(
       resourceId: previousArtifact.id,
       metadata: {
         connectorAccountId: input.account.id,
-        connectorSourceId,
+        connectorSourceId: connectorSourceId ?? null,
         connectorSyncRunId: input.syncRun.id,
         provider: supersession.provider,
         externalItemId: supersession.externalItemId,
@@ -1210,21 +1205,34 @@ async function supersedePreviousConnectorArtifacts(
   }
 }
 
+function connectorArtifactScope(input: ConnectorSyncAdapterInput) {
+  return input.source?.id
+    ? and(
+        eq(sourceArtifacts.connectorAccountId, input.account.id),
+        eq(sourceArtifacts.connectorSourceId, input.source.id),
+      )
+    : and(
+        eq(sourceArtifacts.connectorAccountId, input.account.id),
+        isNull(sourceArtifacts.connectorSourceId),
+      );
+}
+
+function connectorArtifactMatch(input: ConnectorSyncAdapterInput, contentHash: string) {
+  return and(
+    connectorArtifactScope(input),
+    eq(sourceArtifacts.hash, contentHash),
+  );
+}
+
 async function storeSlackConnectorArtifact(
   input: ConnectorSyncAdapterInput,
   imported: SlackChannelImportResult,
 ): Promise<Omit<ConnectorSyncAdapterResult, "cursorAfter" | "nextSyncAt">> {
   const contentHash = sha256(imported.content);
-  const connectorSourceId = input.source?.id ?? "";
   const [matchingArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(
-      and(
-        eq(sourceArtifacts.connectorSourceId, connectorSourceId),
-        eq(sourceArtifacts.hash, contentHash),
-      ),
-    )
+    .where(connectorArtifactMatch(input, contentHash))
     .limit(1);
 
   if (matchingArtifact) {
@@ -1263,7 +1271,7 @@ async function storeSlackConnectorArtifact(
   const [previousArtifact] = await input.db
     .select({ id: sourceArtifacts.id })
     .from(sourceArtifacts)
-    .where(eq(sourceArtifacts.connectorSourceId, connectorSourceId))
+    .where(connectorArtifactScope(input))
     .limit(1);
   const action = previousArtifact ? "updated" : "added";
   const stored = await input.privateSourceStorage.storePrivateSource({

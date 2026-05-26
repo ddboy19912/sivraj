@@ -9,6 +9,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppDependencies, SupportedArtifactSourceType } from "../app.js";
+import { sanitizeSafeMetadata } from "../lib/safe-metadata.js";
 import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
 
 const CONNECTOR_PROVIDERS = [
@@ -163,7 +164,7 @@ export function createConnectorRoutes({
     const scopes =
       readStringList(body["scopes"]) ?? DEFAULT_CONNECTOR_SCOPES[provider];
     const syncCadence = optionalString(body["syncCadence"]) ?? "manual";
-    const metadata = readRecord(body["metadata"]);
+    const metadata = sanitizeSafeMetadata(readRecord(body["metadata"]));
 
     const [account] = await db
       .insert(connectorAccounts)
@@ -513,7 +514,7 @@ function readSourceInput(value: unknown, provider: ConnectorProvider) {
     displayName,
     sourceType: CONNECTOR_SOURCE_TYPES[provider],
     uri: optionalString(record["uri"]),
-    metadata: readRecord(record["metadata"]),
+    metadata: sanitizeSafeMetadata(readRecord(record["metadata"])),
   };
 }
 

@@ -77,7 +77,6 @@ export function ConnectorsPage() {
   const [sourceName, setSourceName] = useState('owner/repo')
   const [sourceUri, setSourceUri] = useState('https://github.com/owner/repo')
   const [syncCadence, setSyncCadence] = useState('manual')
-  const [sourceContent, setSourceContent] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -145,7 +144,6 @@ export function ConnectorsPage() {
                 externalSourceId: sourceId.trim(),
                 displayName: sourceName.trim() || sourceId.trim(),
                 uri: sourceUri.trim() || undefined,
-                metadata: sourceContent.trim() ? { content: sourceContent.trim() } : undefined,
               }
             : undefined,
         },
@@ -238,15 +236,9 @@ export function ConnectorsPage() {
           </label>
         </div>
         {provider === 'browser_history' ? (
-          <label>
-            <span>Browser history CSV/text</span>
-            <textarea
-              rows={5}
-              value={sourceContent}
-              onChange={(event) => setSourceContent(event.target.value)}
-              placeholder="Paste exported browser history CSV or text"
-            />
-          </label>
+          <p className="console-banner warn">
+            Browser history files should be imported through the Ingest page so raw history stays inside encrypted artifact storage.
+          </p>
         ) : null}
         <div className="console-actions">
           <button className="primary-action" type="button" disabled={isLoading} onClick={() => void connectSource()}>
