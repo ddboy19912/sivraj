@@ -11,6 +11,7 @@ export type ConsolePage =
   | 'engineering-sources'
   | 'graph'
   | 'reflections'
+  | 'connectors'
   | 'privacy'
   | 'api-guide'
 
@@ -22,7 +23,9 @@ export type ArtifactReceipt = {
   sensitivity?: string
   rawStorageRef: string | null
   processingJobId?: string | null
-  warning: string | null
+  warning?: string | null
+  skipped?: boolean
+  reason?: string
 }
 
 export type ArtifactStatusEvent = {
@@ -202,6 +205,84 @@ export type ReflectionRun = {
   summaryStorageRef: string | null
   summarySha256: string | null
   metadata: Record<string, unknown>
+}
+
+export type ConnectorSource = {
+  id: string
+  connectorAccountId: string
+  provider: string
+  sourceType: string
+  externalSourceId: string
+  displayName: string
+  uri: string | null
+  status: string
+  cursor: string | null
+  lastSyncAt: string | null
+  nextSyncAt: string | null
+  errorCode: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ConnectorSyncRun = {
+  id: string
+  twinId: string
+  connectorAccountId: string
+  connectorSourceId: string | null
+  provider: string
+  mode: string
+  status: string
+  cursorBefore: string | null
+  cursorAfter: string | null
+  addedCount: number
+  updatedCount: number
+  skippedCount: number
+  failedCount: number
+  errorCode: string | null
+  errorMessage: string | null
+  metadata: Record<string, unknown> | null
+  startedAt: string | null
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type ConnectorAccount = {
+  id: string
+  twinId: string
+  provider: string
+  status: string
+  externalAccountId: string | null
+  displayName: string
+  scopes: string[]
+  syncCadence: string
+  tokenRef: string | null
+  cursor: string | null
+  lastSyncAt: string | null
+  nextSyncAt: string | null
+  errorCode: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
+  updatedAt: string
+  sources: ConnectorSource[]
+  lastSyncRun: ConnectorSyncRun | null
+}
+
+export type ConnectorsResponse = {
+  accounts: ConnectorAccount[]
+  recentSyncRuns: ConnectorSyncRun[]
+}
+
+export type ConnectorAccountResponse = {
+  account: Omit<ConnectorAccount, 'sources' | 'lastSyncRun'>
+  source: ConnectorSource | null
+}
+
+export type ConnectorSyncResponse = {
+  syncRun: ConnectorSyncRun
+  jobId: string | null
+  warning: string | null
 }
 
 export type AgentContextResponse = {
@@ -495,6 +576,7 @@ export const CONSOLE_PAGES: Array<{ id: ConsolePage; label: string }> = [
   { id: 'engineering-sources', label: 'Instruction Sources' },
   { id: 'graph', label: 'Graph' },
   { id: 'reflections', label: 'Reflections' },
+  { id: 'connectors', label: 'Connectors' },
   { id: 'privacy', label: 'Privacy Check' },
   { id: 'api-guide', label: 'API Guide' },
 ]

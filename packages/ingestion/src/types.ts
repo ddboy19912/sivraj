@@ -10,6 +10,21 @@ export type ParserMetadata = {
   parsedLength: number;
   warnings: string[];
   speakers?: string[];
+  chatExport?: ChatExportParserMetadata;
+};
+
+export type ChatExportParserMetadata = {
+  provider: "chatgpt" | "claude" | "generic";
+  conversations: ChatExportConversationMetadata[];
+};
+
+export type ChatExportConversationMetadata = {
+  sourceConversationId?: string;
+  title?: string;
+  messageCount: number;
+  firstMessageAt?: string;
+  lastMessageAt?: string;
+  sourceMessageIds?: string[];
 };
 
 export type ParsedConversation = {

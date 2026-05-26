@@ -44,6 +44,9 @@ Fields:
 - `ingestion_status`
 - `created_at`
 - `updated_at`
+- `connector_account_id`
+- `connector_source_id`
+- `connector_sync_run_id`
 
 Source types:
 
@@ -65,6 +68,136 @@ Source types:
 - `voice_note`
 - `voice_conversation`
 - `screenshot`
+
+Connector-backed artifacts use the connector fields to preserve provenance from the connected account, selected source, and sync run that produced or updated the artifact.
+
+### ConnectorAccount
+
+Represents a user-approved external account or import source that can sync into a Twin.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `provider`
+- `status`
+- `external_account_id`
+- `display_name`
+- `scopes`
+- `sync_cadence`
+- `token_ref`
+- `cursor`
+- `last_sync_at`
+- `next_sync_at`
+- `error_code`
+- `metadata`
+- `created_at`
+- `updated_at`
+
+Providers:
+
+- `github`
+- `notion`
+- `microsoft_onedrive`
+- `google_drive`
+- `slack`
+- `email`
+- `calendar`
+- `browser_history`
+- `chatgpt`
+- `codex`
+- `claude`
+- `other`
+
+Statuses:
+
+- `connected`
+- `paused`
+- `needs_reauth`
+- `error`
+- `disconnected`
+
+### ConnectorSource
+
+Represents a selected external source under a connected account, such as a GitHub repository, Slack channel, Drive folder, browser-history import, or document collection.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `connector_account_id`
+- `provider`
+- `source_type`
+- `external_source_id`
+- `display_name`
+- `uri`
+- `status`
+- `cursor`
+- `last_sync_at`
+- `next_sync_at`
+- `error_code`
+- `metadata`
+- `created_at`
+- `updated_at`
+
+### ConnectorSyncRun
+
+Represents one sync attempt for a connector account or source.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `connector_account_id`
+- `connector_source_id`
+- `provider`
+- `mode`
+- `status`
+- `cursor_before`
+- `cursor_after`
+- `added_count`
+- `updated_count`
+- `skipped_count`
+- `failed_count`
+- `error_code`
+- `error_message`
+- `metadata`
+- `started_at`
+- `completed_at`
+- `created_at`
+- `updated_at`
+
+Modes:
+
+- `initial`
+- `incremental`
+- `manual`
+
+### ConnectorSyncItem
+
+Represents one external item observed during a connector sync and records whether it added, updated, skipped, or failed to produce a source artifact.
+
+Fields:
+
+- `id`
+- `twin_id`
+- `connector_sync_run_id`
+- `connector_account_id`
+- `connector_source_id`
+- `source_artifact_id`
+- `external_item_id`
+- `action`
+- `reason`
+- `content_hash`
+- `metadata`
+- `created_at`
+
+Actions:
+
+- `added`
+- `updated`
+- `skipped`
+- `failed`
 
 ### MemoryFragment
 

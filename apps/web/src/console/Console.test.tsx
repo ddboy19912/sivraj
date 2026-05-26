@@ -293,7 +293,7 @@ describe('Testing console', () => {
 
     const content = 'title,url,lastVisitTime\nSivraj,https://sivraj.ai,2026-05-20T10:00:00Z'
     const file = new File([content], 'export.csv', { type: 'text/csv' })
-    await user.upload(screen.getByLabelText('Text/Markdown/Browser history file'), file)
+    await user.upload(screen.getByLabelText('Text/Markdown/Browser history/AI chat file'), file)
     await user.click(screen.getByRole('button', { name: 'Submit encrypted artifact' }))
 
     expect(await screen.findByText('browser-artifact-id')).toBeInTheDocument()
@@ -301,6 +301,97 @@ describe('Testing console', () => {
       'http://127.0.0.1:3000/v1/twins/twin-id/artifacts',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('reviews AI chat imports and shows duplicate skips', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://127.0.0.1:3000')
+
+      if (url.pathname === '/health/storage') {
+        return Promise.resolve(jsonResponse(storageHealth()))
+      }
+
+      if (url.pathname === '/v1/twins/twin-id/artifacts') {
+        const body = JSON.parse(String(init?.body)) as {
+          sourceType: string
+          metadata: Record<string, unknown>
+        }
+
+        expect(body).toMatchObject({
+          sourceType: 'chat_export',
+          metadata: {
+            aiChatProvider: 'chatgpt',
+            aiChatImportKind: 'export',
+            aiChatConversationCount: 1,
+            aiChatMessageCount: 2,
+            importer: 'ai_chat_export',
+          },
+        })
+        expect(typeof body.metadata.aiChatImportFingerprint).toBe('string')
+        expect(String(init?.body)).not.toContain('Private launch plan')
+        expect(String(init?.body)).not.toContain('What should I launch first?')
+
+        return Promise.resolve(jsonResponse({
+          artifactId: 'existing-chat-artifact-id',
+          memoryFragmentId: null,
+          status: 'completed',
+          storageMode: 'encrypted_walrus',
+          sensitivity: 'private',
+          rawStorageRef: null,
+          processingJobId: null,
+          warning: null,
+          skipped: true,
+          reason: 'duplicate_ai_chat_import',
+        }))
+      }
+
+      return Promise.resolve(new Response('Not found', { status: 404 }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: 'Testing Console' }))
+    await user.click(screen.getByRole('button', { name: 'Ingest' }))
+
+    const file = new File([
+      JSON.stringify([
+        {
+          id: 'conversation-1',
+          title: 'Private launch plan',
+          mapping: {
+            userMessage: {
+              message: {
+                id: 'message-1',
+                author: { role: 'user' },
+                create_time: 1_710_000_000,
+                content: { parts: ['What should I launch first?'] },
+              },
+            },
+            assistantMessage: {
+              message: {
+                id: 'message-2',
+                author: { role: 'assistant' },
+                create_time: 1_710_000_010,
+                content: { parts: ['Lead with import review.'] },
+              },
+            },
+          },
+        },
+      ]),
+    ], 'conversations.json', { type: 'application/json' })
+    await user.upload(screen.getByLabelText('Text/Markdown/Browser history/AI chat file'), file)
+
+    expect(await screen.findByText('AI chat import review')).toBeInTheDocument()
+    expect(screen.getByText('chatgpt')).toBeInTheDocument()
+    expect(screen.getByText('Private launch plan')).toBeInTheDocument()
+    expect(screen.getByText('Ready')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Submit encrypted artifact' }))
+
+    expect(await screen.findByText('existing-chat-artifact-id')).toBeInTheDocument()
+    expect(screen.getAllByText('Skipped').length).toBeGreaterThan(0)
+    expect(screen.getByText('Skipped: duplicate_ai_chat_import')).toBeInTheDocument()
   })
 
   it('loads retrieval results from the memory search API', async () => {

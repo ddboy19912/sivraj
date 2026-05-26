@@ -11,6 +11,7 @@ type SourceType =
   | 'voice_note'
   | 'voice_conversation'
   | 'browser_history'
+  | 'chat_export'
 
 function readClientEncryptionConfig() {
   return {

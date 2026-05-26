@@ -9,6 +9,7 @@ import {
   reflectionRuns,
   sourceArtifacts,
 } from "@sivraj/db";
+import { parseChatExport } from "@sivraj/ingestion";
 import { createHash } from "node:crypto";
 import { and, count, eq } from "drizzle-orm";
 import { Hono } from "hono";
@@ -72,8 +73,30 @@ export function createArtifactRoutes({
     })();
     const privateMetadata = recordMetadata(body["metadata"]);
     const safeUploadMetadata = sanitizeSafeMetadata(privateMetadata);
+    const aiChatImportMetadata = sourceType === "chat_export"
+      ? detectAiChatImportMetadata({
+          content: content ?? "",
+          metadata: privateMetadata,
+          title,
+        })
+      : {};
+    const aiChatImportFingerprint = sourceType === "chat_export"
+      ? computeAiChatImportFingerprint({
+          content: content ?? "",
+          metadata: privateMetadata,
+          provider: optionalString(aiChatImportMetadata["aiChatProvider"]),
+        })
+      : null;
     const storageMetadata = {
       ...safeUploadMetadata,
+      ...aiChatImportMetadata,
+      ...(aiChatImportFingerprint
+        ? {
+            aiChatImportFingerprintVersion: aiChatImportFingerprint.version,
+            aiChatConversationCount: aiChatImportFingerprint.conversationCount,
+            aiChatMessageCount: aiChatImportFingerprint.messageCount,
+          }
+        : {}),
       storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
       sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
       encryptedPayload: {
@@ -100,6 +123,49 @@ export function createArtifactRoutes({
 
     if (!privateMemoryStorage) {
       return c.json({ error: "encrypted_storage_not_configured" }, 503);
+    }
+
+    if (aiChatImportFingerprint) {
+      const [duplicateArtifact] = await db
+        .select({
+          id: sourceArtifacts.id,
+          ingestionStatus: sourceArtifacts.ingestionStatus,
+        })
+        .from(sourceArtifacts)
+        .where(and(
+          eq(sourceArtifacts.twinId, twinId),
+          eq(sourceArtifacts.sourceType, "chat_export"),
+          eq(sourceArtifacts.hash, aiChatImportFingerprint.hash),
+        ))
+        .limit(1);
+
+      if (duplicateArtifact) {
+        await db.insert(auditEvents).values({
+          twinId,
+          actorType: auth.type,
+          actorId: auth.sub,
+          eventType: "artifact.skipped_duplicate",
+          resourceType: "source_artifact",
+          resourceId: duplicateArtifact.id,
+          metadata: {
+            reason: "duplicate_ai_chat_import",
+            aiChatProvider: aiChatImportMetadata["aiChatProvider"] ?? "generic_chat",
+            aiChatImportFingerprintVersion: aiChatImportFingerprint.version,
+            aiChatConversationCount: aiChatImportFingerprint.conversationCount,
+            aiChatMessageCount: aiChatImportFingerprint.messageCount,
+          },
+        });
+
+        return c.json({
+          artifactId: duplicateArtifact.id,
+          memoryFragmentId: null,
+          status: duplicateArtifact.ingestionStatus,
+          storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
+          sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
+          skipped: true,
+          reason: "duplicate_ai_chat_import",
+        });
+      }
     }
 
     const stored = await (encryptedPayload
@@ -131,6 +197,7 @@ export function createArtifactRoutes({
       .values({
         twinId,
         sourceType,
+        ...(aiChatImportFingerprint ? { hash: aiChatImportFingerprint.hash } : {}),
         metadata: {
           ...storageMetadata,
           ciphertextSha256: stored.ciphertextSha256,
@@ -808,10 +875,206 @@ function readSupportedSourceType(
     value === "docx" ||
     value === "csv" ||
     value === "email" ||
+    value === "calendar" ||
     value === "chat_export" ||
     value === "slack_export" ||
     value === "whatsapp_export" ||
-    value === "github"
+    value === "github" ||
+    value === "api" ||
+    value === "other"
     ? value
     : null;
+}
+
+function detectAiChatImportMetadata(input: {
+  content: string;
+  metadata: Record<string, unknown>;
+  title?: string | null;
+}): Record<string, unknown> {
+  const explicitProvider = readAiChatProvider(
+    input.metadata["aiChatProvider"] ??
+      input.metadata["chatProvider"] ??
+      input.metadata["provider"],
+  );
+
+  const provider = explicitProvider ??
+    detectAiChatProviderFromFilename(input.title ?? optionalString(input.metadata["fileName"])) ??
+    detectAiChatProviderFromContent(input.content);
+
+  if (!provider) {
+    return {};
+  }
+
+  return {
+    aiChatProvider: provider,
+    aiChatImportKind: "export",
+  };
+}
+
+function computeAiChatImportFingerprint(input: {
+  content: string;
+  metadata: Record<string, unknown>;
+  provider?: string | null;
+}): {
+  hash: string;
+  version: number;
+  conversationCount: number;
+  messageCount: number;
+} | null {
+  const explicitFingerprint = optionalString(input.metadata["aiChatImportFingerprint"]);
+
+  if (explicitFingerprint) {
+    return {
+      hash: sha256Hex(`ai-chat-import:v1:explicit:${explicitFingerprint}`),
+      version: 1,
+      conversationCount: readNonNegativeInteger(input.metadata["aiChatConversationCount"]) ?? 0,
+      messageCount: readNonNegativeInteger(input.metadata["aiChatMessageCount"]) ?? 0,
+    };
+  }
+
+  if (!input.content) {
+    return null;
+  }
+
+  const parsed = parseChatExport({ content: input.content });
+  const chatExport = parsed.parser.chatExport;
+
+  if (!chatExport || chatExport.conversations.length === 0) {
+    return null;
+  }
+
+  const provider = input.provider ?? chatExport.provider;
+  const conversations = chatExport.conversations.map((conversation) => ({
+    id: conversation.sourceConversationId ?? null,
+    title: conversation.title ?? null,
+    messageCount: conversation.messageCount,
+    firstMessageAt: conversation.firstMessageAt ?? null,
+    lastMessageAt: conversation.lastMessageAt ?? null,
+    sourceMessageIds: [...(conversation.sourceMessageIds ?? [])].sort(),
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const material = JSON.stringify({
+    version: 1,
+    provider,
+    conversations,
+  });
+
+  return {
+    hash: sha256Hex(`ai-chat-import:v1:${material}`),
+    version: 1,
+    conversationCount: conversations.length,
+    messageCount: conversations.reduce((total, conversation) => total + conversation.messageCount, 0),
+  };
+}
+
+function readAiChatProvider(value: unknown): "chatgpt" | "claude" | "codex" | "generic_chat" | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+
+  return normalized === "chatgpt" ||
+    normalized === "openai" ||
+    normalized === "chat_gpt"
+    ? "chatgpt"
+    : normalized === "claude" ||
+        normalized === "anthropic"
+      ? "claude"
+      : normalized === "codex"
+        ? "codex"
+        : normalized === "generic_chat" ||
+            normalized === "chat"
+          ? "generic_chat"
+          : undefined;
+}
+
+function detectAiChatProviderFromFilename(value?: string | null): "chatgpt" | "claude" | "codex" | "generic_chat" | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.toLowerCase();
+
+  if (normalized.includes("chatgpt") || normalized.includes("openai")) {
+    return "chatgpt";
+  }
+
+  if (normalized.includes("claude") || normalized.includes("anthropic")) {
+    return "claude";
+  }
+
+  if (normalized.includes("codex")) {
+    return "codex";
+  }
+
+  return undefined;
+}
+
+function detectAiChatProviderFromContent(content: string): "chatgpt" | "claude" | "generic_chat" | undefined {
+  const parsedJson = parseJsonObject(content);
+
+  if (!parsedJson) {
+    return undefined;
+  }
+
+  const conversations = Array.isArray(parsedJson)
+    ? parsedJson
+    : isRecord(parsedJson)
+      ? firstArrayValue(parsedJson, ["conversations", "chats", "items"])
+      : undefined;
+
+  if (!Array.isArray(conversations)) {
+    return undefined;
+  }
+
+  if (conversations.some((conversation) => isRecord(conversation) && isRecord(conversation["mapping"]))) {
+    return "chatgpt";
+  }
+
+  if (
+    conversations.some((conversation) =>
+      isRecord(conversation) &&
+      (Array.isArray(conversation["chat_messages"]) ||
+        typeof conversation["uuid"] === "string")
+    )
+  ) {
+    return "claude";
+  }
+
+  return "generic_chat";
+}
+
+function parseJsonObject(content: string): unknown {
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function firstArrayValue(record: Record<string, unknown>, keys: string[]): unknown[] | undefined {
+  for (const key of keys) {
+    const candidate = record[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

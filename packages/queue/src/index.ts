@@ -15,6 +15,8 @@ export const CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME = "sivraj-candidate-memory-arch
 export const ARCHIVE_CANDIDATE_MEMORY_JOB_NAME = "archive-candidate-memory";
 export const WEEKLY_REFLECTION_QUEUE_NAME = "sivraj-weekly-reflection";
 export const GENERATE_WEEKLY_REFLECTION_JOB_NAME = "generate-weekly-reflection";
+export const CONNECTOR_SYNC_QUEUE_NAME = "sivraj-connector-sync";
+export const SYNC_CONNECTOR_JOB_NAME = "sync-connector";
 
 export type ArtifactProcessingJobData = {
   artifactId: string;
@@ -53,6 +55,15 @@ export type WeeklyReflectionJobData = {
   periodEnd: string;
 };
 
+export type ConnectorSyncJobData = {
+  syncRunId: string;
+  twinId: string;
+  connectorAccountId: string;
+  connectorSourceId?: string | null;
+  provider: string;
+  mode: "initial" | "incremental" | "manual";
+};
+
 export type ArtifactProcessingQueue = {
   enqueueArtifactProcessing(data: ArtifactProcessingJobData): Promise<{ jobId: string }>;
   close(): Promise<void>;
@@ -87,6 +98,11 @@ export type WeeklyReflectionQueue = {
   close(): Promise<void>;
 };
 
+export type ConnectorSyncQueue = {
+  enqueueConnectorSync(data: ConnectorSyncJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
 export type ArtifactProcessingWorker = {
   close(): Promise<void>;
   onFailed(listener: (jobId: string | undefined, error: Error, attemptsMade: number | undefined) => void): void;
@@ -96,6 +112,7 @@ export type ArtifactProcessingWorker = {
 export type IntelligenceProcessingWorker = ArtifactProcessingWorker;
 export type CandidateMemoryArchiveWorker = ArtifactProcessingWorker;
 export type WeeklyReflectionWorker = ArtifactProcessingWorker;
+export type ConnectorSyncWorker = ArtifactProcessingWorker;
 
 export type ArtifactStatusEvent = {
   artifactId: string;
@@ -216,6 +233,48 @@ export function createWeeklyReflectionQueue(redisUrl: string): WeeklyReflectionQ
     },
     async close() {
       await queue.close();
+    },
+  };
+}
+
+export function createConnectorSyncQueue(redisUrl: string): ConnectorSyncQueue {
+  const queue = new Queue<ConnectorSyncJobData>(CONNECTOR_SYNC_QUEUE_NAME, {
+    connection: redisConnection(redisUrl),
+    defaultJobOptions: artifactJobOptions,
+  });
+
+  return {
+    async enqueueConnectorSync(data) {
+      const job = await queue.add(SYNC_CONNECTOR_JOB_NAME, data, {
+        ...artifactJobOptions,
+        jobId: data.syncRunId,
+      });
+
+      return { jobId: String(job.id) };
+    },
+    async close() {
+      await queue.close();
+    },
+  };
+}
+
+export function createLazyConnectorSyncQueue(
+  redisUrl: string | undefined,
+): ConnectorSyncQueue | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let queue: ConnectorSyncQueue | null = null;
+
+  return {
+    async enqueueConnectorSync(data) {
+      queue ??= createConnectorSyncQueue(redisUrl);
+      return queue.enqueueConnectorSync(data);
+    },
+    async close() {
+      await queue?.close();
+      queue = null;
     },
   };
 }
@@ -460,6 +519,39 @@ export function createWeeklyReflectionWorker(
     },
     onCompleted(listener) {
       worker.on("completed", (job: Job<WeeklyReflectionJobData>) => {
+        listener(job?.id ? String(job.id) : undefined);
+      });
+    },
+  };
+}
+
+export function createConnectorSyncWorker(
+  redisUrl: string,
+  processor: (data: ConnectorSyncJobData, job: Job<ConnectorSyncJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): ConnectorSyncWorker {
+  const worker = new Worker<ConnectorSyncJobData>(
+    CONNECTOR_SYNC_QUEUE_NAME,
+    async (job: Job<ConnectorSyncJobData>) => {
+      await processor(job.data, job);
+    },
+    {
+      connection: redisConnection(redisUrl),
+      concurrency: options.concurrency ?? 1,
+    },
+  );
+
+  return {
+    async close() {
+      await worker.close();
+    },
+    onFailed(listener) {
+      worker.on("failed", (job: Job<ConnectorSyncJobData> | undefined, error) => {
+        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
+      });
+    },
+    onCompleted(listener) {
+      worker.on("completed", (job: Job<ConnectorSyncJobData>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },

@@ -11,12 +11,15 @@ import {
   createArtifactStatusPublisher,
   createCandidateMemoryArchiveQueue,
   createCandidateMemoryArchiveWorker,
+  createConnectorSyncQueue,
+  createConnectorSyncWorker,
   createIntelligenceProcessingQueue,
   createIntelligenceProcessingWorker,
   createTransientCiphertextCache,
   createWeeklyReflectionWorker,
 } from "@sivraj/queue";
 import { eq } from "drizzle-orm";
+import { enqueueDueConnectorSyncs, processConnectorSyncRun } from "./connectors.js";
 import { createWorkerDb } from "./db.js";
 import {
   processArtifact,
@@ -34,6 +37,7 @@ import {
 import { runHealthJob } from "./jobs/health";
 import { createConfiguredPrivateMemoryReader } from "./private-memory-reader.js";
 import { createConfiguredPrivateFragmentStorage } from "./private-fragment-storage.js";
+import { createConfiguredPrivateSourceStorage } from "./private-source-storage.js";
 import { createDrizzleArtifactRepository } from "./repository.js";
 
 export const serviceName = "sivraj-worker";
@@ -47,6 +51,7 @@ async function main() {
   const repository = createDrizzleArtifactRepository(db);
   const privateMemoryReader = createConfiguredPrivateMemoryReader(process.env);
   const privateFragmentStorage = createConfiguredPrivateFragmentStorage(process.env);
+  const privateSourceStorage = createConfiguredPrivateSourceStorage(process.env);
   const speechToTextTranscriber = createConfiguredSpeechToTextTranscriber(process.env);
   const structuredGenerator = createConfiguredStructuredGenerator(process.env);
   const entityExtractor = structuredGenerator
@@ -67,11 +72,39 @@ async function main() {
   const transientCiphertextCache = createTransientCiphertextCache(redisUrl);
   const intelligenceQueue = createIntelligenceProcessingQueue(redisUrl);
   const candidateMemoryArchiveQueue = createCandidateMemoryArchiveQueue(redisUrl);
+  const connectorSyncQueue = createConnectorSyncQueue(redisUrl);
+  const connectorSyncWorker = createConnectorSyncWorker(
+    redisUrl,
+    async (data, job) => {
+      const startedAt = Date.now();
+      const result = await processConnectorSyncRun({
+        db,
+        data,
+        privateSourceStorage,
+        artifactProcessingQueue: artifactRetryQueue,
+      });
+
+      console.log(`${serviceName} connector sync job processed`, {
+        jobId: job.id,
+        syncRunId: data.syncRunId,
+        provider: data.provider,
+        status: result.status,
+        addedCount: result.addedCount,
+        updatedCount: result.updatedCount,
+        skippedCount: result.skippedCount,
+        failedCount: result.failedCount,
+        durationMs: Date.now() - startedAt,
+      });
+    },
+    { concurrency: readPositiveInt(process.env["CONNECTOR_SYNC_CONCURRENCY"], 1) },
+  );
   const concurrency = readPositiveInt(process.env["WORKER_CONCURRENCY"], 2);
   const intelligenceChunkChars = readPositiveInt(process.env["INTELLIGENCE_CHUNK_CHARS"], 18_000);
   const intelligenceChunkConcurrency = readPositiveInt(process.env["INTELLIGENCE_CHUNK_CONCURRENCY"], 2);
   const artifactReconcileIntervalMs = readPositiveInt(process.env["ARTIFACT_RECONCILE_INTERVAL_MS"], 60_000);
   const artifactReconcileLimit = readPositiveInt(process.env["ARTIFACT_RECONCILE_LIMIT"], 25);
+  const connectorReconcileIntervalMs = readPositiveInt(process.env["CONNECTOR_RECONCILE_INTERVAL_MS"], 60_000);
+  const connectorReconcileLimit = readPositiveInt(process.env["CONNECTOR_RECONCILE_LIMIT"], 25);
 
   if (process.env["WORKER_DRAIN_EXISTING_ON_BOOT"] !== "false") {
     const result = await processQueuedArtifacts(repository, {
@@ -395,6 +428,17 @@ async function main() {
   weeklyReflectionWorker.onCompleted((jobId) => {
     console.log(`${serviceName} weekly reflection job completed`, { jobId });
   });
+  connectorSyncWorker.onCompleted((jobId) => {
+    console.log(`${serviceName} connector sync job completed`, { jobId });
+  });
+  connectorSyncWorker.onFailed((jobId, error, attemptsMade) => {
+    console.error(`${serviceName} connector sync job failed`, {
+      jobId,
+      attemptsMade,
+      errorName: error.name,
+      errorMessage: error.message,
+    });
+  });
   weeklyReflectionWorker.onFailed((jobId, error, attemptsMade) => {
     console.error(`${serviceName} weekly reflection job failed`, {
       jobId,
@@ -430,11 +474,28 @@ async function main() {
       });
   }, artifactReconcileIntervalMs);
 
+  const connectorReconciler = setInterval(() => {
+    void enqueueDueConnectorSyncs({
+      db,
+      connectorSyncQueue,
+      limit: connectorReconcileLimit,
+    })
+      .then((result) => {
+        if (result.queued > 0) {
+          console.log(`${serviceName} connector reconciler queued`, result);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error(`${serviceName} connector reconciler failed`, error);
+      });
+  }, connectorReconcileIntervalMs);
+
   console.log(`${serviceName} ready`, {
     queue: "sivraj-artifact-processing",
     intelligenceQueue: "sivraj-intelligence-processing",
     candidateMemoryArchiveQueue: "sivraj-candidate-memory-archive",
     weeklyReflectionQueue: "sivraj-weekly-reflection",
+    connectorSyncQueue: "sivraj-connector-sync",
     concurrency,
     entityExtraction: entityExtractor ? "enabled" : "disabled",
     memoryExtraction: memoryExtractor ? "enabled" : "disabled",
@@ -443,6 +504,8 @@ async function main() {
     intelligenceChunkConcurrency,
     artifactReconcileIntervalMs,
     artifactReconcileLimit,
+    connectorReconcileIntervalMs,
+    connectorReconcileLimit,
     automaticRetryDelaysMs: AUTOMATIC_RETRY_DELAYS_MS,
     llmModel: process.env["LLM_MODEL"] || null,
     llmBaseUrl: process.env["OPENAI_BASE_URL"] || "https://api.openai.com",
@@ -450,11 +513,14 @@ async function main() {
 
   await waitForShutdown();
   clearInterval(reconciler);
+  clearInterval(connectorReconciler);
   await candidateMemoryArchiveWorker.close();
+  await connectorSyncWorker.close();
   await weeklyReflectionWorker.close();
   await intelligenceWorker.close();
   await worker.close();
   await candidateMemoryArchiveQueue.close();
+  await connectorSyncQueue.close();
   await intelligenceQueue.close();
   await transientCiphertextCache.close();
   await artifactRetryQueue.close();

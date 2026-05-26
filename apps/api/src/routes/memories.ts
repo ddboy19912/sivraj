@@ -12,7 +12,7 @@ import {
   memoryFragments,
 } from "@sivraj/db";
 import { loadMemorySearchConfig, type MemorySearchConfig } from "@sivraj/config";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { hasActiveAgentGrantForScopes } from "../lib/agent-grants.js";
@@ -379,7 +379,9 @@ async function loadSearchRows(input: {
         ),
       )
       .limit(input.config.shortlistLimit);
-    const rows = orderRowsById(unorderedRows, shortlistedIds);
+    const rows = orderRowsById(unorderedRows, shortlistedIds).filter(
+      (row) => !isSupersededMemoryFragment(row.metadata),
+    );
 
     return {
       rows,
@@ -388,12 +390,14 @@ async function loadSearchRows(input: {
     };
   }
 
-  const rows = await input.db
+  const rows = (await input.db
     .select()
     .from(memoryFragments)
     .where(eq(memoryFragments.twinId, input.twinId))
     .orderBy(desc(memoryFragments.createdAt))
-    .limit(input.config.fallbackLimit);
+    .limit(input.config.fallbackLimit * 2))
+    .filter((row) => !isSupersededMemoryFragment(row.metadata))
+    .slice(0, input.config.fallbackLimit);
 
   return {
     rows,
@@ -455,6 +459,7 @@ async function loadShortlistedMemoryFragmentIds(input: {
     .where(
       and(
         eq(candidateMemories.twinId, input.twinId),
+        ne(candidateMemories.status, "superseded"),
         or(...terms.map((term) => candidateMemoryMatchesTerm(term))),
       ),
     )
@@ -527,6 +532,13 @@ async function mapSettledWithConcurrency<T, R>(
   );
 
   return results;
+}
+
+function isSupersededMemoryFragment(metadata: unknown): boolean {
+  return typeof metadata === "object" &&
+    metadata !== null &&
+    !Array.isArray(metadata) &&
+    typeof (metadata as Record<string, unknown>)["supersededByArtifactId"] === "string";
 }
 
 function toCandidate(

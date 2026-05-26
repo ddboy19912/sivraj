@@ -76,6 +76,12 @@
   gap: 12px;
 }
 
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .console-form label {
   display: grid;
   gap: 6px;
@@ -383,6 +389,11 @@
   font-weight: 700;
 }
 
+.console-chip.warn {
+  background: #fff8ea;
+  color: #7a4b00;
+}
+
 .app-mode-nav {
   width: min(1180px, 100%);
   margin: 0 auto;
@@ -412,6 +423,7 @@
 @media (max-width: 860px) {
   .console-form.inline,
   .console-form-grid,
+  .form-row,
   .console-grid {
     grid-template-columns: 1fr;
   }

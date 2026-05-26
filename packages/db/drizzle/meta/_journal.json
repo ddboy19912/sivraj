@@ -148,6 +148,20 @@
       "when": 1779465600000,
       "tag": "0020_canonical_memories",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779469200000,
+      "tag": "0021_connector_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1779472800000,
+      "tag": "0022_calendar_source_type",
+      "breakpoints": true
     }
   ]
 }
