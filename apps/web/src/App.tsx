@@ -1592,6 +1592,7 @@ async function buildClientEncryptedArtifactBody(input: {
 
   return {
     sourceType: input.sourceType,
+    metadata: publicArtifactMetadata(input.metadata),
     encryptedPayload: {
       ciphertextBase64: bytesToBase64(encryptedObject),
       ciphertextSha256: await sha256Hex(encryptedObject),
@@ -1603,6 +1604,13 @@ async function buildClientEncryptedArtifactBody(input: {
       },
     },
   }
+}
+
+function publicArtifactMetadata(metadata: Record<string, unknown>) {
+  const blockedKeys = new Set(['fileName', 'filename', 'file_name', 'file', 'path', 'sourceFile', 'source_file', 'title', 'content', 'text', 'body', 'summary', 'transcript'])
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => !blockedKeys.has(key)),
+  )
 }
 
 async function postAuthedJson<TResponse>(

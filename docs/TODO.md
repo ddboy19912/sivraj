@@ -121,6 +121,8 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 - [x] Add artifact status page with live processing, intelligence status, timings, and retry controls.
 - [x] Add retrieval test page for `POST /v1/twins/:twinId/memories/search`.
 - [x] Add candidate memory review page with approve/reject feedback actions.
+- [x] Add coding agent context export page with raw JSON and copyable markdown packet.
+- [x] Add engineering instruction sources page showing uploaded instruction files and extracted memories.
 - [x] Add graph inspection page for projects, goals, decisions, concepts, patterns, and edges.
 - [x] Add weekly reflection test page with generate/list status controls.
 - [x] Add privacy verification page showing storage refs, hashes, and no-plaintext checklist.
@@ -129,18 +131,24 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 
 ## Engineering Intelligence
 
-- [ ] Define engineering memory taxonomy.
-- [ ] Extract coding preferences from repos, chats, PRs, docs, and voice conversations.
-- [ ] Extract architecture decisions.
-- [ ] Extract recurring bugs and failure patterns.
-- [ ] Extract project conventions and style rules.
-- [ ] Extract deployment and environment knowledge.
-- [ ] Extract security and privacy boundaries.
-- [ ] Build repo/project engineering profile.
-- [ ] Generate agent-ready coding context packets.
-- [ ] Add coding-agent context endpoint.
-- [ ] Add Codex/Claude Code/Cursor integration plan.
-- [ ] Add engineering memory verification tests with source-backed evidence.
+- [x] Define engineering memory taxonomy.
+- [x] Add agent instruction file detector for `CLAUDE.md`, `AGENTS.md`, `SKILL.md`, Cursor rules, and similar repo guidance.
+- [x] Classify engineering instructions by scope: global user, project, organization, agent-specific, temporary.
+- [x] Extract reusable engineering preferences from instruction files without blindly applying repo-local rules globally.
+- [x] Detect stale or conflicting engineering instructions.
+- [x] Extract coding preferences from repos, chats, PRs, docs, and voice conversations.
+- [x] Extract architecture decisions.
+- [x] Extract recurring bugs and failure patterns.
+- [x] Extract project conventions and style rules.
+- [x] Extract deployment and environment knowledge.
+- [x] Extract security and privacy boundaries.
+- [x] Build repo/project engineering profile.
+- [x] Generate agent-ready coding context packets.
+- [x] Add coding-agent context endpoint.
+- [x] Add engineering instruction sources endpoint.
+- [x] Add copyable Codex/Claude Code/Cursor context packet format.
+- [x] Add Codex/Claude Code/Cursor integration plan.
+- [x] Add engineering memory verification tests with source-backed evidence.
 
 ## Conversation
 
@@ -148,11 +156,11 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 - [x] Add push-to-talk or recording control.
 - [x] Stream or upload recorded audio securely.
 - [x] Transcribe audio to text.
-- [ ] Generate conversation summary.
+- [x] Generate conversation summary.
 - [x] Extract candidate memories, goals, decisions, and preferences from conversation.
-- [ ] Ask user to approve or edit extracted memories before updating the Twin.
-- [ ] Store approved conversation memories through encrypted Walrus path.
-- [ ] Add audit events for voice-derived memory updates.
+- [x] Ask user to approve or edit extracted memories before updating the Twin.
+- [x] Store approved conversation memories through encrypted Walrus path.
+- [x] Add audit events for voice-derived memory updates.
 
 ## Connectors
 
@@ -177,12 +185,40 @@ Temporary POC UI for verifying the backend and intelligence layer before final p
 
 ## Agent Layer
 
-- [ ] Define agent scope types.
-- [ ] Implement context packet endpoint.
-- [ ] Build coding agent demo client.
-- [ ] Build research agent demo client.
-- [ ] Build strategy agent demo client.
-- [ ] Add permission checks before context assembly.
+- [x] Define agent scope types.
+- [x] Implement context packet endpoint.
+- [x] Build coding agent demo client.
+- [x] Implement Sivraj MCP server for coding agents.
+- [x] Expose MCP tool: `sivraj.getEngineeringContext`.
+- [x] Expose MCP tool: `sivraj.listEngineeringSources`.
+- [x] Expose MCP tool: `sivraj.searchMemory`.
+- [x] Expose MCP tool: `sivraj.getProjectProfile`.
+- [x] Expose MCP tool: `sivraj.recordAgentWriteback`.
+- [x] Add delegated agent/client token flow for MCP.
+- [x] Add client-side MCP writeback encryption before remote agent deployments.
+- [x] Add agent writeback API for decisions, bugs, commands, tests, and summaries.
+- [x] Add coding-session writeback review UI.
+- [x] Build repo fingerprinting and project matching for local agent sessions.
+- [x] Generate repo-specific context packets from current working directory metadata.
+- [x] Add approved-only handoff mode for production coding agents.
+- [x] Add candidate/review handoff mode for testing.
+- [x] Add context quality scoring before handoff.
+- [x] Detect context conflicts before exporting to agents.
+- [x] Add stale instruction review queue.
+- [x] Add suggested `AGENTS.md` / `CLAUDE.md` / Cursor rules patch generation.
+- [x] Add one-click copy/export presets for Codex, Claude Code, Cursor, and generic MCP clients.
+- [x] Add local CLI command: `sivraj context`.
+- [x] Add local CLI command: `sivraj writeback`.
+- [x] Add repo health memory for flaky tests, build quirks, dependency risks, and deployment gotchas.
+- [x] Add review copilot memory from recurring user code-review feedback.
+- [x] Add agent eval harness to compare coding-agent performance with and without Sivraj context.
+- [x] Add MCP resources for project context, instruction sources, and recent writebacks.
+- [x] Add PR/commit writeback imports.
+- [x] Add audit events for all agent context reads and writebacks.
+- [x] Add permission UI for each connected coding agent.
+- [x] Build research agent demo client.
+- [x] Build strategy agent demo client.
+- [x] Add permission checks before context assembly.
 
 ## Security
 

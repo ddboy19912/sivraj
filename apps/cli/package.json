@@ -1,0 +1,27 @@
+{
+  "name": "@sivraj/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sivraj": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm typecheck",
+    "dev": "tsx src/index.ts",
+    "lint": "echo \"cli lint not configured yet\"",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@sivraj/config": "workspace:*",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "tsx": "^4.22.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

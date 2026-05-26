@@ -432,7 +432,11 @@ describe('Manual memory app', () => {
     await user.click(screen.getByRole('button', { name: 'Save private memory' }))
 
     expect(await screen.findByText('Encrypted memory queued.')).toBeInTheDocument()
-    expectEncryptedArtifactRequest('markdown', ['strategy.md', '# Strategy', 'Ship faster'])
+    const body = expectEncryptedArtifactRequest('markdown', ['strategy.md', '# Strategy', 'Ship faster'])
+    expect(body.metadata).toMatchObject({
+      fileType: 'text/markdown',
+      uploadKind: 'file',
+    })
   })
 
   it('loads a browser history export and submits it as encrypted browser history', async () => {
@@ -832,6 +836,7 @@ function expectEncryptedArtifactRequest(sourceType: string, forbiddenText: strin
   const bodyText = String(request?.body ?? '')
   const body = JSON.parse(bodyText) as {
     sourceType?: string
+    metadata?: Record<string, unknown>
     encryptedPayload?: {
       ciphertextBase64?: string
       ciphertextSha256?: string
@@ -850,8 +855,9 @@ function expectEncryptedArtifactRequest(sourceType: string, forbiddenText: strin
       authorization: 'Bearer api-token',
     }),
   }))
-  expect(body).toEqual({
+  expect(body).toMatchObject({
     sourceType,
+    metadata: expect.any(Object),
     encryptedPayload: {
       ciphertextBase64: expect.any(String),
       ciphertextSha256: expect.stringMatching(/^[a-f0-9]{64}$/),

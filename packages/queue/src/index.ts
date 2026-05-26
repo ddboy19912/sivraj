@@ -20,6 +20,8 @@ export type ArtifactProcessingJobData = {
   artifactId: string;
   twinId: string;
   sourceType: string;
+  jobKey?: string;
+  delayMs?: number;
   transientCiphertextBase64?: string;
   transientCiphertextSha256?: string;
 };
@@ -53,6 +55,20 @@ export type WeeklyReflectionJobData = {
 
 export type ArtifactProcessingQueue = {
   enqueueArtifactProcessing(data: ArtifactProcessingJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
+export type TransientCiphertextCache = {
+  putArtifactCiphertext(input: {
+    artifactId: string;
+    ciphertextBase64: string;
+    ciphertextSha256: string;
+    ttlSeconds?: number;
+  }): Promise<void>;
+  getArtifactCiphertext(artifactId: string): Promise<{
+    ciphertextBase64: string;
+    ciphertextSha256: string;
+  } | null>;
   close(): Promise<void>;
 };
 
@@ -125,7 +141,8 @@ export function createArtifactProcessingQueue(redisUrl: string): ArtifactProcess
     async enqueueArtifactProcessing(data) {
       const job = await queue.add(PROCESS_ARTIFACT_JOB_NAME, data, {
         ...artifactJobOptions,
-        jobId: data.artifactId,
+        delay: data.delayMs,
+        jobId: artifactProcessingJobId(data),
       });
 
       return { jobId: String(job.id) };
@@ -245,6 +262,78 @@ export function createLazyArtifactProcessingQueue(
   };
 }
 
+export function createTransientCiphertextCache(redisUrl: string): TransientCiphertextCache {
+  const redis = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+
+  return {
+    async putArtifactCiphertext(input) {
+      await redis.set(
+        transientArtifactCiphertextKey(input.artifactId),
+        JSON.stringify({
+          ciphertextBase64: input.ciphertextBase64,
+          ciphertextSha256: input.ciphertextSha256,
+        }),
+        "EX",
+        input.ttlSeconds ?? 60 * 60,
+      );
+    },
+    async getArtifactCiphertext(artifactId) {
+      const value = await redis.get(transientArtifactCiphertextKey(artifactId));
+
+      if (!value) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(value) as Partial<{
+          ciphertextBase64: string;
+          ciphertextSha256: string;
+        }>;
+
+        return typeof parsed.ciphertextBase64 === "string" &&
+          typeof parsed.ciphertextSha256 === "string"
+          ? {
+              ciphertextBase64: parsed.ciphertextBase64,
+              ciphertextSha256: parsed.ciphertextSha256,
+            }
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    async close() {
+      await redis.quit();
+    },
+  };
+}
+
+export function createLazyTransientCiphertextCache(
+  redisUrl: string | undefined,
+): TransientCiphertextCache | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let cache: TransientCiphertextCache | null = null;
+
+  return {
+    async putArtifactCiphertext(input) {
+      cache ??= createTransientCiphertextCache(redisUrl);
+      await cache.putArtifactCiphertext(input);
+    },
+    async getArtifactCiphertext(artifactId) {
+      cache ??= createTransientCiphertextCache(redisUrl);
+      return cache.getArtifactCiphertext(artifactId);
+    },
+    async close() {
+      await cache?.close();
+      cache = null;
+    },
+  };
+}
+
 export function createArtifactProcessingWorker(
   redisUrl: string,
   processor: (data: ArtifactProcessingJobData, job: Job<ArtifactProcessingJobData>) => Promise<void>,
@@ -252,7 +341,7 @@ export function createArtifactProcessingWorker(
 ): ArtifactProcessingWorker {
   const worker = new Worker<ArtifactProcessingJobData>(
     ARTIFACT_PROCESSING_QUEUE_NAME,
-    async (job) => {
+    async (job: Job<ArtifactProcessingJobData>) => {
       await processor(job.data, job);
     },
     {
@@ -266,12 +355,12 @@ export function createArtifactProcessingWorker(
       await worker.close();
     },
     onFailed(listener) {
-      worker.on("failed", (job, error) => {
+      worker.on("failed", (job: Job<ArtifactProcessingJobData> | undefined, error) => {
         listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
-      worker.on("completed", (job) => {
+      worker.on("completed", (job: Job<ArtifactProcessingJobData>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },
@@ -285,7 +374,7 @@ export function createIntelligenceProcessingWorker(
 ): IntelligenceProcessingWorker {
   const worker = new Worker<IntelligenceProcessingJobData>(
     INTELLIGENCE_PROCESSING_QUEUE_NAME,
-    async (job) => {
+    async (job: Job<IntelligenceProcessingJobData>) => {
       await processor(job.data, job);
     },
     {
@@ -299,12 +388,12 @@ export function createIntelligenceProcessingWorker(
       await worker.close();
     },
     onFailed(listener) {
-      worker.on("failed", (job, error) => {
+      worker.on("failed", (job: Job<IntelligenceProcessingJobData> | undefined, error) => {
         listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
-      worker.on("completed", (job) => {
+      worker.on("completed", (job: Job<IntelligenceProcessingJobData>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },
@@ -318,7 +407,7 @@ export function createCandidateMemoryArchiveWorker(
 ): CandidateMemoryArchiveWorker {
   const worker = new Worker<CandidateMemoryArchiveJobData>(
     CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME,
-    async (job) => {
+    async (job: Job<CandidateMemoryArchiveJobData>) => {
       await processor(job.data, job);
     },
     {
@@ -332,12 +421,12 @@ export function createCandidateMemoryArchiveWorker(
       await worker.close();
     },
     onFailed(listener) {
-      worker.on("failed", (job, error) => {
+      worker.on("failed", (job: Job<CandidateMemoryArchiveJobData> | undefined, error) => {
         listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
-      worker.on("completed", (job) => {
+      worker.on("completed", (job: Job<CandidateMemoryArchiveJobData>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },
@@ -351,7 +440,7 @@ export function createWeeklyReflectionWorker(
 ): WeeklyReflectionWorker {
   const worker = new Worker<WeeklyReflectionJobData>(
     WEEKLY_REFLECTION_QUEUE_NAME,
-    async (job) => {
+    async (job: Job<WeeklyReflectionJobData>) => {
       await processor(job.data, job);
     },
     {
@@ -365,12 +454,12 @@ export function createWeeklyReflectionWorker(
       await worker.close();
     },
     onFailed(listener) {
-      worker.on("failed", (job, error) => {
+      worker.on("failed", (job: Job<WeeklyReflectionJobData> | undefined, error) => {
         listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
-      worker.on("completed", (job) => {
+      worker.on("completed", (job: Job<WeeklyReflectionJobData>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },
@@ -499,6 +588,16 @@ function redisConnection(redisUrl: string): ConnectionOptions {
 
 function artifactStatusChannel(artifactId: string): string {
   return `sivraj:artifact-status:${artifactId}`;
+}
+
+function transientArtifactCiphertextKey(artifactId: string): string {
+  return `sivraj:artifact-ciphertext:${artifactId}`;
+}
+
+function artifactProcessingJobId(data: ArtifactProcessingJobData): string {
+  return data.jobKey
+    ? `${data.artifactId}-${data.jobKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+    : data.artifactId;
 }
 
 function parseArtifactStatusEvent(message: string): ArtifactStatusEvent | null {

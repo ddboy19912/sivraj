@@ -117,6 +117,26 @@ Exit criteria:
 
 - Coding, research, and strategy agents receive different context from the same Twin.
 
+## Phase 3.5: Coding Agent Memory Layer
+
+Goal: Make Sivraj the persistent engineering memory layer for Codex, Claude Code, Cursor, and custom coding agents.
+
+- Build repo/project engineering profiles from instruction files, docs, package configs, GitHub imports, chats, PR notes, and voice conversations.
+- Add approved-only coding-agent handoff packets for production use.
+- Add review-mode packets for testing candidate rules.
+- Add a Sivraj MCP server with tools for context, source registry, retrieval, project profile, and writeback.
+- Add local CLI commands for context export and writeback.
+- Add repo fingerprinting so local agents receive the right project profile automatically.
+- Add agent writeback for implementation summaries, commands run, test failures, decisions, recurring bugs, and user corrections.
+- Add user review UI for agent writebacks before they update the Twin.
+- Add stale/conflicting engineering instruction review.
+- Add suggested patches for `AGENTS.md`, `CLAUDE.md`, Cursor rules, and repo docs.
+- Add permission and audit UI for each connected coding agent.
+
+Exit criteria:
+
+- A coding agent can start with Sivraj context, complete a task, write back what happened, and a future coding agent can use that history without the user repeating themselves.
+
 ## Phase 4: Synthesis Engine
 
 Goal: Turn memory into strategic intelligence.

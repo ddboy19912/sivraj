@@ -8,6 +8,7 @@ Environment variables are shared contract across:
 - `apps/api`
 - `apps/worker`
 - shared packages
+- `apps/mcp-server`
 - local development
 - deployment
 
@@ -56,6 +57,8 @@ Root `.env.example` is source of truth.
 - `DATABASE_URL`
 - `REDIS_URL`
 - `WORKER_CONCURRENCY`
+- `ARTIFACT_RECONCILE_INTERVAL_MS`
+- `ARTIFACT_RECONCILE_LIMIT`
 - `TRANSIENT_CIPHERTEXT_MAX_BYTES`
 - `INTELLIGENCE_CHUNK_CHARS`
 - `INTELLIGENCE_CHUNK_CONCURRENCY`
@@ -81,6 +84,16 @@ Root `.env.example` is source of truth.
 - `SUI_RPC_URL`
 - `SUI_PRIVATE_KEY`
 - `LOG_LEVEL`
+
+### MCP Server
+
+- `SIVRAJ_API_URL`
+- `SIVRAJ_TWIN_ID`
+- `SIVRAJ_TOKEN`
+- `SIVRAJ_PROJECT_NAME`
+- `SIVRAJ_PROJECT_ID`
+- `SIVRAJ_INCLUDE_CANDIDATES`
+- `SIVRAJ_MAX_ITEMS_PER_SECTION`
 
 ## Contract Groups
 
@@ -115,6 +128,8 @@ Root `.env.example` is source of truth.
 
 - `REDIS_URL`: Redis connection string.
 - `WORKER_CONCURRENCY`: Max concurrent worker jobs.
+- `ARTIFACT_RECONCILE_INTERVAL_MS`: How often the worker scans queued, pending, or stale processing artifacts and resumes them. Defaults to `60000`.
+- `ARTIFACT_RECONCILE_LIMIT`: Max artifacts scanned per reconciliation pass. Defaults to `25`.
 - `TRANSIENT_CIPHERTEXT_MAX_BYTES`: Maximum encrypted payload size the API/worker may pass through Redis for short-lived processing handoff. Defaults to `2097152`; set `0` to force all worker reads through Walrus.
 - `INTELLIGENCE_CHUNK_CHARS`: Target character size for chunking large memory fragments before entity and memory extraction. Defaults to `18000`.
 - `INTELLIGENCE_CHUNK_CONCURRENCY`: Max concurrent chunk extraction tasks inside one intelligence job. Defaults to `2`.
@@ -163,6 +178,23 @@ Root `.env.example` is source of truth.
 
 JWTs are API session tokens issued after Sui wallet verification. They are not the source of user ownership.
 Access tokens are short-lived. Refresh sessions are stored in Postgres as hashed opaque tokens and rotate through `/v1/auth/refresh`.
+
+### MCP Server
+
+- `SIVRAJ_API_URL`: API base URL for the local coding-agent MCP server. Defaults to `API_URL`, then `http://127.0.0.1:3000`.
+- `SIVRAJ_TWIN_ID`: Twin ID the coding agent is allowed to query.
+- `SIVRAJ_TOKEN`: Scoped Sivraj API bearer token. Use `memory:read` for context/search and `artifact:upload` for writeback.
+- `SIVRAJ_PROJECT_NAME`: Optional project name used when generating context packets.
+- `SIVRAJ_PROJECT_ID`: Optional project ID used when generating context packets.
+- `SIVRAJ_INCLUDE_CANDIDATES`: Whether testing MCP context includes candidate engineering memories. Defaults to `true`; production delegated agents should use approved-only mode later.
+- `SIVRAJ_MAX_ITEMS_PER_SECTION`: Max context items per exported section. Defaults to `12`.
+- `SIVRAJ_WRITEBACK_ENCRYPTION`: `api` or `client`. Defaults to `api` for local development. Use `client` for remote MCP deployments so writeback bodies are Seal-encrypted before crossing the network.
+- `SIVRAJ_SEAL_PACKAGE_ID`: Seal package ID for client-side MCP writeback encryption.
+- `SIVRAJ_SEAL_POLICY_ID`: Seal policy object ID for client-side MCP writeback encryption.
+- `SIVRAJ_SEAL_KEY_SERVERS`: Comma-separated or JSON Seal key server config for client-side MCP writeback encryption.
+- `SIVRAJ_SEAL_THRESHOLD`: Seal threshold for client-side MCP writeback encryption. Defaults to `1`.
+- `SIVRAJ_SUI_NETWORK`: Sui network for client-side MCP writeback encryption. Defaults to `SUI_NETWORK`, then `testnet`.
+- `SIVRAJ_SUI_RPC_URL`: Sui RPC URL used by the MCP process for client-side Seal encryption.
 
 ### Observability
 

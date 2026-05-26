@@ -44,6 +44,8 @@ export function resolveDatabaseUrl(env: EnvSource): string {
 export type QueueConfig = {
   redisUrl: string;
   workerConcurrency: number;
+  artifactReconcileIntervalMs: number;
+  artifactReconcileLimit: number;
 };
 
 export type LlmConfig = {
@@ -76,6 +78,19 @@ export type SuiConfig = {
 export type ObservabilityConfig = {
   logLevel: LogLevel;
   otlpEndpoint?: string;
+};
+
+export type McpServerConfig = {
+  apiUrl: string;
+  twinId: string;
+  token: string;
+  projectName?: string;
+  projectId?: string;
+  includeCandidates: boolean;
+  maxItemsPerSection: number;
+  writebackEncryption: "api" | "client";
+  seal?: SealConfig;
+  sui?: Pick<SuiConfig, "network" | "rpcUrl">;
 };
 
 export type SivrajConfig = {
@@ -112,6 +127,8 @@ export function loadConfig(env: EnvSource): SivrajConfig {
     queue: {
       redisUrl: readRequired(env, "REDIS_URL"),
       workerConcurrency: readInteger(env, "WORKER_CONCURRENCY", 2),
+      artifactReconcileIntervalMs: readPositiveInteger(env, "ARTIFACT_RECONCILE_INTERVAL_MS", 60_000),
+      artifactReconcileLimit: readPositiveInteger(env, "ARTIFACT_RECONCILE_LIMIT", 25),
     },
     llm: {
       provider: readOptional(env, "LLM_PROVIDER", "openai"),
@@ -149,6 +166,35 @@ export function loadMemorySearchConfig(env: EnvSource): MemorySearchConfig {
     fallbackLimit: readPositiveInteger(env, "MEMORY_SEARCH_FALLBACK_LIMIT", 20),
     decryptConcurrency: readPositiveInteger(env, "MEMORY_SEARCH_DECRYPT_CONCURRENCY", 3),
     decryptEvidenceLimit: readPositiveInteger(env, "MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT", 3),
+  };
+}
+
+export function loadMcpServerConfig(env: EnvSource): McpServerConfig {
+  const writebackEncryption = readEnum(env, "SIVRAJ_WRITEBACK_ENCRYPTION", ["api", "client"], "api");
+
+  return {
+    apiUrl: readOptional(env, "SIVRAJ_API_URL", readOptional(env, "API_URL", "http://127.0.0.1:3000")).replace(/\/+$/, ""),
+    twinId: readRequired(env, "SIVRAJ_TWIN_ID"),
+    token: readRequired(env, "SIVRAJ_TOKEN"),
+    projectName: readMaybe(env, "SIVRAJ_PROJECT_NAME"),
+    projectId: readMaybe(env, "SIVRAJ_PROJECT_ID"),
+    includeCandidates: readBoolean(env, "SIVRAJ_INCLUDE_CANDIDATES", true),
+    maxItemsPerSection: readPositiveInteger(env, "SIVRAJ_MAX_ITEMS_PER_SECTION", 12),
+    writebackEncryption,
+    ...(writebackEncryption === "client"
+      ? {
+          seal: {
+            packageId: readRequired(env, "SIVRAJ_SEAL_PACKAGE_ID"),
+            policyId: readRequired(env, "SIVRAJ_SEAL_POLICY_ID"),
+            keyServers: readRequired(env, "SIVRAJ_SEAL_KEY_SERVERS"),
+            threshold: readInteger(env, "SIVRAJ_SEAL_THRESHOLD", 1),
+          },
+          sui: {
+            network: readOptional(env, "SIVRAJ_SUI_NETWORK", readOptional(env, "SUI_NETWORK", "testnet")),
+            rpcUrl: readRequired(env, "SIVRAJ_SUI_RPC_URL"),
+          },
+        }
+      : {}),
   };
 }
 

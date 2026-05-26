@@ -5,16 +5,21 @@ import {
   createLazyArtifactProcessingQueue,
   createLazyArtifactStatusPublisher,
   createLazyArtifactStatusSubscriber,
+  createLazyTransientCiphertextCache,
   createLazyWeeklyReflectionQueue,
   type ArtifactProcessingQueue,
   type ArtifactStatusPublisher,
   type ArtifactStatusSubscriber,
+  type TransientCiphertextCache,
   type WeeklyReflectionQueue,
 } from "@sivraj/queue";
 import { db } from "./db.js";
 import { createArtifactRoutes } from "./routes/artifacts.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createAgentTokenRoutes } from "./routes/agent-tokens.js";
 import { createCandidateMemoryRoutes } from "./routes/candidate-memories.js";
+import { createConversationRoutes } from "./routes/conversations.js";
+import { createEngineeringRoutes } from "./routes/engineering.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createGraphRoutes } from "./routes/graph.js";
 import {
@@ -40,6 +45,7 @@ export type AppDependencies = {
   artifactProcessingQueue?: ArtifactProcessingQueue;
   artifactStatusPublisher?: ArtifactStatusPublisher;
   artifactStatusSubscriber?: ArtifactStatusSubscriber;
+  transientCiphertextCache?: TransientCiphertextCache;
   githubImporter?: GitHubImporter;
   privateMemoryReader?: PrivateMemoryReader;
   weeklyReflectionQueue?: WeeklyReflectionQueue;
@@ -122,6 +128,9 @@ export function createApp(
     artifactStatusSubscriber: createLazyArtifactStatusSubscriber(
       process.env["REDIS_URL"],
     ),
+    transientCiphertextCache: createLazyTransientCiphertextCache(
+      process.env["REDIS_URL"],
+    ),
     privateMemoryReader: createConfiguredPrivateMemoryReader(process.env),
     weeklyReflectionQueue: createLazyWeeklyReflectionQueue(
       process.env["REDIS_URL"],
@@ -142,6 +151,7 @@ export function createApp(
 
   app.route("/health", healthRoutes);
   app.route("/v1/auth", createAuthRoutes(dependencies));
+  app.route("/v1/twins/:twinId/agents", createAgentTokenRoutes(dependencies));
   app.route("/v1/twins/:twinId", createIdentityProfileRoutes(dependencies));
   app.route(
     "/v1/twins/:twinId/imports/github",
@@ -155,6 +165,14 @@ export function createApp(
   app.route(
     "/v1/twins/:twinId/candidate-memories",
     createCandidateMemoryRoutes(dependencies),
+  );
+  app.route(
+    "/v1/twins/:twinId/conversations",
+    createConversationRoutes(dependencies),
+  );
+  app.route(
+    "/v1/twins/:twinId/engineering",
+    createEngineeringRoutes(dependencies),
   );
   app.route("/v1/twins/:twinId/graph", createGraphRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));

@@ -1,9 +1,21 @@
-import { signSessionToken, verifySessionToken } from "@sivraj/auth";
 import {
+  AGENT_CONTEXT_READ_SCOPE,
+  AGENT_MEMORY_SEARCH_SCOPE,
+  AGENT_PROJECT_PROFILE_READ_SCOPE,
+  AGENT_SOURCE_READ_SCOPE,
+  AGENT_WRITEBACK_CREATE_SCOPE,
+  signSessionToken,
+  verifySessionToken,
+} from "@sivraj/auth";
+import {
+  apiClients,
+  agentWritebacks,
+  auditEvents,
   candidateMemories,
   graphEdges,
   graphNodes,
   memoryFragments,
+  permissionGrants,
   reflectionRuns,
   sourceArtifacts,
   userFeedbackEvents,
@@ -180,6 +192,430 @@ describe("browser API access", () => {
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "invalid_refresh_token" });
   });
+
+  it("mints delegated coding-agent tokens with narrow agent scopes", async () => {
+    const db = createAgentLayerDb();
+    const app = createApp({ db });
+    const userToken = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/agents/tokens", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${userToken}`,
+      },
+      body: JSON.stringify({
+        agentName: "Codex",
+        scopes: [AGENT_CONTEXT_READ_SCOPE, AGENT_MEMORY_SEARCH_SCOPE],
+        expiresInMinutes: 60,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const payload = await response.json() as {
+      token: string;
+      clientId: string;
+      grantId: string;
+      scopes: string[];
+    };
+    expect(payload.clientId).toBe("agent-client-id");
+    expect(payload.grantId).toBe("permission-grant-id");
+    expect(payload.scopes).toEqual([AGENT_CONTEXT_READ_SCOPE, AGENT_MEMORY_SEARCH_SCOPE]);
+    await expect(verifySessionToken(payload.token, authConfig)).resolves.toMatchObject({
+      sub: "agent-client-id",
+      type: "agent",
+      scopes: [AGENT_CONTEXT_READ_SCOPE, AGENT_MEMORY_SEARCH_SCOPE],
+      twinId: "twin-id",
+      clientId: "agent-client-id",
+    });
+    expect(db.insertCalls.map((call) => (call as { table: unknown }).table)).toEqual([
+      apiClients,
+      permissionGrants,
+      auditEvents,
+    ]);
+    expect(insertValue(db.insertCalls[2])).toMatchObject({
+      eventType: "agent_token.created",
+      resourceType: "api_client",
+      resourceId: "agent-client-id",
+    });
+  });
+
+  it("revokes delegated coding-agent grants by grant id", async () => {
+    const db = createAgentLayerDb();
+    const app = createApp({ db });
+    const userToken = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/agents/clients/71bdf0a1-8967-41e3-9fe8-caf48b7254ae/revoke", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${userToken}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      grantId: "71bdf0a1-8967-41e3-9fe8-caf48b7254ae",
+      clientId: "agent-client-id",
+      status: "revoked",
+    });
+    expect(db.updateCalls).toHaveLength(1);
+    expect(updateValue(db.updateCalls[0])).toMatchObject({
+      revokedAt: expect.any(Date),
+      updatedAt: expect.any(Date),
+    });
+    expect(insertValue(db.insertCalls.at(-1))).toMatchObject({
+      eventType: "agent_client.revoked",
+      resourceType: "permission_grant",
+      resourceId: "71bdf0a1-8967-41e3-9fe8-caf48b7254ae",
+    });
+  });
+
+  it("records delegated agent writebacks as encrypted pending-review records", async () => {
+    const db = createAgentLayerDb();
+    const enqueueCalls: unknown[] = [];
+    const app = createApp({
+      db,
+      privateMemoryStorage: {
+        async storePrivateMemory(input) {
+          expect(input).toMatchObject({
+            twinId: "twin-id",
+            sourceType: "note",
+            title: "Coding agent writeback: Codex",
+            content: expect.stringContaining("## Task Summary"),
+            metadata: {
+              uploadKind: "agent_writeback",
+              importer: "sivraj_agent_api",
+              agentName: "Codex",
+              clientId: "agent-client-id",
+            },
+          });
+
+          return {
+            rawStorageRef: "walrus://blob/writeback",
+            ciphertextSha256: "sha256:writeback",
+            encryptedBytesBase64: Buffer.from("encrypted writeback").toString("base64"),
+            seal: {
+              packageId: "0xpackage",
+              policyId: "0xpolicy",
+              threshold: 1,
+              keyServerObjectIds: ["0xkeyserver"],
+            },
+            walrus: {
+              blobId: "writeback",
+              blobObjectId: "0xblob",
+              startEpoch: 1,
+              endEpoch: 5,
+              size: "19",
+            },
+          };
+        },
+        async storeEncryptedPrivateMemory() {
+          throw new Error("not used");
+        },
+      },
+      artifactProcessingQueue: {
+        async enqueueArtifactProcessing(input) {
+          enqueueCalls.push(input);
+          return { jobId: "writeback-job-id" };
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "agent-client-id",
+        type: "agent",
+        scopes: [AGENT_WRITEBACK_CREATE_SCOPE],
+        twinId: "twin-id",
+        clientId: "agent-client-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/agents/writebacks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        agentName: "Codex",
+        repo: "sivraj",
+        taskSummary: "Implemented the MCP server.",
+        filesTouched: ["apps/mcp-server/src/index.ts"],
+        testsRun: ["pnpm --filter @sivraj/mcp-server test"],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      writebackId: "agent-writeback-id",
+      status: "pending",
+      rawStorageRef: "walrus://blob/writeback",
+      warning: "agent_writeback_pending_review",
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      status: "pending",
+      payload: {
+        kind: "coding_agent_writeback",
+        agentName: "Codex",
+        counts: {
+          filesTouched: 1,
+          testsRun: 1,
+        },
+        storage: {
+          rawStorageRef: "walrus://blob/writeback",
+          ciphertextSha256: "sha256:writeback",
+        },
+      },
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "agent.writeback.created",
+      actorType: "agent",
+      actorId: "agent-client-id",
+      resourceType: "agent_writeback",
+      resourceId: "agent-writeback-id",
+      metadata: {
+        clientId: "agent-client-id",
+        status: "pending",
+      },
+    });
+    expect(enqueueCalls).toEqual([]);
+  });
+
+  it("accepts client-encrypted delegated agent writebacks without plaintext task summary", async () => {
+    const db = createAgentLayerDb();
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const app = createApp({ db, privateMemoryStorage });
+    const encryptedBytes = Buffer.from("client encrypted writeback");
+    const token = await signSessionToken(
+      {
+        sub: "agent-client-id",
+        type: "agent",
+        scopes: [AGENT_WRITEBACK_CREATE_SCOPE],
+        twinId: "twin-id",
+        clientId: "agent-client-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/agents/writebacks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        agentName: "Remote Codex",
+        repo: "sivraj",
+        taskSummarySha256: sha256Hex(Buffer.from("Implemented remote MCP encryption.")),
+        counts: {
+          filesTouched: 2,
+          commandsRun: 1,
+          testsRun: 1,
+          decisions: 1,
+        },
+        encryptedPayload: {
+          ciphertextBase64: encryptedBytes.toString("base64"),
+          ciphertextSha256: sha256Hex(encryptedBytes),
+          seal: {
+            packageId: "0xpackage",
+            policyId: "0xpolicy",
+            threshold: 1,
+            keyServerObjectIds: ["0xkeyserver"],
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      writebackId: "agent-writeback-id",
+      status: "pending",
+      rawStorageRef: "walrus://blob/blob-id",
+      warning: "agent_writeback_pending_review",
+    });
+    expect(privateMemoryStorage.storeCalls).toHaveLength(0);
+    expect(privateMemoryStorage.storeEncryptedCalls[0]).toMatchObject({
+      twinId: "twin-id",
+      sourceType: "note",
+      encryptedBytes,
+      ciphertextSha256: sha256Hex(encryptedBytes),
+      seal: {
+        packageId: "0xpackage",
+        policyId: "0xpolicy",
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      payload: {
+        kind: "coding_agent_writeback",
+        agentName: "Remote Codex",
+        repo: "sivraj",
+        counts: {
+          filesTouched: 2,
+          commandsRun: 1,
+          testsRun: 1,
+          decisions: 1,
+        },
+        storage: {
+          encryptionBoundary: "client",
+        },
+        artifactMetadata: {
+          encryptionBoundary: "client",
+        },
+      },
+    });
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("Implemented remote MCP encryption.");
+  });
+
+  it("rejects agent context assembly when the active grant no longer includes context scope", async () => {
+    const app = createApp({ db: createAgentLayerDb() });
+    const token = await signSessionToken(
+      {
+        sub: "agent-client-id",
+        type: "agent",
+        scopes: [AGENT_CONTEXT_READ_SCOPE],
+        twinId: "twin-id",
+        clientId: "agent-client-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/engineering/context", {
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "agent_grant_inactive" });
+  });
+
+  it("imports pull request history as encrypted pending-review writeback", async () => {
+    const db = createAgentLayerDb({
+      grantScopes: [AGENT_WRITEBACK_CREATE_SCOPE, AGENT_SOURCE_READ_SCOPE],
+    });
+    const app = createApp({
+      db,
+      privateMemoryStorage: {
+        async storePrivateMemory(input) {
+          expect(input).toMatchObject({
+            twinId: "twin-id",
+            sourceType: "note",
+            title: "PR writeback import: Fix memory search",
+            content: expect.stringContaining("# Pull Request Writeback Import"),
+            metadata: {
+              uploadKind: "agent_writeback",
+              importer: "sivraj_agent_api",
+              writebackKind: "pr_import",
+              agentName: "Codex",
+              clientId: "agent-client-id",
+            },
+          });
+          expect(input.content).toContain("## Review Comments");
+          expect(input.content).toContain("- Avoid fallback-only fixes.");
+
+          return {
+            rawStorageRef: "walrus://blob/pr-writeback",
+            ciphertextSha256: "sha256:pr-writeback",
+            encryptedBytesBase64: Buffer.from("encrypted pr writeback").toString("base64"),
+            seal: {
+              packageId: "0xpackage",
+              policyId: "0xpolicy",
+              threshold: 1,
+              keyServerObjectIds: ["0xkeyserver"],
+            },
+            walrus: {
+              blobId: "pr-writeback",
+              blobObjectId: "0xblob",
+              startEpoch: 1,
+              endEpoch: 5,
+              size: "22",
+            },
+          };
+        },
+        async storeEncryptedPrivateMemory() {
+          throw new Error("not used");
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "agent-client-id",
+        type: "agent",
+        scopes: [AGENT_WRITEBACK_CREATE_SCOPE],
+        twinId: "twin-id",
+        clientId: "agent-client-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/agents/writebacks/imports/pr", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        agentName: "Codex",
+        repo: "sivraj",
+        number: 42,
+        title: "Fix memory search",
+        summary: "Stopped retrieval from decrypting too many fragments.",
+        filesChanged: ["apps/api/src/routes/memories.ts"],
+        reviewComments: ["Avoid fallback-only fixes."],
+        testsRun: ["pnpm --filter @sivraj/api test"],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      writebackId: "agent-writeback-id",
+      kind: "pull_request",
+      status: "pending",
+      rawStorageRef: "walrus://blob/pr-writeback",
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      payload: {
+        kind: "coding_agent_pr_import",
+        agentName: "Codex",
+        repo: "sivraj",
+        identifier: "42",
+        counts: {
+          filesChanged: 1,
+          reviewComments: 1,
+          testsRun: 1,
+        },
+        storage: {
+          rawStorageRef: "walrus://blob/pr-writeback",
+        },
+      },
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "agent.writeback_pr_import.created",
+      resourceType: "agent_writeback",
+      metadata: {
+        clientId: "agent-client-id",
+        repo: "sivraj",
+        identifier: "42",
+      },
+    });
+  });
 });
 
 describe("feedback routes", () => {
@@ -270,6 +706,195 @@ describe("feedback routes", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "invalid_feedback_metadata" });
+  });
+});
+
+describe("conversation review routes", () => {
+  const twinId = "11111111-1111-4111-8111-111111111111";
+  const artifactId = "22222222-2222-4222-8222-222222222222";
+  const candidateId = "33333333-3333-4333-8333-333333333333";
+
+  it("returns a private-safe voice conversation review summary", async () => {
+    const db = createConversationReviewDb({ twinId, artifactId, candidateId });
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/conversations/${artifactId}/review`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toMatchObject({
+      policy: {
+        rawArtifactsIncluded: false,
+        approvalRequiredBeforeTwinUpdate: true,
+      },
+      artifact: {
+        id: artifactId,
+        sourceType: "voice_conversation",
+      },
+      summary: {
+        artifactId,
+        candidateMemoryCount: 1,
+        countsByType: {
+          decision: 1,
+        },
+        subjects: ["Sivraj positioning"],
+      },
+      candidateMemories: [
+        {
+          id: candidateId,
+          subject: "Sivraj positioning",
+          statementStorageRef: "walrus://blob/candidate",
+        },
+      ],
+    });
+    expect(JSON.stringify(payload)).not.toContain("I decided");
+  });
+
+  it("stores encrypted conversation summary and audits generation", async () => {
+    const db = createConversationReviewDb({ twinId, artifactId, candidateId });
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const app = createApp({ db, privateMemoryStorage });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/conversations/${artifactId}/summary`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      artifactId,
+      status: "generated",
+      summaryStorageRef: "walrus://blob/blob-id",
+    });
+    expect(privateMemoryStorage.storeCalls[0]).toMatchObject({
+      twinId,
+      sourceType: "note",
+      title: "Voice conversation review summary",
+      metadata: {
+        uploadKind: "voice_conversation_summary",
+        sourceArtifactId: artifactId,
+      },
+    });
+    expect(updateValue(db.updateCalls[0])).toMatchObject({
+      metadata: {
+        conversationReview: {
+          summary: {
+            status: "generated",
+            summaryStorageRef: "walrus://blob/blob-id",
+          },
+        },
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      eventType: "conversation.summary.generated",
+      resourceType: "source_artifact",
+      resourceId: artifactId,
+    });
+  });
+
+  it("approves edited voice-derived memories into encrypted ingestion path", async () => {
+    const db = createConversationReviewDb({ twinId, artifactId, candidateId });
+    const privateMemoryStorage = createFakePrivateMemoryStorage();
+    const queueCalls: unknown[] = [];
+    const app = createApp({
+      db,
+      privateMemoryStorage,
+      artifactProcessingQueue: {
+        async enqueueArtifactProcessing(input) {
+          queueCalls.push(input);
+          return { jobId: "approved-memory-job-id" };
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/conversations/${artifactId}/memories/review`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        actions: [
+          {
+            candidateId,
+            action: "approve",
+            editedStatement: "The user decided to position Sivraj around owned memory.",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      artifactId,
+      status: "reviewed",
+      approvedCount: 1,
+      editedArtifactCount: 1,
+      results: [
+        {
+          candidateId,
+          status: "approved",
+          approvedArtifactId: "approved-conversation-artifact-id",
+          processingJobId: "approved-memory-job-id",
+        },
+      ],
+    });
+    expect(privateMemoryStorage.storeCalls[0]).toMatchObject({
+      twinId,
+      sourceType: "note",
+      title: "Approved voice conversation memory",
+      content: "The user decided to position Sivraj around owned memory.",
+      metadata: {
+        uploadKind: "approved_voice_conversation_memory",
+        sourceArtifactId: artifactId,
+        sourceCandidateMemoryId: candidateId,
+        voiceDerived: true,
+        reviewApproved: true,
+      },
+    });
+    expect(queueCalls).toEqual([
+      {
+        artifactId: "approved-conversation-artifact-id",
+        twinId,
+        sourceType: "note",
+      },
+    ]);
+    expect(db.insertCalls.map((call) => (call as { table: unknown }).table)).toContain(userFeedbackEvents);
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).toContain("conversation.approved_memory.stored");
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).toContain("conversation.memories.reviewed");
   });
 });
 
@@ -527,6 +1152,394 @@ describe("console read routes", () => {
           subject: "Project Alpha",
         },
       ],
+    });
+  });
+
+  it("returns an agent-ready engineering context packet without plaintext statements", async () => {
+    const engineeringArtifactId = "33333333-3333-4333-8333-333333333333";
+    const db = createFakeDb([], [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        twinId,
+        sourceArtifactId: engineeringArtifactId,
+        memoryFragmentId: "55555555-5555-4555-8555-555555555555",
+        memoryType: "decision",
+        status: "approved",
+        statementStorageRef: "walrus://blob/statement-1",
+        statementSha256: "statement-sha-1",
+        evidenceHash: "evidence-sha-1",
+        evidenceLength: 48,
+        confidenceScore: 0.92,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "architecture_decision",
+          engineeringInstructionScope: "project",
+          subject: "Sivraj API",
+          sourceType: "github",
+          statement: "Plaintext statement must not leave storage.",
+          rawText: "Plaintext raw text must not leave storage.",
+        },
+      },
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        twinId,
+        sourceArtifactId: engineeringArtifactId,
+        memoryFragmentId: "77777777-7777-4777-8777-777777777777",
+        memoryType: "preference",
+        status: "candidate",
+        statementStorageRef: "walrus://blob/statement-2",
+        statementSha256: "statement-sha-2",
+        evidenceHash: "evidence-sha-2",
+        evidenceLength: 33,
+        confidenceScore: 0.84,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "coding_preference",
+          engineeringInstructionScope: "global_user",
+          subject: "TypeScript",
+          sourceType: "agent_instruction_file",
+        },
+      },
+      {
+        id: "88888888-8888-4888-8888-888888888888",
+        twinId,
+        sourceArtifactId: engineeringArtifactId,
+        memoryFragmentId: "99999999-9999-4999-8999-999999999999",
+        memoryType: "fact",
+        status: "candidate",
+        statementStorageRef: "walrus://blob/non-engineering",
+        statementSha256: "statement-sha-3",
+        evidenceHash: "evidence-sha-3",
+        evidenceLength: 24,
+        confidenceScore: 0.7,
+        metadata: {
+          subject: "Ignored generic candidate",
+        },
+      },
+    ]);
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(
+      `/v1/twins/${twinId}/engineering/context?artifactId=${engineeringArtifactId}&projectName=Sivraj&includeCandidate=true`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(body).toMatchObject({
+      policy: {
+        rawArtifactsIncluded: false,
+        decryptedMemoryIncluded: false,
+        plaintextStatementsIncluded: false,
+        derivedEngineeringContextIncluded: true,
+        scope: "memory:read",
+      },
+      relationship: {
+        handoff: expect.stringContaining("contextMarkdown"),
+      },
+      contextPacket: {
+        purpose: "coding_agent_context",
+        project: {
+          name: "Sivraj",
+        },
+        counts: {
+          totalItems: 2,
+          evidenceRefs: 2,
+        },
+        sections: {
+          architectureRules: [
+            {
+              id: "44444444-4444-4444-8444-444444444444",
+              type: "architecture_decision",
+              subject: "Sivraj API",
+              evidence: {
+                candidateMemoryId: "44444444-4444-4444-8444-444444444444",
+                sourceArtifactId: engineeringArtifactId,
+              },
+            },
+          ],
+          userPreferences: [
+            {
+              id: "66666666-6666-4666-8666-666666666666",
+              type: "coding_preference",
+              subject: "TypeScript",
+            },
+          ],
+        },
+      },
+      profileSummary: {
+        totalEngineeringMemories: 2,
+        includedContextItems: 2,
+      },
+    });
+    expect(body.contextMarkdown).toContain("# Sivraj Coding Agent Context");
+    expect(body.contextMarkdown).toContain("## Apply These Rules");
+    expect(body.contextMarkdown).toContain("Respect the user's coding preference around TypeScript.");
+    expect(body.contextMarkdown).toContain(`artifact ${engineeringArtifactId}`);
+    expect(JSON.stringify(body)).not.toContain("Plaintext statement");
+    expect(JSON.stringify(body)).not.toContain("Plaintext raw text");
+    expect(JSON.stringify(body)).not.toContain("Ignored generic candidate");
+  });
+
+  it("lists stale and conflicting engineering instructions for review", async () => {
+    const engineeringArtifactId = "33333333-3333-4333-8333-333333333333";
+    const db = createFakeDb([], [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        twinId,
+        sourceArtifactId: engineeringArtifactId,
+        memoryFragmentId: "55555555-5555-4555-8555-555555555555",
+        memoryType: "preference",
+        status: "candidate",
+        statementStorageRef: "walrus://blob/statement-1",
+        statementSha256: "statement-sha-1",
+        evidenceHash: "evidence-sha-1",
+        evidenceLength: 48,
+        confidenceScore: 0.92,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "tool_preference",
+          engineeringInstructionScope: "agent_specific",
+          subject: "pnpm",
+          agentContextLine: "Use pnpm for package management.",
+        },
+      },
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        twinId,
+        sourceArtifactId: engineeringArtifactId,
+        memoryFragmentId: "77777777-7777-4777-8777-777777777777",
+        memoryType: "preference",
+        status: "candidate",
+        statementStorageRef: "walrus://blob/statement-2",
+        statementSha256: "statement-sha-2",
+        evidenceHash: "evidence-sha-2",
+        evidenceLength: 48,
+        confidenceScore: 0.7,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "tool_preference",
+          engineeringInstructionScope: "agent_specific",
+          subject: "npm",
+          agentContextLine: "Use npm for package management.",
+          statement: "Plaintext statement must not leave storage.",
+        },
+      },
+    ]);
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(
+      `/v1/twins/${twinId}/engineering/review-queue?projectName=Sivraj&repoName=sivraj&packageManager=pnpm&includeTemporary=true`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(body).toMatchObject({
+      policy: {
+        rawArtifactsIncluded: false,
+        plaintextStatementsIncluded: false,
+      },
+      summary: {
+        issueCount: 1,
+      },
+      issues: [
+        {
+          reason: "package_manager_conflict",
+          severity: "medium",
+          candidate: {
+            id: "66666666-6666-4666-8666-666666666666",
+            agentContextLine: "Use npm for package management.",
+          },
+          existing: {
+            id: "44444444-4444-4444-8444-444444444444",
+            agentContextLine: "Use pnpm for package management.",
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("Plaintext statement");
+  });
+
+  it("records engineering review actions and updates candidate status", async () => {
+    const db = createEngineeringReviewActionDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(
+      `/v1/twins/${twinId}/engineering/review-queue/44444444-4444-4444-8444-444444444444/action`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "supersede" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      candidateId: "44444444-4444-4444-8444-444444444444",
+      action: "supersede",
+      status: "superseded",
+      feedbackId: "feedback-id",
+    });
+    expect(updateValue(db.updateCalls[0])).toMatchObject({ status: "superseded" });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      feedbackType: "edited_later",
+      metadata: {
+        surface: "engineering_review_queue",
+        action: "supersede",
+      },
+    });
+  });
+
+  it("generates private-safe instruction patch suggestions", async () => {
+    const db = createFakeDb([], [
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        twinId,
+        sourceArtifactId: "33333333-3333-4333-8333-333333333333",
+        memoryFragmentId: "55555555-5555-4555-8555-555555555555",
+        memoryType: "fact",
+        status: "approved",
+        statementStorageRef: "walrus://blob/statement-1",
+        statementSha256: "statement-sha-1",
+        evidenceHash: "evidence-sha-1",
+        evidenceLength: 48,
+        confidenceScore: 0.92,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "agent_instruction",
+          engineeringInstructionScope: "agent_specific",
+          subject: "git safety",
+          agentContextLine: "Do not revert user changes unless explicitly requested.",
+          statement: "Plaintext statement must not leave storage.",
+        },
+      },
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        twinId,
+        sourceArtifactId: "33333333-3333-4333-8333-333333333333",
+        memoryFragmentId: "77777777-7777-4777-8777-777777777777",
+        memoryType: "preference",
+        status: "candidate",
+        statementStorageRef: "walrus://blob/statement-2",
+        statementSha256: "statement-sha-2",
+        evidenceHash: "evidence-sha-2",
+        evidenceLength: 48,
+        confidenceScore: 0.7,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "tool_preference",
+          engineeringInstructionScope: "agent_specific",
+          subject: "pnpm",
+          agentContextLine: "Use pnpm for package management.",
+        },
+      },
+    ]);
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/engineering/instruction-patch`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        projectName: "Sivraj",
+        repoName: "sivraj",
+        packageManager: "pnpm",
+        frameworks: ["vite", "react"],
+        targetFile: "AGENTS.md",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    expect(body).toMatchObject({
+      policy: {
+        rawArtifactsIncluded: false,
+        plaintextStatementsIncluded: false,
+        autoWriteEnabled: false,
+      },
+      patch: {
+        targetFile: "AGENTS.md",
+        operation: "create_or_replace",
+        includedCandidate: false,
+        itemCount: 1,
+      },
+    });
+    expect(body.patch.suggestedMarkdown).toContain("# Agent Instructions");
+    expect(body.patch.suggestedMarkdown).toContain("Do not revert user changes unless explicitly requested.");
+    expect(body.patch.suggestedMarkdown).not.toContain("Use pnpm for package management.");
+    expect(JSON.stringify(body)).not.toContain("Plaintext statement");
+  });
+
+  it("requires memory read scope for engineering context packets", async () => {
+    const db = createFakeDb();
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload"],
+        twinId,
+      },
+      authConfig,
+    );
+
+    const response = await app.request(`/v1/twins/${twinId}/engineering/context`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: "missing_scope",
+      scopes: ["memory:read", AGENT_CONTEXT_READ_SCOPE, AGENT_PROJECT_PROFILE_READ_SCOPE],
     });
   });
 
@@ -950,7 +1963,14 @@ describe("protected artifact route", () => {
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        sourceType: "note",
+        sourceType: "markdown",
+        metadata: {
+          fileName: "CLAUDE.md",
+          fileType: "text/markdown",
+          fileSize: 123,
+          uploadKind: "file",
+          content: "plaintext metadata must be dropped",
+        },
         encryptedPayload: {
           ciphertextBase64: encryptedBytes.toString("base64"),
           ciphertextSha256: encryptedSha256,
@@ -969,7 +1989,7 @@ describe("protected artifact route", () => {
     expect(privateMemoryStorage.storeEncryptedCalls).toHaveLength(1);
     expect(privateMemoryStorage.storeEncryptedCalls[0]).toMatchObject({
       twinId: "twin-id",
-      sourceType: "note",
+      sourceType: "markdown",
       ciphertextSha256: encryptedSha256,
       seal: {
         packageId: "0xclientpackage",
@@ -988,15 +2008,20 @@ describe("protected artifact route", () => {
           kind: "source_artifact",
           version: 1,
         },
+        fileType: "text/markdown",
+        fileSize: 123,
+        uploadKind: "file",
       },
       rawStorageRef: "walrus://blob/blob-id",
     });
+    expect(JSON.stringify(insertValue(db.insertCalls[0]))).not.toContain("CLAUDE.md");
     expect(artifactProcessingQueue.enqueueCalls[0]).toEqual({
       artifactId: "artifact-id",
       twinId: "twin-id",
-      sourceType: "note",
+      sourceType: "markdown",
     });
     expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("client encrypted payload");
+    expect(JSON.stringify(db.insertCalls.map(insertValue))).not.toContain("plaintext metadata");
   });
 
   it("rejects malformed client-encrypted artifact payloads", async () => {
@@ -1307,6 +2332,7 @@ describe("protected artifact route", () => {
       artifactId: "artifact-id",
       twinId: "twin-id",
       sourceType: "voice_conversation",
+      jobKey: expect.stringMatching(/^retry-\d+$/),
     });
   });
 
@@ -1338,8 +2364,9 @@ describe("protected artifact route", () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
-      error: "artifact_not_failed",
+      error: "artifact_not_retryable",
       status: "completed",
+      reason: null,
     });
     expect(db.updateCalls).toEqual([]);
   });
@@ -1489,7 +2516,7 @@ describe("memory retrieval route", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: "missing_scope",
-      scope: "memory:read",
+      scopes: ["memory:read", AGENT_MEMORY_SEARCH_SCOPE],
     });
   });
 
@@ -1562,6 +2589,62 @@ describe("memory retrieval route", () => {
         query: "launch UI polish",
         resultCount: 1,
         memoryFragmentIds: ["memory-launch"],
+      },
+    });
+  });
+
+  it("allows delegated agent memory search scope and audits client identity", async () => {
+    const db = createFakeDb([
+      memoryRow({
+        id: "memory-agent",
+        contentStorageRef: "walrus://blob/memory-agent",
+      }),
+    ]);
+    const app = createApp({
+      db,
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Sivraj should give coding agents source-backed engineering context.";
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "agent-client-id",
+        type: "agent",
+        scopes: [AGENT_MEMORY_SEARCH_SCOPE],
+        twinId: "twin-id",
+        clientId: "agent-client-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/memories/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ query: "coding agents context", limit: 5 }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      results: [
+        {
+          id: "memory-agent",
+        },
+      ],
+      policy: {
+        agentScopesAccepted: [AGENT_MEMORY_SEARCH_SCOPE],
+      },
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      eventType: "memory.search",
+      actorType: "agent",
+      actorId: "agent-client-id",
+      metadata: {
+        clientId: "agent-client-id",
       },
     });
   });
@@ -2126,6 +3209,17 @@ function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[]
             ? memoryRows
             : table === candidateMemories
               ? candidateMemoryRows
+              : table === permissionGrants
+                ? [{
+                    id: "permission-grant-id",
+                    scopes: [
+                      AGENT_CONTEXT_READ_SCOPE,
+                      AGENT_SOURCE_READ_SCOPE,
+                      AGENT_PROJECT_PROFILE_READ_SCOPE,
+                      AGENT_MEMORY_SEARCH_SCOPE,
+                      AGENT_WRITEBACK_CREATE_SCOPE,
+                    ],
+                  }]
               : [];
           const chain = {
             where() {
@@ -2147,6 +3241,141 @@ function createFakeDb(memoryRows: unknown[] = [], candidateMemoryRows: unknown[]
       };
     },
   } as unknown as AppDependencies["db"] & { insertCalls: unknown[] };
+}
+
+function createAgentLayerDb(options: { grantScopes?: string[] } = {}) {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  const grantScopes = options.grantScopes ?? [AGENT_WRITEBACK_CREATE_SCOPE];
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              if (table === apiClients) {
+                return Promise.resolve([{ id: "agent-client-id" }]);
+              }
+
+              if (table === permissionGrants) {
+                return Promise.resolve([{ id: "permission-grant-id" }]);
+              }
+
+              if (table === agentWritebacks) {
+                return Promise.resolve([
+                  {
+                    id: "agent-writeback-id",
+                    twinId: "twin-id",
+                    clientId: "agent-client-id",
+                    status: "pending",
+                    payload: (value as Record<string, unknown>)["payload"],
+                    approvedAt: null,
+                    rejectedAt: null,
+                    createdAt: new Date("2026-05-25T00:00:00.000Z"),
+                    updatedAt: new Date("2026-05-25T00:00:00.000Z"),
+                  },
+                ]);
+              }
+
+              if (table === sourceArtifacts) {
+                return Promise.resolve([
+                  {
+                    id: "agent-writeback-artifact-id",
+                    ingestionStatus: "queued",
+                  },
+                ]);
+              }
+
+              return Promise.resolve([]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          return {
+            where() {
+              return {
+                returning() {
+                  if (table === permissionGrants) {
+                    return Promise.resolve([
+                      {
+                        id: "71bdf0a1-8967-41e3-9fe8-caf48b7254ae",
+                        twinId: "twin-id",
+                        clientId: "agent-client-id",
+                        scopes: grantScopes,
+                        memoryDomains: ["engineering"],
+                        expiresAt: new Date("2026-05-26T00:00:00.000Z"),
+                        revokedAt: (value as Record<string, unknown>)["revokedAt"],
+                        createdAt: new Date("2026-05-25T00:00:00.000Z"),
+                        updatedAt: (value as Record<string, unknown>)["updatedAt"],
+                      },
+                    ]);
+                  }
+
+                  return Promise.resolve([]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from(table: unknown) {
+          const rows = table === permissionGrants
+            ? [{
+                id: "permission-grant-id",
+                twinId: "twin-id",
+                clientId: "agent-client-id",
+                scopes: grantScopes,
+                memoryDomains: ["engineering"],
+                expiresAt: new Date("2026-05-26T00:00:00.000Z"),
+                revokedAt: null,
+                createdAt: new Date("2026-05-25T00:00:00.000Z"),
+                updatedAt: new Date("2026-05-25T00:00:00.000Z"),
+              }]
+            : table === apiClients
+              ? [{
+                  id: "agent-client-id",
+                  name: "Codex",
+                  type: "coding_agent",
+                  metadata: { origin: "agent_token_flow" },
+                  redirectUris: [],
+                  createdAt: new Date("2026-05-25T00:00:00.000Z"),
+                  updatedAt: new Date("2026-05-25T00:00:00.000Z"),
+                }]
+              : [];
+          const chain = {
+            where() {
+              return chain;
+            },
+            orderBy() {
+              return chain;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve(rows);
+            },
+          };
+
+          return chain;
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & { insertCalls: unknown[]; updateCalls: unknown[] };
 }
 
 function createIdentityProfileDb({ profile }: { profile: Record<string, unknown> | null }) {
@@ -2281,6 +3510,88 @@ function createFeedbackDb() {
   };
 }
 
+function createEngineeringReviewActionDb() {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              if (table === userFeedbackEvents) {
+                return Promise.resolve([{ id: "feedback-id" }]);
+              }
+
+              return Promise.resolve([{ id: "audit-id" }]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          return {
+            where() {
+              return {
+                returning() {
+                  return Promise.resolve([
+                    {
+                      id: "44444444-4444-4444-8444-444444444444",
+                      status: (value as Record<string, unknown>).status,
+                    },
+                  ]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from(table: unknown) {
+          const rows = table === permissionGrants
+            ? [{
+                id: "permission-grant-id",
+                twinId,
+                clientId: null,
+                scopes: ["memory:read"],
+                memoryDomains: ["engineering"],
+                expiresAt: new Date("2026-05-26T00:00:00.000Z"),
+                revokedAt: null,
+              }]
+            : [];
+
+          return {
+            where() {
+              return {
+                limit() {
+                  return Promise.resolve(rows);
+                },
+                then(resolve: (value: unknown[]) => void) {
+                  return Promise.resolve(rows).then(resolve);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
+  };
+}
+
 function createFakeWeeklyReflectionQueue() {
   const enqueueCalls: Array<{
     reflectionRunId: string;
@@ -2296,6 +3607,147 @@ function createFakeWeeklyReflectionQueue() {
       return { jobId: input.reflectionRunId };
     },
     async close() {},
+  };
+}
+
+function createConversationReviewDb(input: {
+  twinId: string;
+  artifactId: string;
+  candidateId: string;
+}) {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  const artifact = {
+    id: input.artifactId,
+    twinId: input.twinId,
+    sourceType: "voice_conversation",
+    uri: null,
+    rawStorageRef: "walrus://blob/voice-conversation",
+    hash: null,
+    metadata: {
+      storageMode: "encrypted_walrus",
+      sensitivity: "private",
+      fileType: "audio/webm",
+      processing: {
+        transcription: {
+          status: "completed",
+        },
+      },
+    },
+    ingestionStatus: "completed",
+    createdAt: new Date("2026-05-25T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-25T00:00:00.000Z"),
+  };
+  const candidate = {
+    id: input.candidateId,
+    twinId: input.twinId,
+    canonicalMemoryId: null,
+    sourceArtifactId: input.artifactId,
+    memoryFragmentId: "44444444-4444-4444-8444-444444444444",
+    memoryType: "decision",
+    status: "candidate",
+    statementStorageRef: "walrus://blob/candidate",
+    statementSha256: "sha256:candidate",
+    evidenceHash: "evidence-hash",
+    evidenceLength: 42,
+    confidenceScore: 0.91,
+    metadata: {
+      sourceKind: "conversation",
+      conversationSourceType: "voice_conversation",
+      voiceDerived: true,
+      subject: "Sivraj positioning",
+      conversationUnderstanding: {
+        sourceType: "voice_conversation",
+        decisionCount: 1,
+      },
+    },
+    createdAt: new Date("2026-05-25T00:01:00.000Z"),
+    updatedAt: new Date("2026-05-25T00:01:00.000Z"),
+  };
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              if (table === userFeedbackEvents) {
+                return Promise.resolve([{ id: "feedback-id" }]);
+              }
+
+              if (table === sourceArtifacts) {
+                return Promise.resolve([
+                  {
+                    id: "approved-conversation-artifact-id",
+                    ingestionStatus: "queued",
+                  },
+                ]);
+              }
+
+              return Promise.resolve([{ id: "audit-id" }]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+
+          return {
+            where() {
+              return {
+                returning() {
+                  if (table === candidateMemories) {
+                    return Promise.resolve([{ status: (value as Record<string, unknown>).status }]);
+                  }
+
+                  return Promise.resolve([]);
+                },
+                then(resolve: (value: unknown[]) => void) {
+                  return Promise.resolve([]).then(resolve);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from(table: unknown) {
+          const rows = table === sourceArtifacts
+            ? [artifact]
+            : table === candidateMemories
+              ? [candidate]
+              : [];
+          const chain = {
+            where() {
+              return chain;
+            },
+            orderBy() {
+              return chain;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              return Promise.resolve(rows).then(resolve);
+            },
+          };
+
+          return chain;
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & {
+    insertCalls: unknown[];
+    updateCalls: unknown[];
   };
 }
 

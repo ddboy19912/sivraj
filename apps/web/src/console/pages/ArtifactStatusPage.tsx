@@ -145,6 +145,8 @@ export function ArtifactStatusPage() {
 
   const ingestionStatus = liveEvent?.status ?? detail?.ingestionStatus
   const intelligenceStatus = liveEvent?.intelligenceStatus ?? detail?.intelligenceStatus
+  const canRetry = Boolean(detail) &&
+    (detail?.ingestionStatus === 'failed' || detail?.processingReason === 'encrypted_decryption_retrying')
 
   return (
     <section className="console-page">
@@ -165,7 +167,7 @@ export function ArtifactStatusPage() {
           <button
             className="secondary-action"
             type="button"
-            disabled={!detail || detail.ingestionStatus !== 'failed' || isRetrying}
+            disabled={!canRetry || isRetrying}
             onClick={() => void handleRetry()}
           >
             {isRetrying ? 'Retrying...' : 'Retry failed artifact'}

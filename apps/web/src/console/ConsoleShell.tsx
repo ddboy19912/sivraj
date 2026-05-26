@@ -3,10 +3,16 @@ import type { Session } from '../lib/api'
 import { ConsoleContext } from './context'
 import './Console.css'
 import { ApiGuidePage } from './pages/ApiGuidePage'
+import { AgentContextPage } from './pages/AgentContextPage'
+import { AgentPermissionsPage } from './pages/AgentPermissionsPage'
+import { AgentWritebacksPage } from './pages/AgentWritebacksPage'
 import { ArtifactStatusPage } from './pages/ArtifactStatusPage'
 import { CandidateMemoriesPage } from './pages/CandidateMemoriesPage'
+import { EngineeringSourcesPage } from './pages/EngineeringSourcesPage'
+import { EngineeringReviewPage } from './pages/EngineeringReviewPage'
 import { GraphPage } from './pages/GraphPage'
 import { IngestPage } from './pages/IngestPage'
+import { InstructionPatchPage } from './pages/InstructionPatchPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { ReflectionsPage } from './pages/ReflectionsPage'
 import { RetrievalPage } from './pages/RetrievalPage'
@@ -76,6 +82,12 @@ export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }
         {page === 'artifact-status' ? <ArtifactStatusPage /> : null}
         {page === 'retrieval' ? <RetrievalPage /> : null}
         {page === 'candidate-memories' ? <CandidateMemoriesPage /> : null}
+        {page === 'agent-permissions' ? <AgentPermissionsPage /> : null}
+        {page === 'agent-writebacks' ? <AgentWritebacksPage /> : null}
+        {page === 'agent-context' ? <AgentContextPage /> : null}
+        {page === 'engineering-review' ? <EngineeringReviewPage /> : null}
+        {page === 'instruction-patch' ? <InstructionPatchPage /> : null}
+        {page === 'engineering-sources' ? <EngineeringSourcesPage /> : null}
         {page === 'graph' ? <GraphPage /> : null}
         {page === 'reflections' ? <ReflectionsPage /> : null}
         {page === 'privacy' ? <PrivacyPage /> : null}

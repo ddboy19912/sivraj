@@ -59,6 +59,23 @@
   align-items: end;
 }
 
+.console-form.wide {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px;
+}
+
+.console-form.wide h3 {
+  margin: 0;
+}
+
+.console-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .console-form label {
   display: grid;
   gap: 6px;
@@ -86,6 +103,47 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.console-inline-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.console-inline-label select {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 10px;
+  font: inherit;
+}
+
+.console-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+
+.console-checkbox input {
+  width: auto;
+}
+
+.console-panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.console-panel-header h3 {
+  margin: 0;
 }
 
 .secondary-action.compact {
@@ -147,6 +205,20 @@
   grid-column: 1 / -1;
 }
 
+.console-subpanel {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.console-subpanel p {
+  margin: 0;
+}
+
 .console-panel pre,
 .console-panel code {
   margin: 0;
@@ -178,6 +250,23 @@
 
 .console-result-card p {
   margin: 10px 0;
+}
+
+.console-mini-dl {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px 10px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.console-mini-dl dt {
+  color: var(--muted);
+}
+
+.console-mini-dl dd {
+  margin: 0;
+  word-break: break-word;
 }
 
 .console-table-wrap {
@@ -217,6 +306,28 @@
   padding: 0;
   display: grid;
   gap: 8px;
+}
+
+.console-context-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.console-context-items li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.console-context-items span,
+.console-context-items small {
+  color: var(--muted);
 }
 
 .console-list li {
@@ -300,6 +411,7 @@
 
 @media (max-width: 860px) {
   .console-form.inline,
+  .console-form-grid,
   .console-grid {
     grid-template-columns: 1fr;
   }

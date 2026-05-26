@@ -3,6 +3,7 @@ import {
   tokenize,
   type MemoryCandidate,
 } from "@sivraj/retrieval";
+import { AGENT_MEMORY_SEARCH_SCOPE } from "@sivraj/auth";
 import {
   auditEvents,
   candidateMemories,
@@ -14,7 +15,8 @@ import { loadMemorySearchConfig, type MemorySearchConfig } from "@sivraj/config"
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
-import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
+import { hasActiveAgentGrantForScopes } from "../lib/agent-grants.js";
+import { requireAnyScope, requireAuth, type AuthEnv } from "../middleware/auth.js";
 
 export function createMemoryRoutes({
   db,
@@ -24,7 +26,7 @@ export function createMemoryRoutes({
   const memoryRoutes = new Hono<AuthEnv>();
 
   memoryRoutes.post("/search", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
+    const scopeError = requireAnyScope(c, ["memory:read", AGENT_MEMORY_SEARCH_SCOPE]);
 
     if (scopeError) {
       return scopeError;
@@ -39,6 +41,15 @@ export function createMemoryRoutes({
 
     if (auth.type !== "service" && auth.twinId !== twinId) {
       return c.json({ error: "twin_scope_mismatch" }, 403);
+    }
+
+    if (!await hasActiveAgentGrantForScopes({
+      db,
+      auth,
+      twinId,
+      acceptedScopes: [AGENT_MEMORY_SEARCH_SCOPE],
+    })) {
+      return c.json({ error: "agent_grant_inactive" }, 403);
     }
 
     const body = await c.req.json().catch(() => null);
@@ -173,6 +184,8 @@ export function createMemoryRoutes({
         searchedFragmentCount: rows.length,
         durationMs: timing.totalMs,
         timing,
+        clientId: auth.clientId,
+        agentScopeAccepted: AGENT_MEMORY_SEARCH_SCOPE,
         memoryFragmentIds: results.map((result) => result.memory.id),
         canonicalMemoryIds: results
           .map((result) => canonicalMemoryIdsByFragmentId.get(result.memory.id))
@@ -196,6 +209,7 @@ export function createMemoryRoutes({
       policy: {
         rawArtifactsIncluded: false,
         scope: "memory:read",
+        agentScopesAccepted: [AGENT_MEMORY_SEARCH_SCOPE],
         privateFragmentsSkipped: decryptFailureCount,
         searchMode: mode,
         indexMatchCount,

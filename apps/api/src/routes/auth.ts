@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  FIRST_PARTY_USER_SCOPES,
   createWalletChallenge,
   loadAuthConfig,
   signSessionToken,
@@ -11,7 +12,6 @@ import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { getSuiAuthClient } from "../sui-client.js";
 
-const FIRST_PARTY_USER_SCOPES = ["artifact:upload", "memory:read"];
 const ACCESS_TOKEN_TTL = "15m";
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -179,7 +179,7 @@ async function createApiSession(input: {
   const scopes =
     input.scopes && input.scopes.length > 0
       ? input.scopes
-      : FIRST_PARTY_USER_SCOPES;
+      : [...FIRST_PARTY_USER_SCOPES];
   const expiresAt = new Date(input.now.getTime() + ACCESS_TOKEN_TTL_MS);
   const refreshToken = createRefreshToken();
   const refreshExpiresAt = new Date(input.now.getTime() + REFRESH_TOKEN_TTL_MS);

@@ -6,6 +6,12 @@ const PLAINTEXT_LIKE_METADATA_KEYS = new Set([
   "statement",
   "text",
   "title",
+  "filename",
+  "file_name",
+  "file",
+  "path",
+  "sourcefile",
+  "source_file",
   "summary",
   "transcript",
 ]);

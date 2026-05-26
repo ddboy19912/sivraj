@@ -1,5 +1,5 @@
 import type { AuthClaims } from "@sivraj/auth";
-import { loadAuthConfig, parseBearerToken, verifySessionToken } from "@sivraj/auth";
+import { hasAnyScope, loadAuthConfig, parseBearerToken, verifySessionToken } from "@sivraj/auth";
 import type { Context, MiddlewareHandler } from "hono";
 
 export type AuthVariables = {
@@ -31,6 +31,16 @@ export function requireScope(c: Context<AuthEnv>, scope: string): Response | nul
 
   if (!auth.scopes.includes(scope)) {
     return c.json({ error: "missing_scope", scope }, 403);
+  }
+
+  return null;
+}
+
+export function requireAnyScope(c: Context<AuthEnv>, scopes: readonly string[]): Response | null {
+  const auth = c.get("auth");
+
+  if (!hasAnyScope(auth, scopes)) {
+    return c.json({ error: "missing_scope", scopes }, 403);
   }
 
   return null;

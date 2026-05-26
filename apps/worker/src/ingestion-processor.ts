@@ -1,13 +1,18 @@
 import {
   detectPatterns,
+  detectEngineeringSourceKind,
   extractEntities,
+  extractEngineeringMemories,
   extractMemories,
   inferBehaviorPatternMetadata,
   resolveSpeakerAttribution,
   type DetectedPattern,
   type EntityExtractionResult,
   type ExtractedEntity,
+  type ExtractedEngineeringMemory,
   type ExtractedMemory,
+  type EngineeringMemoryExtractionResult,
+  type EngineeringMemoryType,
   type MemoryExtractionResult,
   type PatternSignal,
   type SourceSpeakerMapping,
@@ -159,6 +164,20 @@ export type MemoryExtractor = {
     content: string;
     title?: string | null;
   }): Promise<MemoryExtractionResult>;
+};
+
+export type EngineeringMemoryExtractor = {
+  extract(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    content: string;
+    title?: string | null;
+    path?: string | null;
+    fileName?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<EngineeringMemoryExtractionResult>;
 };
 
 export type CanonicalMemoryMergeJudge = {
@@ -1184,6 +1203,7 @@ export async function processArtifactIntelligence(
     privateMemoryReader?: PrivateMemoryReader;
     entityExtractor?: EntityExtractor;
     memoryExtractor?: MemoryExtractor;
+    engineeringMemoryExtractor?: EngineeringMemoryExtractor;
     canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
@@ -1301,6 +1321,7 @@ export async function processArtifactIntelligence(
       chunks,
       title: null,
       memoryExtractor: input.memoryExtractor,
+      engineeringMemoryExtractor: input.engineeringMemoryExtractor,
       canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
@@ -1647,7 +1668,9 @@ async function linkDecisionGraphNodes(
         evidenceHash: decision.memory.evidenceHash,
         evidenceLength: decision.memory.evidenceLength,
         statementIndex: decision.statementIndex,
-        extractionMethod: "llm_structured_memory_extractor",
+        extractionMethod: decision.memory.metadata["engineering"] === true
+          ? "llm_structured_engineering_memory_extractor"
+          : "llm_structured_memory_extractor",
         privateStatementStoredEncrypted: true,
         metadata: decision.memory.metadata,
       },
@@ -1891,6 +1914,178 @@ function patternMetadataForMemory(memory: ExtractedMemory): Record<string, unkno
     subject: memory.subject,
     metadata: memory.metadata,
   }) ?? {};
+}
+
+async function maybeExtractEngineeringMemories(input: {
+  artifact: QueuedArtifact;
+  memoryFragmentId: string;
+  content: string;
+  title?: string | null;
+  engineeringMemoryExtractor?: EngineeringMemoryExtractor;
+}): Promise<EngineeringMemoryExtractionResult | null> {
+  if (!input.engineeringMemoryExtractor) {
+    return null;
+  }
+
+  const artifactMetadata = asRecord(input.artifact.metadata);
+  const sourceDetection = detectEngineeringSourceKind({
+    sourceType: input.artifact.sourceType,
+    metadata: artifactMetadata,
+    path: readMetadataString(artifactMetadata, "path"),
+    fileName: readMetadataString(artifactMetadata, "fileName"),
+  });
+
+  if (sourceDetection.sourceKind === "unknown" && !looksLikeEngineeringContent(input.content)) {
+    return null;
+  }
+
+  return input.engineeringMemoryExtractor.extract({
+    twinId: input.artifact.twinId,
+    sourceArtifactId: input.artifact.id,
+    memoryFragmentId: input.memoryFragmentId,
+    sourceType: input.artifact.sourceType,
+    content: input.content,
+    title: input.title,
+    path: sourceDetection.normalizedPath,
+    fileName: readMetadataString(artifactMetadata, "fileName"),
+    metadata: artifactMetadata,
+  });
+}
+
+function engineeringMemoryToCandidateMemory(
+  memory: ExtractedEngineeringMemory,
+): ExtractedMemory {
+  return {
+    statement: memory.statement,
+    normalizedStatement: memory.normalizedStatement,
+    memoryType: mapEngineeringMemoryTypeToMemoryType(memory.engineeringMemoryType),
+    subject: memory.subject,
+    confidence: memory.confidence,
+    evidenceHash: memory.evidenceHash,
+    evidenceLength: memory.evidenceLength,
+    metadata: {
+      ...sanitizeEngineeringCandidateMetadata(memory.metadata),
+      engineering: true,
+      engineeringMemoryType: memory.engineeringMemoryType,
+      engineeringInstructionScope: memory.scope,
+    },
+  };
+}
+
+function engineeringMemoryMetadata(memory: ExtractedEngineeringMemory): Record<string, unknown> {
+  const metadata = sanitizeEngineeringCandidateMetadata(memory.metadata);
+
+  return {
+    engineering: true,
+    engineeringMemoryType: memory.engineeringMemoryType,
+    engineeringInstructionScope: memory.scope,
+    engineeringSubject: memory.subject,
+    engineeringEvidenceHash: memory.evidenceHash,
+    engineeringEvidenceLength: memory.evidenceLength,
+    ...(typeof metadata["agentContextLine"] === "string"
+      ? { agentContextLine: metadata["agentContextLine"] }
+      : {}),
+    ...(Object.keys(metadata).length > 0 ? { engineeringMetadata: metadata } : {}),
+  };
+}
+
+function sanitizeEngineeringCandidateMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (isUnsafeEngineeringMetadataKey(key)) {
+      continue;
+    }
+
+    if (typeof value === "string") {
+      if (looksLikeSecretMetadataValue(value)) {
+        continue;
+      }
+
+      safe[key] = value;
+      continue;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+      safe[key] = value;
+    }
+  }
+
+  return safe;
+}
+
+function isUnsafeEngineeringMetadataKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+
+  if (normalized === "agentcontextline") {
+    return false;
+  }
+
+  return normalized.includes("evidence") ||
+    normalized.includes("statement") ||
+    normalized.includes("content") ||
+    normalized.includes("text") ||
+    normalized.includes("snippet") ||
+    normalized.includes("quote") ||
+    normalized.includes("raw") ||
+    normalized.includes("secret") ||
+    normalized.includes("private") ||
+    normalized.includes("password") ||
+    normalized.includes("token") ||
+    normalized.includes("key") ||
+    normalized.includes("mnemonic") ||
+    normalized.includes("connection");
+}
+
+function looksLikeSecretMetadataValue(value: string): boolean {
+  const trimmed = value.trim();
+
+  return /^suiprivkey/i.test(trimmed) ||
+    /^sk-[A-Za-z0-9_-]{16,}/.test(trimmed) ||
+    (trimmed.length >= 32 && /^[A-Za-z0-9_-]+$/.test(trimmed) && /[A-Z0-9]/.test(trimmed)) ||
+    /:\/\/[^:\s]+:[^@\s]+@/.test(trimmed);
+}
+
+function mapEngineeringMemoryTypeToMemoryType(
+  type: EngineeringMemoryType,
+): ExtractedMemory["memoryType"] {
+  if (type === "coding_preference" || type === "tool_preference" || type === "style_rule") {
+    return "preference";
+  }
+
+  if (type === "architecture_decision" || type === "security_boundary") {
+    return "decision";
+  }
+
+  if (type === "deployment_environment" || type === "recurring_bug" || type === "project_convention") {
+    return "project_update";
+  }
+
+  if (type === "testing_practice" || type === "agent_instruction") {
+    return "fact";
+  }
+
+  return "other";
+}
+
+function emptyMemoryExtractionResult(originalLength: number): MemoryExtractionResult {
+  return {
+    memories: [],
+    metadata: {
+      extractor: "llm_structured_memory_extractor",
+      provider: "none",
+      model: "none",
+      originalLength,
+      returnedMemories: 0,
+      acceptedMemories: 0,
+      warnings: ["memory_extractor_not_configured"],
+    },
+  };
+}
+
+function looksLikeEngineeringContent(value: string): boolean {
+  return /\b(code|repo|github|pull request|pr|commit|branch|test|lint|build|deploy|api|database|postgres|redis|docker|vite|react|next\.?js|hono|drizzle|pnpm|npm|yarn|bun|typescript|javascript|rust|go|python|walrus|seal|sui|encrypt|plaintext|security|privacy|codex|claude|cursor|agent|architecture|monorepo|workspace|environment|env)\b/i
+    .test(value);
 }
 
 async function upsertProjectClusterNode(
@@ -2144,6 +2339,9 @@ function aggregateExtractionResults(
     ...(typeof first.model === "string" ? { model: first.model } : {}),
     warnings: present.flatMap((result) => readStringArray(result.warnings)),
     llmMs: present.reduce((sum, result) => sum + readNumber(result.llmMs), 0),
+    regularMemoryCount: present.reduce((sum, result) => sum + readNumber(result.regularMemoryCount), 0),
+    engineeringMemoryCount: present.reduce((sum, result) => sum + readNumber(result.engineeringMemoryCount), 0),
+    engineeringExtractionMs: present.reduce((sum, result) => sum + readNumber(result.engineeringExtractionMs), 0),
     graphWriteMs: present.reduce((sum, result) => sum + readNumber(result.graphWriteMs), 0),
     candidateMemoryEncryptMs: present.reduce((sum, result) => sum + readNumber(result.candidateMemoryEncryptMs), 0),
     candidateMemoryDbWriteMs: present.reduce((sum, result) => sum + readNumber(result.candidateMemoryDbWriteMs), 0),
@@ -2159,15 +2357,16 @@ async function processMemoryExtraction(
     content: string;
     title?: string | null;
     memoryExtractor?: MemoryExtractor;
+    engineeringMemoryExtractor?: EngineeringMemoryExtractor;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
     canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
   },
 ): Promise<Record<string, unknown> | null> {
-  if (!input.memoryExtractor) {
+  if (!input.memoryExtractor && !input.engineeringMemoryExtractor) {
     return {
       status: "skipped",
-      reason: "memory_extractor_not_configured",
+      reason: "memory_extractors_not_configured",
     };
   }
 
@@ -2180,15 +2379,30 @@ async function processMemoryExtraction(
 
   try {
     const llmStartedAt = Date.now();
-    const result = await input.memoryExtractor.extract({
-      twinId: input.artifact.twinId,
-      sourceArtifactId: input.artifact.id,
-      memoryFragmentId: input.memoryFragmentId,
-      sourceType: input.artifact.sourceType,
-      content: input.content,
-      title: input.title,
-    });
+    const result = input.memoryExtractor
+      ? await input.memoryExtractor.extract({
+          twinId: input.artifact.twinId,
+          sourceArtifactId: input.artifact.id,
+          memoryFragmentId: input.memoryFragmentId,
+          sourceType: input.artifact.sourceType,
+          content: input.content,
+          title: input.title,
+        })
+      : emptyMemoryExtractionResult(input.content.length);
     const llmMs = Date.now() - llmStartedAt;
+    const engineeringStartedAt = Date.now();
+    const engineeringResult = await maybeExtractEngineeringMemories(input);
+    const engineeringExtractionMs = Date.now() - engineeringStartedAt;
+    const extractedMemories = [
+      ...result.memories.map((memory) => ({
+        memory,
+        engineering: null,
+      })),
+      ...(engineeringResult?.memories ?? []).map((engineeringMemory) => ({
+        memory: engineeringMemoryToCandidateMemory(engineeringMemory),
+        engineering: engineeringMemory,
+      })),
+    ];
     const conversationPolicy = readConversationMemoryPolicy(input.content, input.artifact.sourceType);
     let storedCount = 0;
     let candidateMemoryEncryptMs = 0;
@@ -2202,7 +2416,7 @@ async function processMemoryExtraction(
         }
       | null = null;
 
-    if (result.memories.length > 0) {
+    if (extractedMemories.length > 0) {
       const encryptStartedAt = Date.now();
       encrypted = await input.privateFragmentStorage.encryptPrivateFragment({
         twinId: input.artifact.twinId,
@@ -2219,11 +2433,19 @@ async function processMemoryExtraction(
                 conversationUnderstanding: result.metadata.conversationUnderstanding ?? null,
               }
             : {}),
-          memories: result.memories.map((memory, index) => ({
+          memories: extractedMemories.map(({ memory, engineering }, index) => ({
             statementIndex: index,
             statement: memory.statement,
             memoryType: memory.memoryType,
             subject: memory.subject,
+            ...(engineering
+              ? {
+                  engineering: {
+                    engineeringMemoryType: engineering.engineeringMemoryType,
+                    scope: engineering.scope,
+                  },
+                }
+              : {}),
           })),
         }),
         contentKind: "candidate_memory",
@@ -2237,7 +2459,9 @@ async function processMemoryExtraction(
     const decisionCandidates: DecisionGraphCandidate[] = [];
     const goalCandidates: GoalGraphCandidate[] = [];
     const currentPatternSignals: PatternSignal[] = [];
-    for (const [statementIndex, memory] of result.memories.entries()) {
+    for (const [statementIndex, extracted] of extractedMemories.entries()) {
+      const { memory, engineering } = extracted;
+
       if (!encrypted) {
         continue;
       }
@@ -2267,8 +2491,16 @@ async function processMemoryExtraction(
           evidenceLength: memory.evidenceLength,
           sourceType: input.artifact.sourceType,
           statementIndex,
-          statementCount: result.memories.length,
+          statementCount: extractedMemories.length,
           batchStorage: true,
+          ...(engineering ? engineeringMemoryMetadata(engineering) : {}),
+          ...(engineering && engineeringResult
+            ? {
+                extractor: engineeringResult.metadata.extractor,
+                provider: engineeringResult.metadata.provider,
+                model: engineeringResult.metadata.model,
+              }
+            : {}),
           ...(conversationPolicy ? conversationPolicy : {}),
           ...(result.metadata.conversationUnderstanding
             ? { conversationUnderstanding: result.metadata.conversationUnderstanding }
@@ -2370,10 +2602,25 @@ async function processMemoryExtraction(
       metadata: {
         memoryFragmentId: input.memoryFragmentId,
         candidateMemoryCount: storedCount,
+        regularMemoryCount: result.memories.length,
+        engineeringMemoryCount: engineeringResult?.memories.length ?? 0,
         extractor: result.metadata.extractor,
         provider: result.metadata.provider,
         model: result.metadata.model,
         llmMs,
+        engineeringExtractionMs,
+        ...(engineeringResult
+          ? {
+              engineeringExtraction: {
+                extractor: engineeringResult.metadata.extractor,
+                provider: engineeringResult.metadata.provider,
+                model: engineeringResult.metadata.model,
+                sourceKind: engineeringResult.metadata.sourceKind,
+                acceptedMemories: engineeringResult.metadata.acceptedMemories,
+                warnings: engineeringResult.metadata.warnings,
+              },
+            }
+          : {}),
         candidateMemoryEncryptMs,
         candidateMemoryDbWriteMs,
         candidateMemoryArchiveQueued: archiveQueued,
@@ -2397,11 +2644,29 @@ async function processMemoryExtraction(
     return {
       status: "completed",
       candidateMemoryCount: storedCount,
+      regularMemoryCount: result.memories.length,
+      engineeringMemoryCount: engineeringResult?.memories.length ?? 0,
       extractor: result.metadata.extractor,
       provider: result.metadata.provider,
       model: result.metadata.model,
-      warnings: result.metadata.warnings,
+      warnings: [
+        ...result.metadata.warnings,
+        ...(engineeringResult?.metadata.warnings ?? []),
+      ],
       llmMs,
+      engineeringExtractionMs,
+      ...(engineeringResult
+        ? {
+            engineeringExtraction: {
+              extractor: engineeringResult.metadata.extractor,
+              provider: engineeringResult.metadata.provider,
+              model: engineeringResult.metadata.model,
+              sourceKind: engineeringResult.metadata.sourceKind,
+              candidateInstructionCount: engineeringResult.metadata.candidateInstructionCount,
+              acceptedMemories: engineeringResult.metadata.acceptedMemories,
+            },
+          }
+        : {}),
       candidateMemoryEncryptMs,
       candidateMemoryDbWriteMs,
       candidateMemoryArchiveQueued: archiveQueued,
@@ -2455,6 +2720,7 @@ async function processMemoryExtractionChunks(
     chunks: IntelligenceChunk[];
     title?: string | null;
     memoryExtractor?: MemoryExtractor;
+    engineeringMemoryExtractor?: EngineeringMemoryExtractor;
     privateFragmentStorage?: PrivateFragmentStorage;
     candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
     canonicalMemoryMergeJudge?: CanonicalMemoryMergeJudge;
@@ -2468,6 +2734,7 @@ async function processMemoryExtractionChunks(
       content: input.chunks[0]?.content ?? "",
       title: input.title,
       memoryExtractor: input.memoryExtractor,
+      engineeringMemoryExtractor: input.engineeringMemoryExtractor,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
       canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
@@ -2481,6 +2748,7 @@ async function processMemoryExtractionChunks(
       content: chunk.content,
       title: input.title,
       memoryExtractor: input.memoryExtractor,
+      engineeringMemoryExtractor: input.engineeringMemoryExtractor,
       privateFragmentStorage: input.privateFragmentStorage,
       candidateMemoryArchiveQueue: input.candidateMemoryArchiveQueue,
       canonicalMemoryMergeJudge: input.canonicalMemoryMergeJudge,
@@ -2797,6 +3065,14 @@ export function createMemoryExtractor(generator: StructuredGenerator): MemoryExt
   return {
     extract(input) {
       return extractMemories(input, { generator });
+    },
+  };
+}
+
+export function createEngineeringMemoryExtractor(generator: StructuredGenerator): EngineeringMemoryExtractor {
+  return {
+    extract(input) {
+      return extractEngineeringMemories(input, { generator });
     },
   };
 }

@@ -71,7 +71,9 @@ export function createArtifactRoutes({
       }
     })();
     const privateMetadata = recordMetadata(body["metadata"]);
+    const safeUploadMetadata = sanitizeSafeMetadata(privateMetadata);
     const storageMetadata = {
+      ...safeUploadMetadata,
       storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
       sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
       encryptedPayload: {
@@ -249,11 +251,16 @@ export function createArtifactRoutes({
       return c.json({ error: "artifact_not_found" }, 404);
     }
 
-    if (artifact.ingestionStatus !== "failed") {
+    const processingReason = readProcessingReason(artifact.metadata);
+    const canRetry = artifact.ingestionStatus === "failed" ||
+      processingReason === "encrypted_decryption_retrying";
+
+    if (!canRetry) {
       return c.json(
         {
-          error: "artifact_not_failed",
+          error: "artifact_not_retryable",
           status: artifact.ingestionStatus,
+          reason: processingReason ?? null,
         },
         409,
       );
@@ -316,6 +323,7 @@ export function createArtifactRoutes({
           artifactId,
           twinId,
           sourceType: artifact.sourceType,
+          jobKey: `retry-${Date.now()}`,
         })
         .catch(async (error: unknown) => {
           console.error("artifact retry queue enqueue failed", error);

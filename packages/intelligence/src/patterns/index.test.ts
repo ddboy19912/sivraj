@@ -126,6 +126,47 @@ describe("detectPatterns", () => {
     });
   });
 
+  it("detects repeated engineering failure themes", () => {
+    const result = detectPatterns({
+      twinId: "twin-id",
+      currentSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-current",
+          memoryFragmentId: "fragment-current",
+          candidateMemoryId: "candidate-current",
+          memoryType: "project_update",
+          subject: "Walrus read",
+          metadata: {
+            patternKey: "walrus_seal_rpc_fetch_failure",
+          },
+        },
+      ],
+      historicalSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-old",
+          memoryFragmentId: "fragment-old",
+          candidateMemoryId: "candidate-old",
+          memoryType: "project_update",
+          subject: "Seal decrypt",
+          metadata: {
+            patternKey: "walrus_seal_rpc_fetch_failure",
+          },
+        },
+      ],
+    });
+
+    expect(result.patterns).toHaveLength(1);
+    expect(result.patterns[0]).toMatchObject({
+      patternType: "repeated_behavior_theme",
+      subject: "Walrus/Seal RPC fetch failure",
+      normalizedSubject: "walrus_seal_rpc_fetch_failure",
+      evidenceCount: 2,
+      candidateMemoryIds: ["candidate-old", "candidate-current"],
+    });
+  });
+
   it("keeps pattern output free of private statement text", () => {
     const result = detectPatterns({
       twinId: "twin-id",

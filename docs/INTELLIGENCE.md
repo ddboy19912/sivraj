@@ -103,6 +103,22 @@ The second pass uses an LLM semantic merge judge over a bounded shortlist of exi
 
 This prevents semantically duplicated memories from dominating review and retrieval. It also keeps evidence provenance intact: repeated uploads still add source evidence, but retrieval can show the underlying memory once. The current semantic shortlist is type/subject/recentness based; embedding similarity can replace or augment that shortlist as the corpus grows.
 
+## Engineering Intelligence
+
+Engineering intelligence is the coding-agent-facing branch of the Twin. It turns repos, instruction files, technical docs, chats, PRs, and voice conversations into durable software-building context.
+
+Agent instruction files such as `CLAUDE.md`, `AGENTS.md`, `SKILL.md`, `.cursorrules`, `.cursor/rules/*`, and `.github/copilot-instructions.md` are first-class sources because they often contain the user's portable operating instructions for AI agents.
+
+Sivraj should classify extracted engineering rules by scope:
+
+- global user
+- project
+- organization
+- agent-specific
+- temporary
+
+This prevents repo-local instructions from becoming permanent global truth without evidence or approval. See [Engineering Intelligence](./ENGINEERING_INTELLIGENCE.md).
+
 ## Background Processing
 
 Ingestion and intelligence run as separate worker phases:

@@ -278,8 +278,55 @@ Example scopes:
 - `artifact:upload`
 - `artifact:read_raw`
 - `audit:read`
+- `agent:context:read`
+- `agent:sources:read`
+- `agent:project_profile:read`
+- `agent:memory:search`
+- `agent:writeback:create`
 
 Raw artifact access should be rare and separately approved.
+
+### Delegated Coding-Agent Token
+
+```http
+POST /v1/twins/:twinId/agents/tokens
+Authorization: Bearer <user-token>
+```
+
+Requires `memory:read` on a user or service token. It creates an `api_clients` row with `type = coding_agent`, a `permission_grants` row scoped to the Twin, and returns a short-lived agent JWT.
+
+Example request:
+
+```json
+{
+  "agentName": "Codex",
+  "scopes": [
+    "agent:context:read",
+    "agent:sources:read",
+    "agent:project_profile:read",
+    "agent:memory:search",
+    "agent:writeback:create"
+  ],
+  "expiresInMinutes": 1440
+}
+```
+
+Example response:
+
+```json
+{
+  "token": "...",
+  "tokenType": "Bearer",
+  "subjectType": "agent",
+  "clientId": "...",
+  "grantId": "...",
+  "twinId": "...",
+  "scopes": ["agent:context:read"],
+  "expiresAt": "2026-05-26T00:00:00.000Z"
+}
+```
+
+Writes audit event `agent_token.created`.
 
 ## Core Resources
 
@@ -512,6 +559,35 @@ The worker also records attribution counts under `metadata.processing.conversati
 
 Memory extraction applies a user-vs-other-party boundary on attribution-aware conversation text. First-person claims from `self/*` can become user identity, preference, goal, or experience memories. First-person claims from `other/*` are rejected as user memories, `unknown/*` personal claims are downgraded, and `system/*` lines are ignored for candidate memories. Candidate memory metadata records the safe attribution role and policy only; raw evidence text remains outside Postgres.
 
+Voice conversation review:
+
+```http
+GET /v1/twins/:twinId/conversations/:artifactId/review
+POST /v1/twins/:twinId/conversations/:artifactId/summary
+POST /v1/twins/:twinId/conversations/:artifactId/memories/review
+Authorization: Bearer <token>
+```
+
+The review route returns a privacy-safe conversation review packet for a processed `voice_conversation` artifact. It includes artifact status, a deterministic safe summary, and candidate-memory review metadata. It does not decrypt or return raw transcript text, raw candidate statements, or private source content.
+
+Summary generation encrypts the generated conversation summary through the private memory storage path and writes only `summaryStorageRef`, `summarySha256`, summary length, summary policy metadata, and audit records to Postgres.
+
+Memory review accepts approve/reject actions:
+
+```json
+{
+  "actions": [
+    {
+      "candidateId": "...",
+      "action": "approve",
+      "editedStatement": "Optional user-edited statement to store as the canonical memory"
+    }
+  ]
+}
+```
+
+Approving or rejecting candidate memories writes `user_feedback_events` entries. If an approved action includes an edited statement, the API stores that edited voice-derived memory as a new encrypted artifact, queues normal artifact processing, and writes `conversation.approved_memory.stored`. The original voice transcript and candidate statement remain outside plaintext Postgres fields. Rejections are recorded as feedback and do not update the Twin.
+
 GitHub public repository import:
 
 ```http
@@ -664,54 +740,195 @@ Represents scoped context returned to an AI system.
 Endpoints:
 
 ```http
+GET /v1/twins/:twinId/engineering/context
 POST /v1/twins/:twinId/context
 GET /v1/twins/:twinId/context/:contextPacketId
 POST /v1/twins/:twinId/context/:contextPacketId/feedback
 ```
 
+First implemented coding-agent endpoint:
+
+```http
+GET /v1/twins/:twinId/engineering/context
+GET /v1/twins/:twinId/engineering/sources
+GET /v1/twins/:twinId/engineering/review-queue
+POST /v1/twins/:twinId/engineering/review-queue/:candidateId/action
+POST /v1/twins/:twinId/engineering/instruction-patch
+Authorization: Bearer <token>
+```
+
+Query options:
+
+- `projectId`, `projectName`: optional labels for the returned packet.
+- `repoName`, `packageName`, `gitRemote`: optional current-repo identity signals.
+- `packageManager`: optional current package manager, such as `pnpm`, `npm`, `yarn`, or `bun`.
+- `frameworks`, `lockfiles`, `rootMarkers`: optional comma-separated current-repo fingerprints.
+- `artifactId`: optional artifact-scoped engineering context.
+- `includeCandidate=true`: include candidate engineering memories for testing/review context.
+- `includeSuperseded=true`: include superseded rules.
+- `includeTemporary=true`: include short-lived task rules.
+- `preset`: optional export renderer. Allowed values: `codex`, `claude_code`, `cursor`, `generic_mcp`.
+- `maxItemsPerSection`: bounded section size.
+
+Rules:
+
+- Requires `memory:read`.
+- Requires token `twinId` to match path `twinId` unless token type is `service`.
+- Returns an agent-ready `coding_agent_context` packet.
+- Returns `contextMarkdown` for backward compatibility.
+- Returns `contextExport`, a preset-aware one-click export with `preset`, `format`, `targetFile`, and `content`.
+- Ranks repo-matching context above generic or unrelated context.
+- Returns context conflict issues when exported rules disagree, such as pnpm vs npm or Vite vs Next.js.
+- Returns context quality scoring so clients can distinguish strong, usable, weak, and risky packets before handoff.
+- Does not decrypt or return raw memory statements.
+- May return short derived engineering context lines that were intentionally extracted for coding-agent use.
+- Returns evidence refs, hashes, scopes, subjects, confidence, status, and safe metadata only.
+
+Instruction source registry:
+
+```http
+GET /v1/twins/:twinId/engineering/sources
+Authorization: Bearer <token>
+```
+
+Returns the private-safe engineering sources Sivraj has consumed, such as `AGENTS.md`, `CLAUDE.md`, Cursor rules, repo docs, and coding preference notes. It does not return raw file bodies. It returns source artifact IDs, file names, ingestion/intelligence status, encrypted storage refs, extracted engineering-memory counts, derived context lines, and evidence IDs.
+
+Engineering review queue:
+
+```http
+GET /v1/twins/:twinId/engineering/review-queue
+Authorization: Bearer <token>
+```
+
+Returns stale or conflicting engineering instructions that should be reviewed before agent handoff. It uses the same repo fingerprint query options as `/engineering/context` and returns only derived context lines, evidence IDs, safe metadata, issue reasons, and quality impact.
+
+Review action:
+
+```http
+POST /v1/twins/:twinId/engineering/review-queue/:candidateId/action
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "action": "keep_active" }
+```
+
+Allowed actions:
+
+- `keep_active`: marks the candidate memory `approved`.
+- `supersede`: marks it `superseded`.
+- `reject`: marks it `rejected`.
+- `needs_review`: keeps it as `candidate` and records review feedback.
+
+Instruction patch generation:
+
+```http
+POST /v1/twins/:twinId/engineering/instruction-patch
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "preset": "codex",
+  "targetFile": "AGENTS.md",
+  "projectName": "Sivraj",
+  "repoName": "sivraj",
+  "packageManager": "pnpm",
+  "frameworks": ["vite", "react"],
+  "includeCandidate": false
+}
+```
+
+Returns a suggested export body generated from source-backed engineering context. Supported presets:
+
+- `codex`: `AGENTS.md` Markdown.
+- `claude_code`: `CLAUDE.md` Markdown.
+- `cursor`: `.cursor/rules/sivraj.mdc` rule file.
+- `generic_mcp`: `sivraj-context.json` structured JSON.
+
+It never writes to the repo automatically, never includes raw private memory, and omits candidate rules by default.
+
 Example request:
 
-```json
-{
-  "query": "What architecture decisions should the coding agent know before editing the app?",
-  "requester": {
-    "type": "agent",
-    "id": "coding-agent"
-  },
-  "purpose": "code_generation",
-  "scope": "memory:read_coding",
-  "maxTokens": 4000,
-  "includeCitations": true
-}
+```bash
+curl "$API_URL/v1/twins/$TWIN_ID/engineering/context?projectName=Sivraj&repoName=sivraj&packageName=sivraj&packageManager=pnpm&frameworks=vite,react&includeCandidate=true" \
+  -H "authorization: Bearer $TOKEN"
 ```
 
 Example response:
 
 ```json
 {
-  "id": "ctx_123",
-  "scope": "memory:read_coding",
-  "purpose": "code_generation",
-  "summary": "Relevant roadmap, architecture preferences, and prior implementation decisions.",
-  "memories": [
-    {
-      "id": "mem_123",
-      "content": "The user prefers a TypeScript-first stack and small provider adapters.",
-      "citation": {
-        "sourceArtifactId": "src_123",
-        "title": "Development Setup",
-        "walrusRef": "walrus://encrypted/blob/ref"
-      },
-      "confidence": 0.91
-    }
-  ],
-  "graph": {
-    "nodes": ["project_sivraj", "goal_agent_context_layer"],
-    "edges": ["project_sivraj->depends_on->goal_agent_context_layer"]
-  },
   "policy": {
     "rawArtifactsIncluded": false,
-    "expiresAt": "2026-05-15T00:00:00Z"
+    "decryptedMemoryIncluded": false,
+    "plaintextStatementsIncluded": false,
+    "derivedEngineeringContextIncluded": true,
+    "scope": "memory:read",
+    "agentScopesAccepted": ["agent:context:read", "agent:project_profile:read"]
+  },
+  "relationship": {
+    "sivraj": "Remembers encrypted engineering context, synthesizes durable preferences, and exports source-backed packets.",
+    "codingAgents": "Execute coding tasks inside tools such as Codex, Claude Code, Cursor, or custom agents.",
+    "handoff": "Use contextMarkdown or contextPacket as portable agent context. Future connectors can automate this handoff."
+  },
+  "contextPacket": {
+    "purpose": "coding_agent_context",
+    "project": {
+      "id": null,
+      "name": "Sivraj",
+      "repoFingerprint": {
+        "projectId": null,
+        "projectName": "Sivraj",
+        "repoName": "sivraj",
+        "packageName": "sivraj",
+        "gitRemote": null,
+        "packageManager": "pnpm",
+        "frameworks": ["vite", "react"],
+        "lockfiles": [],
+        "rootMarkers": []
+      }
+    },
+    "sections": {
+      "agentInstructions": [
+        {
+          "id": "candidate-memory-id",
+          "type": "agent_instruction",
+          "scope": "agent_specific",
+          "subject": "git safety",
+          "status": "candidate",
+          "evidence": {
+            "candidateMemoryId": "candidate-memory-id",
+            "sourceArtifactId": "artifact-id"
+          }
+        }
+      ]
+    },
+    "issues": [],
+    "quality": {
+      "score": 0.76,
+      "label": "good",
+      "readyForAgent": true,
+      "strengths": ["Context is source-backed with evidence references."],
+      "risks": [],
+      "recommendations": ["Packet is suitable for coding-agent handoff; keep reviewing new candidate memories as they arrive."],
+      "metrics": {
+        "totalItems": 1,
+        "approvedOrActiveItems": 0,
+        "candidateItems": 1,
+        "evidenceRefs": 1,
+        "issueCount": 0,
+        "highSeverityIssueCount": 0,
+        "repoMatchedItems": 1,
+        "weakUnknownSourceItems": 0,
+        "sectionCoverage": 0.11
+      }
+    }
+  },
+  "contextMarkdown": "# Sivraj Coding Agent Context\n\nUse this as persistent engineering context from Sivraj...",
+  "profileSummary": {
+    "totalEngineeringMemories": 1,
+    "includedContextItems": 1,
+    "evidenceRefs": 1,
+    "warnings": []
   }
 }
 ```
@@ -736,13 +953,63 @@ Represents observations or generated context that an agent wants to add to the T
 Endpoints:
 
 ```http
-POST /v1/twins/:twinId/agent-writebacks
-GET /v1/twins/:twinId/agent-writebacks
-POST /v1/twins/:twinId/agent-writebacks/:writebackId/approve
-POST /v1/twins/:twinId/agent-writebacks/:writebackId/reject
+POST /v1/twins/:twinId/agents/writebacks
+POST /v1/twins/:twinId/agents/writebacks/imports/pr
+POST /v1/twins/:twinId/agents/writebacks/imports/commit
+GET /v1/twins/:twinId/agents/writebacks
+POST /v1/twins/:twinId/agents/writebacks/:writebackId/approve
+POST /v1/twins/:twinId/agents/writebacks/:writebackId/reject
 ```
 
-Agent writebacks should be reviewable before becoming durable memory unless the user has explicitly granted trusted write access.
+`POST /agents/writebacks` requires `agent:writeback:create` or `artifact:upload`. It encrypts the writeback and stores only a pending review record. The raw writeback body is not stored in Postgres.
+
+Approval requires the user/service `memory:read` scope. Approval creates the encrypted private `note` artifact, queues normal processing, and writes `agent.writeback.approved`. Rejection writes `agent.writeback.rejected` and does not enter ingestion.
+
+Example request:
+
+```json
+{
+  "agentName": "Codex",
+  "repo": "sivraj",
+  "branch": "main",
+  "taskSummary": "Implemented MCP server tools for coding-agent context.",
+  "filesTouched": ["apps/mcp-server/src/index.ts"],
+  "commandsRun": ["pnpm --filter @sivraj/mcp-server test"],
+  "testsRun": ["pnpm --filter @sivraj/mcp-server test"],
+  "decisions": ["MCP calls Sivraj API instead of reading Postgres directly."],
+  "followUps": ["Add delegated token revocation UI."]
+}
+```
+
+Agent writebacks become encrypted artifacts only after approval. They then become candidate engineering memories through the normal intelligence pipeline, so coding-agent output does not silently pollute the Twin.
+
+PR/commit import requests use the same pending-review boundary:
+
+```json
+{
+  "agentName": "Codex",
+  "repo": "sivraj",
+  "number": 42,
+  "title": "Fix memory search",
+  "summary": "Stopped retrieval from decrypting too many fragments.",
+  "filesChanged": ["apps/api/src/routes/memories.ts"],
+  "reviewComments": ["Avoid fallback-only fixes."],
+  "testsRun": ["pnpm --filter @sivraj/api test"]
+}
+```
+
+The response includes `writebackId`, `kind`, `status`, `rawStorageRef`, and `warning: "agent_writeback_pending_review"`. The imported body is encrypted before durable storage; Postgres keeps only safe metadata, hashes, counts, and storage refs.
+
+### Agent Clients
+
+```http
+GET /v1/twins/:twinId/agents/clients
+POST /v1/twins/:twinId/agents/clients/:grantId/revoke
+```
+
+These endpoints require `memory:read`. They expose scoped coding-agent grants, expiry/revocation state, and safe client metadata. Revocation is audited with `agent_client.revoked`.
+
+Agent-scoped reads and writebacks check that the delegated grant is still active before serving context, search, sources, or writeback submission. For context assembly and search, the API checks both the JWT scope and the persisted grant scopes so a narrowed/revoked grant blocks stale tokens.
 
 ### Audit Event
 

@@ -24,6 +24,22 @@ export type AuthConfig = {
   tokenIssuer: string;
 };
 
+export const FIRST_PARTY_USER_SCOPES = ["artifact:upload", "memory:read"] as const;
+export const AGENT_CONTEXT_READ_SCOPE = "agent:context:read";
+export const AGENT_MEMORY_SEARCH_SCOPE = "agent:memory:search";
+export const AGENT_WRITEBACK_CREATE_SCOPE = "agent:writeback:create";
+export const AGENT_SOURCE_READ_SCOPE = "agent:sources:read";
+export const AGENT_PROJECT_PROFILE_READ_SCOPE = "agent:project_profile:read";
+export const AGENT_SCOPES = [
+  AGENT_CONTEXT_READ_SCOPE,
+  AGENT_MEMORY_SEARCH_SCOPE,
+  AGENT_WRITEBACK_CREATE_SCOPE,
+  AGENT_SOURCE_READ_SCOPE,
+  AGENT_PROJECT_PROFILE_READ_SCOPE,
+] as const;
+
+export type AgentScope = typeof AGENT_SCOPES[number];
+
 export type VerifiedWallet = {
   address: string;
   message: string;
@@ -47,6 +63,10 @@ export function parseBearerToken(header: string | null | undefined): string | nu
 
 export function hasScope(claims: AuthClaims, scope: string): boolean {
   return claims.scopes.includes(scope);
+}
+
+export function hasAnyScope(claims: AuthClaims, scopes: readonly string[]): boolean {
+  return scopes.some((scope) => hasScope(claims, scope));
 }
 
 export function assertScope(claims: AuthClaims, scope: string): void {

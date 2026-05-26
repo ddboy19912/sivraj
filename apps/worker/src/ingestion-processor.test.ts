@@ -738,6 +738,680 @@ describe("processQueuedArtifacts", () => {
     ]));
   });
 
+  it("extracts engineering preferences from agent instruction files without plaintext DB statements", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: "AGENTS.md",
+          path: "AGENTS.md",
+        },
+      },
+    ]);
+    const candidateMemoryArchiveQueue = createFakeCandidateMemoryArchiveQueue();
+
+    const queuedResult = await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "AGENTS.md",
+            metadata: {
+              fileName: "AGENTS.md",
+              path: "AGENTS.md",
+            },
+            content: [
+              "Use rg before grep when searching.",
+              "Do not revert user changes unless explicitly requested.",
+            ].join("\n"),
+          });
+        },
+      },
+    });
+
+    const intelligenceResult = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return [
+            "Use rg before grep when searching.",
+            "Do not revert user changes unless explicitly requested.",
+          ].join("\n");
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract(input) {
+          expect(input).toMatchObject({
+            twinId: "twin-id",
+            sourceArtifactId: "artifact-id",
+            memoryFragmentId: "fragment-1",
+            sourceType: "github",
+          });
+          expect(input.content).toContain("Use rg before grep");
+
+          return {
+            memories: [
+              {
+                statement: "Use rg before grep when searching.",
+                normalizedStatement: "use rg before grep when searching",
+                engineeringMemoryType: "tool_preference",
+                subject: "rg",
+                scope: "agent_specific",
+                lifecycle: "active",
+                confidence: 0.92,
+                evidenceHash: "engineering-evidence-1",
+                evidenceLength: 29,
+                metadata: {
+                  sourceKind: "agent_instruction_file",
+                },
+              },
+              {
+                statement: "Do not revert user changes unless explicitly requested.",
+                normalizedStatement: "do not revert user changes unless explicitly requested",
+                engineeringMemoryType: "agent_instruction",
+                subject: "git safety",
+                scope: "agent_specific",
+                lifecycle: "active",
+                confidence: 0.95,
+                evidenceHash: "engineering-evidence-2",
+                evidenceLength: 55,
+                metadata: {
+                  sourceKind: "agent_instruction_file",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "agent_instruction_file",
+              originalLength: input.content.length,
+              candidateInstructionCount: 2,
+              returnedMemories: 2,
+              acceptedMemories: 2,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue,
+    });
+
+    expect(queuedResult).toEqual({ scanned: 1, completed: 1, pending: 0, failed: 0 });
+    expect(intelligenceResult).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 2,
+        regularMemoryCount: 0,
+        engineeringMemoryCount: 2,
+        engineeringExtraction: {
+          sourceKind: "agent_instruction_file",
+          acceptedMemories: 2,
+        },
+      },
+    });
+    expect(repository.candidateMemories).toHaveLength(2);
+    expect(repository.candidateMemories[0]).toMatchObject({
+      memoryType: "preference",
+      statementStorageRef: "pending://candidate-memory-archive/artifact-id/fragment-1",
+      evidenceHash: "engineering-evidence-1",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "tool_preference",
+        engineeringInstructionScope: "agent_specific",
+        extractor: "llm_structured_engineering_memory_extractor",
+      },
+    });
+    expect(repository.candidateMemories[1]).toMatchObject({
+      memoryType: "fact",
+      evidenceHash: "engineering-evidence-2",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "agent_instruction",
+        engineeringInstructionScope: "agent_specific",
+      },
+    });
+    expect(candidateMemoryArchiveQueue.enqueueCalls).toHaveLength(1);
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("Use rg before grep");
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("Do not revert user changes");
+  });
+
+  it("extracts engineering architecture decisions into private-safe decision graph nodes", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: "architecture.md",
+          path: "docs/architecture.md",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "architecture.md",
+            metadata: {
+              fileName: "architecture.md",
+              path: "docs/architecture.md",
+            },
+            content: "We decided to use Vite React instead of Next.js because the API is standalone.",
+          });
+        },
+      },
+    });
+
+    const result = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "We decided to use Vite React instead of Next.js because the API is standalone.";
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract() {
+          return {
+            memories: [
+              {
+                statement: "This project chose Vite React over Next.js because the API is standalone.",
+                normalizedStatement: "this project chose vite react over next.js because the api is standalone",
+                engineeringMemoryType: "architecture_decision",
+                subject: "Sivraj web",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.93,
+                evidenceHash: "architecture-decision-evidence",
+                evidenceLength: 78,
+                metadata: {
+                  sourceKind: "repo_documentation",
+                  chosen: "Vite React",
+                  rejected: "Next.js",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "repo_documentation",
+              originalLength: 78,
+              candidateInstructionCount: 1,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 1,
+        engineeringMemoryCount: 1,
+        decisionExtraction: {
+          decisionCount: 1,
+          decisionLinkCount: 1,
+        },
+      },
+    });
+    expect(repository.candidateMemories[0]).toMatchObject({
+      memoryType: "decision",
+      evidenceHash: "architecture-decision-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "architecture_decision",
+        engineeringInstructionScope: "project",
+        extractor: "llm_structured_engineering_memory_extractor",
+      },
+    });
+    const decisionNodes = repository.graphNodes.filter((node) => node.nodeType === "decision");
+    expect(decisionNodes).toHaveLength(1);
+    expect(decisionNodes[0]).toMatchObject({
+      properties: {
+        sourceArtifactId: "artifact-id",
+        memoryFragmentId: "fragment-1",
+        candidateMemoryId: "candidate-memory-1",
+        subject: "Sivraj web",
+        evidenceHash: "architecture-decision-evidence",
+        extractionMethod: "llm_structured_engineering_memory_extractor",
+        privateStatementStoredEncrypted: true,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "architecture_decision",
+        },
+      },
+    });
+    expect(repository.graphEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toNodeId: decisionNodes[0]?.id,
+        edgeType: "records_decision",
+      }),
+    ]));
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("Vite React over Next.js");
+    expect(JSON.stringify(repository.graphNodes)).not.toContain("Vite React over Next.js");
+  });
+
+  it("extracts project conventions and style rules into private-safe engineering candidates", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: "CONTRIBUTING.md",
+          path: "CONTRIBUTING.md",
+        },
+      },
+    ]);
+    const candidateMemoryArchiveQueue = createFakeCandidateMemoryArchiveQueue();
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "CONTRIBUTING.md",
+            metadata: {
+              fileName: "CONTRIBUTING.md",
+              path: "CONTRIBUTING.md",
+            },
+            content: [
+              "This repo uses pnpm workspace commands for package scripts.",
+              "API routes should live in Hono route modules.",
+              "Keep UI cards at 8px radius or less.",
+            ].join("\n"),
+          });
+        },
+      },
+    });
+
+    const result = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return [
+            "This repo uses pnpm workspace commands for package scripts.",
+            "API routes should live in Hono route modules.",
+            "Keep UI cards at 8px radius or less.",
+          ].join("\n");
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract() {
+          return {
+            memories: [
+              {
+                statement: "This project uses pnpm workspace commands for package scripts.",
+                normalizedStatement: "this project uses pnpm workspace commands for package scripts",
+                engineeringMemoryType: "project_convention",
+                subject: "Sivraj repo",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.88,
+                evidenceHash: "project-convention-evidence",
+                evidenceLength: 60,
+                metadata: {
+                  sourceKind: "repo_documentation",
+                  tool: "pnpm",
+                },
+              },
+              {
+                statement: "This project keeps UI cards at 8px radius or less.",
+                normalizedStatement: "this project keeps ui cards at 8px radius or less",
+                engineeringMemoryType: "style_rule",
+                subject: "Sivraj UI",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.84,
+                evidenceHash: "style-rule-evidence",
+                evidenceLength: 37,
+                metadata: {
+                  sourceKind: "repo_documentation",
+                  area: "ui",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "repo_documentation",
+              originalLength: 140,
+              candidateInstructionCount: 3,
+              returnedMemories: 2,
+              acceptedMemories: 2,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue,
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 2,
+        regularMemoryCount: 0,
+        engineeringMemoryCount: 2,
+      },
+    });
+    expect(repository.candidateMemories).toHaveLength(2);
+    expect(repository.candidateMemories[0]).toMatchObject({
+      memoryType: "project_update",
+      evidenceHash: "project-convention-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "project_convention",
+        engineeringInstructionScope: "project",
+        extractor: "llm_structured_engineering_memory_extractor",
+        engineeringMetadata: {
+          tool: "pnpm",
+        },
+      },
+    });
+    expect(repository.candidateMemories[1]).toMatchObject({
+      memoryType: "preference",
+      evidenceHash: "style-rule-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "style_rule",
+        engineeringInstructionScope: "project",
+        engineeringMetadata: {
+          area: "ui",
+        },
+      },
+    });
+    expect(candidateMemoryArchiveQueue.enqueueCalls).toHaveLength(1);
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("pnpm workspace commands");
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("8px radius");
+  });
+
+  it("extracts deployment environment knowledge without storing secret values in candidate metadata", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: ".env.example",
+          path: ".env.example",
+        },
+      },
+    ]);
+    const candidateMemoryArchiveQueue = createFakeCandidateMemoryArchiveQueue();
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: ".env.example",
+            metadata: {
+              fileName: ".env.example",
+              path: ".env.example",
+            },
+            content: [
+              "DATABASE_URL=postgresql://user:pass@localhost:5432/sivraj",
+              "REDIS_URL=redis://localhost:6379",
+              "SUI_PRIVATE_KEY=suiprivkey1example",
+              "TOKEN_ISSUER=sivraj",
+            ].join("\n"),
+          });
+        },
+      },
+    });
+
+    const result = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return [
+            "DATABASE_URL=postgresql://user:pass@localhost:5432/sivraj",
+            "REDIS_URL=redis://localhost:6379",
+            "SUI_PRIVATE_KEY=suiprivkey1example",
+            "TOKEN_ISSUER=sivraj",
+          ].join("\n");
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract() {
+          return {
+            memories: [
+              {
+                statement: "The Sivraj local environment requires DATABASE_URL, REDIS_URL, SUI_PRIVATE_KEY, and TOKEN_ISSUER to be configured.",
+                normalizedStatement: "the sivraj local environment requires database_url redis_url sui_private_key and token_issuer to be configured",
+                engineeringMemoryType: "deployment_environment",
+                subject: "Sivraj local environment",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.9,
+                evidenceHash: "deployment-env-evidence",
+                evidenceLength: 140,
+                metadata: {
+                  sourceKind: "source_code_config",
+                  variableNames: "DATABASE_URL,REDIS_URL,SUI_PRIVATE_KEY,TOKEN_ISSUER",
+                  safeNote: "requires local Postgres and Redis",
+                  secretValue: "suiprivkey1example",
+                  connectionString: "postgresql://user:pass@localhost:5432/sivraj",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "source_code_config",
+              originalLength: 140,
+              candidateInstructionCount: 4,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue,
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 1,
+        engineeringMemoryCount: 1,
+      },
+    });
+    expect(repository.candidateMemories[0]).toMatchObject({
+      memoryType: "project_update",
+      evidenceHash: "deployment-env-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "deployment_environment",
+        engineeringInstructionScope: "project",
+        engineeringMetadata: {
+          variableNames: "DATABASE_URL,REDIS_URL,SUI_PRIVATE_KEY,TOKEN_ISSUER",
+          safeNote: "requires local Postgres and Redis",
+        },
+      },
+    });
+    expect(candidateMemoryArchiveQueue.enqueueCalls).toHaveLength(1);
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("suiprivkey1example");
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("user:pass");
+  });
+
+  it("extracts security boundaries into private-safe decision graph nodes", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-id",
+        twinId: "twin-id",
+        sourceType: "github",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+          fileName: "SECURITY.md",
+          path: "docs/SECURITY.md",
+        },
+      },
+    ]);
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "SECURITY.md",
+            metadata: {
+              fileName: "SECURITY.md",
+              path: "docs/SECURITY.md",
+            },
+            content: [
+              "Private memory content must not be stored in Postgres.",
+              "Postgres stores refs, hashes, audit, metadata, and graph records only.",
+              "Never log plaintext memory or secrets.",
+            ].join("\n"),
+          });
+        },
+      },
+    });
+
+    const result = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-id",
+      twinId: "twin-id",
+      sourceType: "github",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return [
+            "Private memory content must not be stored in Postgres.",
+            "Postgres stores refs, hashes, audit, metadata, and graph records only.",
+            "Never log plaintext memory or secrets.",
+          ].join("\n");
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract() {
+          return {
+            memories: [
+              {
+                statement: "Sivraj private memory content must not be stored in Postgres.",
+                normalizedStatement: "sivraj private memory content must not be stored in postgres",
+                engineeringMemoryType: "security_boundary",
+                subject: "Sivraj private memory storage",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.96,
+                evidenceHash: "security-boundary-evidence",
+                evidenceLength: 56,
+                metadata: {
+                  sourceKind: "github_import",
+                  boundary: "postgres_no_plaintext_private_memory",
+                  plaintextExample: "my private school story",
+                  secretValue: "sk-test-secret-value",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "github_import",
+              originalLength: 160,
+              candidateInstructionCount: 3,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 1,
+        engineeringMemoryCount: 1,
+        decisionExtraction: {
+          decisionCount: 1,
+          decisionLinkCount: 1,
+        },
+      },
+    });
+    expect(repository.candidateMemories[0]).toMatchObject({
+      memoryType: "decision",
+      evidenceHash: "security-boundary-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "security_boundary",
+        engineeringInstructionScope: "project",
+        engineeringMetadata: {
+          boundary: "postgres_no_plaintext_private_memory",
+        },
+      },
+    });
+    const decisionNodes = repository.graphNodes.filter((node) => node.nodeType === "decision");
+    expect(decisionNodes).toHaveLength(1);
+    expect(decisionNodes[0]).toMatchObject({
+      properties: {
+        subject: "Sivraj private memory storage",
+        extractionMethod: "llm_structured_engineering_memory_extractor",
+        privateStatementStoredEncrypted: true,
+        metadata: {
+          engineering: true,
+          engineeringMemoryType: "security_boundary",
+        },
+      },
+    });
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("my private school story");
+    expect(JSON.stringify(repository.candidateMemories)).not.toContain("sk-test-secret-value");
+    expect(JSON.stringify(repository.graphNodes)).not.toContain("must not be stored in Postgres");
+  });
+
   it("clusters project graph nodes from extracted project and product entities", async () => {
     const repository = createRepository([
       {
@@ -1430,6 +2104,135 @@ describe("processQueuedArtifacts", () => {
       }),
     ]));
     expect(JSON.stringify(patternNodes)).not.toContain("interface to feel perfect");
+  });
+
+  it("detects recurring engineering bug patterns from engineering memories", async () => {
+    const repository = createRepository([
+      {
+        id: "artifact-current",
+        twinId: "twin-id",
+        sourceType: "chat_export",
+        rawStorageRef: "walrus://blob/blob-id",
+        metadata: {
+          storageMode: "encrypted_walrus",
+          sensitivity: "private",
+        },
+      },
+    ]);
+    await repository.createCandidateMemory({
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-old",
+      memoryFragmentId: "fragment-old",
+      memoryType: "project_update",
+      statementStorageRef: "walrus://blob/old-candidate",
+      statementSha256: "old-statement-sha",
+      evidenceHash: "old-recurring-bug-evidence",
+      evidenceLength: 72,
+      confidenceScore: 0.86,
+      metadata: {
+        subject: "Seal decrypt",
+        sourceType: "chat_export",
+        normalizedStatementHash: "old-normalized-hash",
+        engineering: true,
+        engineeringMemoryType: "recurring_bug",
+        patternKey: "walrus_seal_rpc_fetch_failure",
+        patternTags: ["walrus", "seal", "rpc", "fetch_failure"],
+      },
+    });
+
+    await processQueuedArtifacts(repository, {
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return privateSourcePayload({
+            title: "debug-chat.txt",
+            content: "Walrus read failed again with RpcError fetch failed while decrypting private memory.",
+          });
+        },
+      },
+    });
+    const result = await processArtifactIntelligence(repository, {
+      artifactId: "artifact-current",
+      twinId: "twin-id",
+      sourceType: "chat_export",
+      memoryFragmentId: "fragment-1",
+      privateFragmentStorage: createFakePrivateFragmentStorage(),
+      privateMemoryReader: {
+        async readPrivateMemory() {
+          return "Walrus read failed again with RpcError fetch failed while decrypting private memory.";
+        },
+      },
+      engineeringMemoryExtractor: {
+        async extract() {
+          return {
+            memories: [
+              {
+                statement: "Walrus private-memory reads repeatedly fail with RpcError fetch failed during decrypt.",
+                normalizedStatement: "walrus private-memory reads repeatedly fail with rpcerror fetch failed during decrypt",
+                engineeringMemoryType: "recurring_bug",
+                subject: "Walrus read",
+                scope: "project",
+                lifecycle: "active",
+                confidence: 0.91,
+                evidenceHash: "current-recurring-bug-evidence",
+                evidenceLength: 80,
+                metadata: {
+                  sourceKind: "chat_conversation",
+                },
+              },
+            ],
+            metadata: {
+              extractor: "llm_structured_engineering_memory_extractor",
+              provider: "openai",
+              model: "gpt-4o",
+              sourceKind: "chat_conversation",
+              originalLength: 80,
+              candidateInstructionCount: 1,
+              returnedMemories: 1,
+              acceptedMemories: 1,
+              warnings: [],
+            },
+          };
+        },
+      },
+      candidateMemoryArchiveQueue: createFakeCandidateMemoryArchiveQueue(),
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      memoryExtraction: {
+        status: "completed",
+        candidateMemoryCount: 1,
+        engineeringMemoryCount: 1,
+        patternDetection: {
+          patternCount: 1,
+          patternLinkCount: 1,
+        },
+      },
+    });
+    expect(repository.candidateMemories.at(-1)).toMatchObject({
+      memoryType: "project_update",
+      evidenceHash: "current-recurring-bug-evidence",
+      metadata: {
+        engineering: true,
+        engineeringMemoryType: "recurring_bug",
+        patternKey: "walrus_seal_rpc_fetch_failure",
+      },
+    });
+    const patternNodes = repository.graphNodes.filter(
+      (node) => node.nodeType === "other" && readTestRecord(node.properties).kind === "pattern",
+    );
+    expect(patternNodes).toHaveLength(1);
+    expect(patternNodes[0]).toMatchObject({
+      properties: {
+        kind: "pattern",
+        patternType: "repeated_behavior_theme",
+        subject: "Walrus/Seal RPC fetch failure",
+        normalizedSubject: "walrus_seal_rpc_fetch_failure",
+        evidenceCount: 2,
+      },
+    });
+    expect(JSON.stringify(patternNodes)).not.toContain("RpcError fetch failed");
   });
 
   it("marks candidate memories from attributed conversations with speaker policy metadata", async () => {

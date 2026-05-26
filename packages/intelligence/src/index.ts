@@ -2,6 +2,7 @@ import type { StructuredGenerator } from "@sivraj/llm";
 import { createHash } from "node:crypto";
 
 export * from "./patterns/index.js";
+export * from "./engineering/index.js";
 
 export const ENTITY_TYPES = [
   "person",
