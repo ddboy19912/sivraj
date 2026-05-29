@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.venv/
 
 # Build output
 dist/
@@ -28,4 +29,3 @@ yarn-debug.log*
 tmp/
 temp/
 .cache/
-

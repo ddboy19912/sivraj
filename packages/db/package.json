@@ -16,14 +16,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.drizzle.json --noEmit"
   },
   "dependencies": {
-    "drizzle-orm": "^0.41.0",
+    "drizzle-orm": "^0.45.2",
     "pg": "^8.16.0"
   },
   "devDependencies": {
     "@sivraj/config": "workspace:*",
     "@types/node": "^24.12.4",
     "@types/pg": "^8.15.4",
-    "drizzle-kit": "^0.31.1",
+    "drizzle-kit": "^0.31.10",
     "typescript": "~6.0.3"
   }
 }

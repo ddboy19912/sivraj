@@ -12,6 +12,8 @@ import * as pdfjs from 'pdfjs-dist'
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import './App.css'
 import { ConsoleShell } from './console/ConsoleShell'
+import AmbientUiPage from './ui/AmbientUiPage'
+import { VoiceSettingsPage } from './voice/VoiceSettingsPage'
 
 type Session = {
   token: string
@@ -141,9 +143,17 @@ const textEncoder = new TextEncoder()
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
-type AppMode = 'memory' | 'console'
+type AppMode = 'memory' | 'voice' | 'console'
 
 function App() {
+  if (window.location.pathname === '/ui') {
+    return <AmbientUiPage />
+  }
+
+  return <MemoryApp />
+}
+
+function MemoryApp() {
   const dAppKit = useDAppKit()
   const account = useCurrentAccount()
   const wallet = useCurrentWallet()
@@ -1041,7 +1051,7 @@ function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Sivraj</p>
-          <h1>{appMode === 'console' ? 'Testing Console' : 'Manual Memory'}</h1>
+          <h1>{appMode === 'console' ? 'Testing Console' : appMode === 'voice' ? 'Assistant Voice' : 'Manual Memory'}</h1>
         </div>
         <div className="wallet-actions">
           <ConnectButton />
@@ -1078,6 +1088,13 @@ function App() {
         </button>
         <button
           type="button"
+          className={appMode === 'voice' ? 'app-mode-button active' : 'app-mode-button'}
+          onClick={() => setAppMode('voice')}
+        >
+          Assistant Voice
+        </button>
+        <button
+          type="button"
           className={appMode === 'console' ? 'app-mode-button active' : 'app-mode-button'}
           onClick={() => setAppMode('console')}
         >
@@ -1087,6 +1104,15 @@ function App() {
 
       {appMode === 'console' ? (
         <ConsoleShell
+          session={session}
+          isSessionForWallet={isSessionForWallet}
+          onSessionRefreshed={(refreshed) => {
+            setSession(refreshed)
+            storeSession(refreshed)
+          }}
+        />
+      ) : appMode === 'voice' ? (
+        <VoiceSettingsPage
           session={session}
           isSessionForWallet={isSessionForWallet}
           onSessionRefreshed={(refreshed) => {

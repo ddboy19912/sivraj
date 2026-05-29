@@ -23,7 +23,7 @@
     "@sivraj/retrieval": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.41.0",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
     "pg": "^8.20.0"
   },

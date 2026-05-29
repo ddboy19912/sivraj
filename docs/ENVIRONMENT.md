@@ -170,6 +170,16 @@ Root `.env.example` is source of truth.
 - `SPEECH_TO_TEXT_API_KEY`: Optional dedicated transcription API key. Falls back to `LLM_API_KEY` when unset.
 - `SPEECH_TO_TEXT_MODEL`: Audio transcription model. Defaults to `gpt-4o-mini-transcribe`.
 
+### Voice Synthesis
+
+- `VOICE_SERVICE_KIND`: Voice service transport. Use `cartesia` for fast hosted Sonic TTS, `http` for the local Chatterbox FastAPI service, and `gradio` for a Hugging Face Chatterbox Space. Defaults to `http` when unset.
+- `VOICE_SERVICE_URL`: Internal URL for the standalone Chatterbox voice service. For Hugging Face Spaces, use the public Space runtime URL like `https://owner-space-name.hf.space`.
+- `VOICE_SERVICE_API_KEY`: Optional shared token with the voice service. For local FastAPI this is sent as a bearer token. For the Gradio Space this is sent as a hidden function input. For Cartesia, prefer `CARTESIA_API_KEY`; `VOICE_SERVICE_API_KEY` is accepted as a fallback.
+- `VOICE_SERVICE_TIMEOUT_MS`: Voice synthesis timeout in milliseconds. Defaults to `45000`.
+- `CARTESIA_API_KEY`: Server-side Cartesia API key. Required when `VOICE_SERVICE_KIND=cartesia`.
+- `CARTESIA_VERSION`: Cartesia API version header. Defaults to `2026-03-01`.
+- `CARTESIA_MODEL_ID`: Cartesia TTS model. Defaults to `sonic-3.5`.
+
 ### Walrus
 
 - `WALRUS_NETWORK`: Target network.

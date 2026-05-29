@@ -24,6 +24,7 @@ import {
   reflectionRuns,
   refreshSessions,
   sourceArtifacts,
+  twinVoiceProfiles,
   twins,
   userFeedbackEvents,
 } from "@sivraj/db";
@@ -34,6 +35,10 @@ import {
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createApp, type AppDependencies } from "./app";
+import {
+  createCartesiaVoiceSynthesizer,
+  createGradioVoiceSynthesizer,
+} from "./services/voice-service-client";
 
 const authConfig = {
   jwtSecret: "test-secret",
@@ -207,7 +212,7 @@ describe("browser API access", () => {
       {
         sub: "user-id",
         type: "user",
-        scopes: ["memory:read"],
+        scopes: ["artifact:upload", "memory:read"],
         twinId: "twin-id",
       },
       authConfig,
@@ -262,7 +267,7 @@ describe("browser API access", () => {
       {
         sub: "user-id",
         type: "user",
-        scopes: ["memory:read"],
+        scopes: ["artifact:upload", "memory:read"],
         twinId: "twin-id",
       },
       authConfig,
@@ -635,7 +640,7 @@ describe("security routes", () => {
       {
         sub: "user-id",
         type: "user",
-        scopes: ["memory:read"],
+        scopes: ["artifact:upload", "memory:read"],
         twinId,
       },
       authConfig,
@@ -850,7 +855,7 @@ describe("feedback routes", () => {
       {
         sub: "user-id",
         type: "user",
-        scopes: ["memory:read"],
+        scopes: ["artifact:upload", "memory:read"],
         twinId: "11111111-1111-4111-8111-111111111111",
       },
       authConfig,
@@ -1825,6 +1830,366 @@ describe("Twin identity profile route", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "twin_scope_mismatch" });
+  });
+});
+
+describe("Twin voice routes", () => {
+  it("returns stable preset voices", async () => {
+    const app = createApp({ db: createVoiceProfileDb({ profile: null }) });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/voice/presets", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      defaultVoiceId: string;
+      presets: Array<{ id: string; provider: string }>;
+    };
+    expect(payload.defaultVoiceId).toBe("warm_operator");
+    expect(payload.presets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "warm_operator",
+          provider: "chatterbox_turbo",
+        }),
+      ]),
+    );
+  });
+
+  it("saves a preset voice profile", async () => {
+    const db = createVoiceProfileDb({ profile: null });
+    const app = createApp({ db });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/voice/profile", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mode: "preset",
+        presetVoiceId: "focused_analyst",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      twinId: "twin-id",
+      mode: "preset",
+      presetVoiceId: "focused_analyst",
+      provider: "chatterbox_turbo",
+    });
+    expect(insertValue(db.insertCalls[0])).toMatchObject({
+      twinId: "twin-id",
+      mode: "preset",
+      presetVoiceId: "focused_analyst",
+    });
+    expect(insertValue(db.insertCalls[1])).toMatchObject({
+      eventType: "voice_profile.updated",
+      resourceType: "twin_voice_profile",
+    });
+  });
+
+  it("rejects voice cloning without explicit consent", async () => {
+    const app = createApp({ db: createVoiceProfileDb({ profile: null }) });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["artifact:upload", "memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/voice/profile", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        mode: "clone",
+        audioBase64: "ZmFrZSBhdWRpbw==",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "voice_clone_consent_required" });
+  });
+
+  it("speaks with the default preset voice", async () => {
+    const app = createApp({
+      db: createVoiceProfileDb({ profile: null }),
+      voiceSynthesizer: createFakeVoiceSynthesizer(),
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/voice/speak", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        text: "Hello from Sivraj.",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+    expect(await response.text()).toBe("fake-audio");
+  });
+
+  it("reports unavailable voice service clearly", async () => {
+    const app = createApp({
+      db: createVoiceProfileDb({ profile: null }),
+      voiceSynthesizer: {
+        async synthesize() {
+          throw new Error("offline");
+        },
+      },
+    });
+    const token = await signSessionToken(
+      {
+        sub: "user-id",
+        type: "user",
+        scopes: ["memory:read"],
+        twinId: "twin-id",
+      },
+      authConfig,
+    );
+
+    const response = await app.request("/v1/twins/twin-id/voice/speak", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        text: "Hello from Sivraj.",
+      }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "voice_service_unavailable" });
+  });
+
+  it("can synthesize through a Hugging Face Gradio Space endpoint", async () => {
+    const calls: string[] = [];
+    const synthesizer = createGradioVoiceSynthesizer({
+      serviceUrl: "https://example-space.hf.space",
+      apiKey: "voice-secret",
+      fetchImpl: async (url, init) => {
+        calls.push(String(url));
+
+        if (String(url).endsWith("/gradio_api/queue/join")) {
+          expect(JSON.parse(String(init?.body))).toMatchObject({
+            data: [
+              "Hello from Sivraj.",
+              "warm_operator",
+              "en",
+              "",
+              0,
+              "",
+              "",
+              "voice-secret",
+            ],
+            event_data: null,
+            fn_index: 0,
+            trigger_id: 12,
+          });
+
+          return new Response(
+            JSON.stringify({ event_id: "event-1" }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        }
+
+        if (String(url).includes("/gradio_api/queue/data?session_hash=")) {
+          return new Response(
+            [
+              'data: {"msg":"estimation","event_id":"event-1"}',
+              `data: ${JSON.stringify({
+                msg: "process_completed",
+                event_id: "event-1",
+                output: {
+                  data: [Buffer.from("wav-audio").toString("base64")],
+                },
+                success: true,
+              })}`,
+              "",
+            ].join("\n"),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          );
+        }
+
+        return new Response("not found", {
+          status: 404,
+          headers: { "content-type": "text/plain" },
+        });
+      },
+    });
+
+    const result = await synthesizer.synthesize({
+      text: "Hello from Sivraj.",
+      voiceId: "warm_operator",
+    });
+
+    expect(calls).toEqual([
+      "https://example-space.hf.space/gradio_api/queue/join",
+      expect.stringMatching(
+        /^https:\/\/example-space\.hf\.space\/gradio_api\/queue\/data\?session_hash=sivraj-/,
+      ),
+    ]);
+    expect(new TextDecoder().decode(result.audioBytes)).toBe("wav-audio");
+    expect(result.contentType).toBe("audio/wav");
+  });
+
+  it("can parse Gradio output field voice responses", async () => {
+    let callCount = 0;
+    const synthesizer = createGradioVoiceSynthesizer({
+      serviceUrl: "https://example-space.hf.space",
+      fetchImpl: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ event_id: "event-1" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        return new Response(
+          `data: ${JSON.stringify({
+            msg: "process_completed",
+            output: {
+              output: Buffer.from("wav-audio").toString("base64"),
+            },
+            success: true,
+          })}\n\n`,
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
+      },
+    });
+
+    const result = await synthesizer.synthesize({
+      text: "Hello from Sivraj.",
+      voiceId: "warm_operator",
+    });
+
+    expect(new TextDecoder().decode(result.audioBytes)).toBe("wav-audio");
+    expect(result.contentType).toBe("audio/wav");
+  });
+
+  it("can synthesize through Cartesia bytes API", async () => {
+    const synthesizer = createCartesiaVoiceSynthesizer({
+      apiKey: "cartesia-secret",
+      defaultVoiceId: "default-cartesia-voice",
+      fetchImpl: async (url, init) => {
+        expect(String(url)).toBe("https://api.cartesia.ai/tts/bytes");
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toMatchObject({
+          authorization: "Bearer cartesia-secret",
+          "cartesia-version": "2026-03-01",
+          "content-type": "application/json",
+        });
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          model_id: "sonic-3.5",
+          transcript: "Hello from Sivraj.",
+          voice: {
+            mode: "id",
+            id: "default-cartesia-voice",
+          },
+          output_format: {
+            container: "wav",
+            encoding: "pcm_f32le",
+            sample_rate: 44100,
+          },
+          language: "en",
+        });
+
+        return new Response("cartesia-audio", {
+          status: 200,
+          headers: { "content-type": "audio/wav" },
+        });
+      },
+    });
+
+    expect(synthesizer).toBeDefined();
+    const result = await synthesizer!.synthesize({
+      text: "Hello from Sivraj.",
+      voiceId: "warm_operator",
+    });
+
+    expect(new TextDecoder().decode(result.audioBytes)).toBe("cartesia-audio");
+    expect(result.contentType).toBe("audio/wav");
+  });
+
+  it("can create a Cartesia instant voice clone", async () => {
+    const synthesizer = createCartesiaVoiceSynthesizer({
+      apiKey: "cartesia-secret",
+      defaultVoiceId: "default-cartesia-voice",
+      fetchImpl: async (url, init) => {
+        expect(String(url)).toBe("https://api.cartesia.ai/voices/clone");
+        expect(init?.method).toBe("POST");
+        expect(init?.headers).toMatchObject({
+          authorization: "Bearer cartesia-secret",
+          "cartesia-version": "2026-03-01",
+        });
+        expect(init?.body).toBeInstanceOf(FormData);
+
+        return new Response(JSON.stringify({ id: "cloned-cartesia-voice" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const result = await synthesizer!.cloneVoice!({
+      audioBase64: Buffer.from("voice-sample").toString("base64"),
+      mimeType: "audio/webm",
+      fileName: "voice.webm",
+      name: "Sivraj voice clone",
+      language: "en",
+    });
+
+    expect(result.providerVoiceId).toBe("cloned-cartesia-voice");
   });
 });
 
@@ -4201,6 +4566,118 @@ function createIdentityProfileDb({ profile }: { profile: Record<string, unknown>
   } as unknown as AppDependencies["db"] & {
     insertCalls: unknown[];
     updateCalls: unknown[];
+  };
+}
+
+function createVoiceProfileDb({ profile }: { profile: Record<string, unknown> | null }) {
+  const insertCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  let currentProfile = profile;
+
+  return {
+    insertCalls,
+    updateCalls,
+    insert(table: unknown) {
+      return {
+        values(value: unknown) {
+          insertCalls.push({ table, value });
+
+          return {
+            returning() {
+              if (table === twinVoiceProfiles) {
+                currentProfile = {
+                  id: "voice-profile-id",
+                  referenceArtifactId: null,
+                  consentAt: null,
+                  ...(value as Record<string, unknown>),
+                };
+
+                return Promise.resolve([currentProfile]);
+              }
+
+              if (table === sourceArtifacts) {
+                return Promise.resolve([
+                  {
+                    id: "voice-reference-artifact-id",
+                    ...(value as Record<string, unknown>),
+                  },
+                ]);
+              }
+
+              return Promise.resolve([{ id: "audit-id", ...(value as Record<string, unknown>) }]);
+            },
+          };
+        },
+      };
+    },
+    update(table: unknown) {
+      return {
+        set(value: unknown) {
+          updateCalls.push({ table, value });
+          return {
+            where() {
+              return {
+                returning() {
+                  currentProfile = {
+                    id: currentProfile?.id ?? "voice-profile-id",
+                    twinId: "twin-id",
+                    ...(currentProfile ?? {}),
+                    ...(value as Record<string, unknown>),
+                  };
+
+                  return Promise.resolve([currentProfile]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from(table: unknown) {
+          const rows = table === twinVoiceProfiles && currentProfile
+            ? [currentProfile]
+            : table === sourceArtifacts
+              ? [
+                  {
+                    id: "voice-reference-artifact-id",
+                    twinId: "twin-id",
+                    sourceType: "voice_note",
+                    rawStorageRef: "walrus://blob/voice-reference",
+                    metadata: {
+                      ciphertextSha256: "voice-reference-sha",
+                    },
+                  },
+                ]
+              : [];
+          const chain = {
+            where() {
+              return chain;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+            then(resolve: (value: unknown[]) => void) {
+              resolve(rows);
+            },
+          };
+
+          return chain;
+        },
+      };
+    },
+  } as unknown as AppDependencies["db"] & { insertCalls: unknown[]; updateCalls: unknown[] };
+}
+
+function createFakeVoiceSynthesizer() {
+  return {
+    async synthesize() {
+      return {
+        audioBytes: new TextEncoder().encode("fake-audio"),
+        contentType: "audio/wav",
+      };
+    },
   };
 }
 

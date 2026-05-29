@@ -22,7 +22,7 @@
     "@sivraj/queue": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.41.0"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

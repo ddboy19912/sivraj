@@ -261,6 +261,30 @@ export const twinIdentityProfiles = pgTable(
   ],
 );
 
+export const twinVoiceProfiles = pgTable(
+  "twin_voice_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    twinId: uuid("twin_id")
+      .notNull()
+      .references(() => twins.id, { onDelete: "cascade" }),
+    mode: text("mode").notNull().default("preset"),
+    presetVoiceId: text("preset_voice_id").notNull().default("warm_operator"),
+    provider: text("provider").notNull().default("chatterbox_turbo"),
+    referenceArtifactId: uuid("reference_artifact_id").references(
+      () => sourceArtifacts.id,
+      { onDelete: "set null" },
+    ),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("twin_voice_profiles_twin_id_idx").on(t.twinId),
+  ],
+);
+
 export const refreshSessions = pgTable(
   "refresh_sessions",
   {

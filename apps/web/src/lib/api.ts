@@ -94,6 +94,25 @@ export async function postAuthedJson<TResponse>(
   }
 }
 
+export async function postAuthedAudio(
+  path: string,
+  body: Record<string, unknown>,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<Blob> {
+  try {
+    return await postAudio(path, body, session.token)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+    return postAudio(path, body, refreshed.token)
+  }
+}
+
 export async function getAuthedJson<TResponse>(
   path: string,
   session: Session,
@@ -110,6 +129,28 @@ export async function getAuthedJson<TResponse>(
     onSessionRefreshed(refreshed)
     return getJson<TResponse>(path, refreshed.token)
   }
+}
+
+async function postAudio(
+  path: string,
+  body: Record<string, unknown>,
+  token: string,
+): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  return response.blob()
 }
 
 export function readSessionForTests(): Session | null {

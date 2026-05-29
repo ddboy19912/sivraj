@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { loadMemorySearchConfig, type MemorySearchConfig } from "@sivraj/config";
+import {
+  loadMemorySearchConfig,
+  type MemorySearchConfig,
+} from "@sivraj/config";
 import {
   createLazyArtifactProcessingQueue,
   createLazyArtifactStatusPublisher,
@@ -35,11 +38,16 @@ import { createMemoryRoutes } from "./routes/memories.js";
 import { createReflectionRoutes } from "./routes/reflections.js";
 import { createSecurityRoutes } from "./routes/security.js";
 import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
+import { createVoiceRoutes } from "./routes/voice.js";
 import {
   createConfiguredPrivateMemoryReader,
   type PrivateMemoryReader,
 } from "./services/private-memory-reader.js";
 import { createPrivateMemoryStorage } from "./services/private-memory-storage.js";
+import {
+  createConfiguredVoiceSynthesizer,
+  type VoiceSynthesizer,
+} from "./services/voice-service-client.js";
 
 export type ApiDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
@@ -55,6 +63,7 @@ export type AppDependencies = {
   privateMemoryReader?: PrivateMemoryReader;
   weeklyReflectionQueue?: WeeklyReflectionQueue;
   memorySearchConfig?: MemorySearchConfig;
+  voiceSynthesizer?: VoiceSynthesizer;
 };
 
 export type SupportedArtifactSourceType =
@@ -145,6 +154,7 @@ export function createApp(
       process.env["REDIS_URL"],
     ),
     memorySearchConfig: loadMemorySearchConfig(process.env),
+    voiceSynthesizer: createConfiguredVoiceSynthesizer(process.env),
   },
 ) {
   const app = new Hono();
@@ -190,6 +200,7 @@ export function createApp(
   app.route("/v1/twins/:twinId/graph", createGraphRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));
   app.route("/v1/twins/:twinId/feedback", createFeedbackRoutes(dependencies));
+  app.route("/v1/twins/:twinId/voice", createVoiceRoutes(dependencies));
   app.route(
     "/v1/twins/:twinId/reflections",
     createReflectionRoutes(dependencies),
