@@ -22,6 +22,27 @@ export function recordMetadata(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function isPrimitiveMetadataValue(
+  value: unknown,
+): value is string | number | boolean | null {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  );
+}
+
+function isPrimitiveMetadataArray(
+  value: unknown,
+): value is Array<string | number | boolean | null> {
+  return Array.isArray(value) && value.every(isPrimitiveMetadataValue);
+}
+
+function isPlaintextLikeMetadataKey(key: string): boolean {
+  return PLAINTEXT_LIKE_METADATA_KEYS.has(key.toLowerCase());
+}
+
 export function sanitizeSafeMetadata(value: unknown): Record<string, unknown> {
   const metadata = recordMetadata(value);
   const sanitized: Record<string, unknown> = {};
@@ -29,38 +50,57 @@ export function sanitizeSafeMetadata(value: unknown): Record<string, unknown> {
   for (const [key, item] of Object.entries(metadata)) {
     const normalizedKey = key.trim();
 
-    if (
-      !normalizedKey ||
-      PLAINTEXT_LIKE_METADATA_KEYS.has(normalizedKey.toLowerCase())
-    ) {
+    if (!normalizedKey || isPlaintextLikeMetadataKey(normalizedKey)) {
       continue;
     }
 
-    if (
-      typeof item === "string" ||
-      typeof item === "number" ||
-      typeof item === "boolean" ||
-      item === null
-    ) {
+    if (isPrimitiveMetadataValue(item)) {
       sanitized[normalizedKey] = item;
       continue;
     }
 
-    if (
-      Array.isArray(item) &&
-      item.every(
-        (arrayItem) =>
-          typeof arrayItem === "string" ||
-          typeof arrayItem === "number" ||
-          typeof arrayItem === "boolean" ||
-          arrayItem === null,
-      )
-    ) {
+    if (isPrimitiveMetadataArray(item)) {
       sanitized[normalizedKey] = item;
     }
   }
 
   return sanitized;
+}
+
+export function sanitizeStrictSafeMetadata(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (value === undefined || value === null) {
+    return {};
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const metadata: Record<string, unknown> = {};
+
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+
+    if (!normalizedKey || isPlaintextLikeMetadataKey(normalizedKey)) {
+      return null;
+    }
+
+    if (isPrimitiveMetadataValue(item)) {
+      metadata[normalizedKey] = item;
+      continue;
+    }
+
+    if (isPrimitiveMetadataArray(item)) {
+      metadata[normalizedKey] = item;
+      continue;
+    }
+
+    return null;
+  }
+
+  return metadata;
 }
 
 export function metadataContainsPlaintextLikeFields(value: unknown): boolean {

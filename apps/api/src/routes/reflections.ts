@@ -2,31 +2,15 @@ import { auditEvents, reflectionRuns } from "@sivraj/db";
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
-import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
+import { requireAuth, type AuthEnv } from "../middleware/auth.js";
+import { authorizeTwinRoute, twinScopedHandler } from "../lib/http/route-auth.js";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function createReflectionRoutes({ db, weeklyReflectionQueue }: AppDependencies) {
   const reflectionRoutes = new Hono<AuthEnv>();
 
-  reflectionRoutes.get("/", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
-
-    if (scopeError) {
-      return scopeError;
-    }
-
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-
-    if (!twinId) {
-      return c.json({ error: "missing_twin_id" }, 400);
-    }
-
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
-
+  reflectionRoutes.get("/", requireAuth, twinScopedHandler("memory:read", async (c, { twinId }) => {
     const rows = await db
       .select()
       .from(reflectionRuns)
@@ -48,25 +32,14 @@ export function createReflectionRoutes({ db, weeklyReflectionQueue }: AppDepende
         updatedAt: row.updatedAt.toISOString(),
       })),
     });
-  });
+  }));
 
   reflectionRoutes.post("/weekly", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
-
-    if (scopeError) {
-      return scopeError;
+    const routeAuth = authorizeTwinRoute(c, "memory:read");
+    if (!routeAuth.ok) {
+      return routeAuth.response;
     }
-
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-
-    if (!twinId) {
-      return c.json({ error: "missing_twin_id" }, 400);
-    }
-
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
+    const { auth, twinId } = routeAuth.value;
 
     if (!weeklyReflectionQueue) {
       return c.json({ error: "reflection_queue_not_configured" }, 503);

@@ -1,3 +1,5 @@
+import { importGitHubCandidatePath } from "./github-candidate.js";
+
 export type GitHubImporterFetch = (
   input: string,
   init?: RequestInit,
@@ -33,15 +35,6 @@ type GitHubRepoResponse = {
   html_url?: string;
   description?: string | null;
   default_branch?: string;
-};
-
-type GitHubContentResponse = {
-  type?: string;
-  path?: string;
-  name?: string;
-  size?: number;
-  content?: string;
-  encoding?: string;
 };
 
 const GITHUB_API_URL = "https://api.github.com";
@@ -117,54 +110,18 @@ export async function importPublicGitHubRepository(input: {
     `Default branch: ${defaultBranch}`,
   ];
 
-  for (const path of CANDIDATE_PATHS) {
-    if (importedFiles.length >= MAX_IMPORT_FILES) {
-      skipped.push({ path, reason: "max_files_reached" });
-      continue;
-    }
-
-    const file = await fetchOptionalGitHubJson<GitHubContentResponse>(
-      fetcher,
-      `${GITHUB_API_URL}/repos/${parsed.owner}/${parsed.repo}/contents/${encodeURIComponentPath(path)}?ref=${encodeURIComponent(defaultBranch)}`,
-    );
-
-    if (!file) {
-      continue;
-    }
-
-    if (file.type !== "file" || file.encoding !== "base64" || typeof file.content !== "string") {
-      skipped.push({ path, reason: "unsupported_content_response" });
-      continue;
-    }
-
-    const size = file.size ?? 0;
-
-    if (size > MAX_FILE_BYTES) {
-      skipped.push({ path, reason: "file_too_large" });
-      continue;
-    }
-
-    const content = Buffer.from(file.content.replace(/\s/g, ""), "base64").toString("utf8").trim();
-
-    if (!content) {
-      skipped.push({ path, reason: "empty_file" });
-      continue;
-    }
-
-    const nextSection = `\n\nFile: ${file.path ?? path}\n\n${content}`;
-
-    if ((sections.join("\n").length + nextSection.length) > MAX_BUNDLE_CHARS) {
-      skipped.push({ path, reason: "bundle_too_large" });
-      break;
-    }
-
-    sections.push(nextSection);
-    importedFiles.push({
-      path: file.path ?? path,
-      size,
-      source: "contents_api",
-    });
-  }
+  const collected = await collectGitHubCandidateImports({
+    fetcher,
+    owner: parsed.owner,
+    repo: parsed.repo,
+    defaultBranch,
+    sections,
+    importedFiles,
+    skipped,
+  });
+  sections.push(...collected.sections);
+  importedFiles.push(...collected.importedFiles);
+  skipped.push(...collected.skipped);
 
   if (importedFiles.length === 0) {
     throw new Error("github_import_no_supported_files");
@@ -186,6 +143,61 @@ export async function importPublicGitHubRepository(input: {
       files: importedFiles,
       skipped,
     },
+  };
+}
+
+async function collectGitHubCandidateImports(input: {
+  fetcher: GitHubImporterFetch;
+  owner: string;
+  repo: string;
+  defaultBranch: string;
+  sections: string[];
+  importedFiles: GitHubImportResult["metadata"]["files"];
+  skipped: GitHubImportResult["metadata"]["skipped"];
+}) {
+  const nextSections: string[] = [];
+  const nextImportedFiles: GitHubImportResult["metadata"]["files"] = [];
+  const nextSkipped: GitHubImportResult["metadata"]["skipped"] = [];
+
+  for (const path of CANDIDATE_PATHS) {
+    const result = await importGitHubCandidatePath({
+      fetcher: input.fetcher,
+      owner: input.owner,
+      repo: input.repo,
+      defaultBranch: input.defaultBranch,
+      path,
+      currentBundleLength: input.sections.join("\n").length + nextSections.join("\n").length,
+      importedCount: input.importedFiles.length + nextImportedFiles.length,
+      maxImportFiles: MAX_IMPORT_FILES,
+      maxFileBytes: MAX_FILE_BYTES,
+      maxBundleChars: MAX_BUNDLE_CHARS,
+      fetchOptionalGitHubJson,
+    });
+
+    if (result.kind === "skipped") {
+      if (result.reason !== "not_found") {
+        nextSkipped.push({ path: result.path, reason: result.reason });
+      }
+
+      if (result.reason === "bundle_too_large") {
+        break;
+      }
+
+      continue;
+    }
+
+    nextSections.push(result.section);
+    nextImportedFiles.push({
+      path: result.path,
+      size: result.size,
+      source: "contents_api",
+    });
+  }
+
+  return {
+    sections: nextSections,
+    importedFiles: nextImportedFiles,
+    skipped: nextSkipped,
   };
 }
 
@@ -235,6 +247,3 @@ async function fetchOptionalGitHubJson<T>(fetcher: GitHubImporterFetch, url: str
   return response.json() as Promise<T>;
 }
 
-function encodeURIComponentPath(path: string): string {
-  return path.split("/").map(encodeURIComponent).join("/");
-}

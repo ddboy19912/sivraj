@@ -1,4 +1,7 @@
 import type { ParsedArtifact, ParsedConversationMessage } from "../types.js";
+import { parseJsonConversationExport } from "./shared/conversation-export.js";
+import { isRecord } from "./shared/json.js";
+import { normalizeWhitespaceText } from "./shared/text.js";
 
 const SLACK_EXPORT_PARSER_NAME = "slack_export";
 
@@ -15,57 +18,16 @@ export function parseSlackExport(input: {
   content: string;
   title?: string | null;
 }): ParsedArtifact {
-  const originalLength = input.content.length;
-  const warnings: string[] = [];
-  const parsedJson = parseJson(input.content);
-
-  if (!parsedJson.ok) {
-    warnings.push("slack_export_parse_recovered_with_plain_text");
-    const content = normalizeSlackText(input.content);
-
-    return {
-      content,
-      parser: {
-        name: SLACK_EXPORT_PARSER_NAME,
-        originalLength,
-        parsedLength: content.length,
-        warnings: content ? warnings : [...warnings, "slack_export_empty_after_parse"],
-      },
-    };
-  }
-
-  const messages = extractMessages(parsedJson.value);
-  const speakers = extractSpeakers(messages);
-  const conversationMessages = messages
-    .map(toConversationMessage)
-    .filter((message): message is ParsedConversationMessage => Boolean(message));
-  const content = conversationMessages.map(renderConversationMessage).join("\n").trim();
-
-  if (!content) {
-    warnings.push("slack_export_empty_after_parse");
-  }
-
-  return {
-    content,
-    parser: {
-      name: SLACK_EXPORT_PARSER_NAME,
-      originalLength,
-      parsedLength: content.length,
-      warnings,
-      speakers,
-    },
-    conversation: {
-      messages: conversationMessages,
-    },
-  };
-}
-
-function parseJson(content: string): { ok: true; value: unknown } | { ok: false } {
-  try {
-    return { ok: true, value: JSON.parse(content) as unknown };
-  } catch {
-    return { ok: false };
-  }
+  return parseJsonConversationExport({
+    content: input.content,
+    parserName: SLACK_EXPORT_PARSER_NAME,
+    parseFailureWarning: "slack_export_parse_recovered_with_plain_text",
+    emptyWarning: "slack_export_empty_after_parse",
+    recoverPlainText: normalizeSlackText,
+    extractMessages,
+    extractSpeakers,
+    toConversationMessage,
+  });
 }
 
 function extractMessages(value: unknown): SlackMessage[] {
@@ -102,12 +64,6 @@ function toConversationMessage(message: SlackMessage): ParsedConversationMessage
   };
 }
 
-function renderConversationMessage(message: ParsedConversationMessage): string {
-  return message.timestamp
-    ? `[${message.timestamp}] ${message.speaker}: ${message.text}`
-    : `${message.speaker}: ${message.text}`;
-}
-
 function extractSpeakers(messages: SlackMessage[]): string[] {
   return Array.from(new Set(
     messages
@@ -118,23 +74,12 @@ function extractSpeakers(messages: SlackMessage[]): string[] {
 }
 
 function normalizeSlackText(content: string): string {
-  return content
+  return normalizeWhitespaceText(content
     .replace(/<@([A-Z0-9]+)>/g, "@$1")
     .replace(/<#([A-Z0-9]+)\|([^>]+)>/g, "#$2")
     .replace(/<([^|>]+)\|([^>]+)>/g, "$2")
     .replace(/<([^>]+)>/g, "$1")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+    .replace(/&gt;/g, ">"));
 }

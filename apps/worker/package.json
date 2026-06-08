@@ -14,11 +14,13 @@
   "dependencies": {
     "@mysten/sui": "^2.16.3",
     "@sivraj/config": "workspace:*",
+    "@sivraj/core": "workspace:*",
     "@sivraj/crypto-seal": "workspace:*",
     "@sivraj/db": "workspace:*",
     "@sivraj/ingestion": "workspace:*",
     "@sivraj/intelligence": "workspace:*",
     "@sivraj/llm": "workspace:*",
+    "@sivraj/private-memory-reader": "workspace:*",
     "@sivraj/queue": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",
     "dotenv": "^17.4.2",

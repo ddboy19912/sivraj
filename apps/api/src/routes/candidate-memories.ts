@@ -1,51 +1,25 @@
 import { candidateMemories } from "@sivraj/db";
-import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { sanitizeSafeMetadata } from "../lib/safe-metadata.js";
-import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
+import { requireAuth, type AuthEnv } from "../middleware/auth.js";
+import { authorizeTwinRoute, twinScopedHandler } from "../lib/http/route-auth.js";
+import { queryTwinCandidateMemories, readOptionalQueryUuid, readQueryLimit } from "../lib/http/route-helpers.js";
 
 export function createCandidateMemoryRoutes({ db }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
 
-  routes.get("/", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
-
-    if (scopeError) {
-      return scopeError;
-    }
-
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-
-    if (!twinId) {
-      return c.json({ error: "missing_twin_id" }, 400);
-    }
-
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
-
-    const artifactId = readOptionalUuid(c.req.query("artifactId"));
+  routes.get("/", requireAuth, twinScopedHandler("memory:read", async (c, { twinId }) => {
+    const artifactId = readOptionalQueryUuid(c.req.query("artifactId"));
     const status = readOptionalStatus(c.req.query("status"));
-    const limit = readLimit(c.req.query("limit"));
-
-    const filters = [eq(candidateMemories.twinId, twinId)];
-
-    if (artifactId) {
-      filters.push(eq(candidateMemories.sourceArtifactId, artifactId));
-    }
-
-    if (status) {
-      filters.push(eq(candidateMemories.status, status));
-    }
-
-    const rows = await db
-      .select()
-      .from(candidateMemories)
-      .where(and(...filters))
-      .orderBy(desc(candidateMemories.createdAt))
-      .limit(limit);
+    const limit = readQueryLimit(c.req.query("limit"), 50, 200);
+    const rows = await queryTwinCandidateMemories({
+      db,
+      twinId,
+      artifactId,
+      status,
+      limit,
+    });
 
     return c.json({
       policy: {
@@ -71,20 +45,9 @@ export function createCandidateMemoryRoutes({ db }: AppDependencies) {
         updatedAt: row.updatedAt.toISOString(),
       })),
     });
-  });
+  }));
 
   return routes;
-}
-
-function readOptionalUuid(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
-    ? trimmed
-    : null;
 }
 
 function readOptionalStatus(value: string | undefined): "candidate" | "approved" | "rejected" | "superseded" | null {
@@ -94,16 +57,6 @@ function readOptionalStatus(value: string | undefined): "candidate" | "approved"
     value === "superseded"
     ? value
     : null;
-}
-
-function readLimit(value: string | undefined): number {
-  const parsed = Number.parseInt(value ?? "50", 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 50;
-  }
-
-  return Math.min(parsed, 200);
 }
 
 function readSafeSubject(metadata: unknown): string | null {

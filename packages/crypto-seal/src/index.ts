@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseSealKeyServers as parseCoreSealKeyServers } from "@sivraj/core";
 import {
   EncryptedObject,
   SealClient,
@@ -6,33 +7,24 @@ import {
   type KeyServerConfig,
   type SealCompatibleClient,
 } from "@mysten/seal";
+
+export * from "./private-fragment-storage.js";
+export * from "./private-source-storage.js";
+export * from "./seal-types.js";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromHex } from "@mysten/sui/utils";
 import type { Signer } from "@mysten/sui/cryptography";
+import type {
+  SealEncryptInput,
+  SealEncryptor,
+  SealEncryptOutput,
+} from "./seal-types.js";
 
 export type SealPolicyConfig = {
   packageId: string;
   policyId: string;
   threshold: number;
   keyServers: KeyServerConfig[];
-};
-
-export type SealEncryptInput = {
-  data: Uint8Array;
-  aad?: Uint8Array;
-};
-
-export type SealEncryptOutput = {
-  encryptedBytes: Uint8Array;
-  ciphertextSha256: string;
-  packageId: string;
-  policyId: string;
-  threshold: number;
-  keyServerObjectIds: string[];
-};
-
-export type SealEncryptor = {
-  encrypt(input: SealEncryptInput): Promise<SealEncryptOutput>;
 };
 
 export type SealDecryptInput = {
@@ -176,31 +168,7 @@ export async function buildSealApprovalTxBytes(params: {
 }
 
 export function parseSealKeyServers(value: string): KeyServerConfig[] {
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return [];
-  }
-
-  if (trimmed.startsWith("[")) {
-    const parsed = JSON.parse(trimmed) as unknown;
-
-    if (!Array.isArray(parsed)) {
-      throw new Error(
-        "SEAL_KEY_SERVERS must be a JSON array or comma-separated object IDs",
-      );
-    }
-
-    return parsed.map(parseKeyServerConfig);
-  }
-
-  return trimmed
-    .split(",")
-    .map((objectId) => ({
-      objectId: objectId.trim(),
-      weight: 1,
-    }))
-    .filter((server) => server.objectId.length > 0);
+  return parseCoreSealKeyServers(value);
 }
 
 export function assertSealPolicyConfig(config: SealPolicyConfig): void {
@@ -228,63 +196,6 @@ export function assertSealPolicyConfig(config: SealPolicyConfig): void {
   if (config.threshold > totalWeight) {
     throw new Error("Seal threshold cannot exceed total key server weight");
   }
-}
-
-function parseKeyServerConfig(value: unknown): KeyServerConfig {
-  if (!value || typeof value !== "object") {
-    throw new Error("Invalid Seal key server config");
-  }
-
-  const record = value as Record<string, unknown>;
-  const objectId = stringField(record, "objectId");
-  const weight = numberField(record, "weight", 1);
-  const aggregatorUrl = optionalStringField(record, "aggregatorUrl");
-  const apiKeyName = optionalStringField(record, "apiKeyName");
-  const apiKey = optionalStringField(record, "apiKey");
-
-  return {
-    objectId,
-    weight,
-    ...(aggregatorUrl ? { aggregatorUrl } : {}),
-    ...(apiKeyName ? { apiKeyName } : {}),
-    ...(apiKey ? { apiKey } : {}),
-  };
-}
-
-function stringField(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`Invalid Seal key server ${key}`);
-  }
-
-  return value;
-}
-
-function optionalStringField(
-  record: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = record[key];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function numberField(
-  record: Record<string, unknown>,
-  key: string,
-  fallback: number,
-): number {
-  const value = record[key];
-
-  if (value === undefined) {
-    return fallback;
-  }
-
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new Error(`Invalid Seal key server ${key}`);
-  }
-
-  return value;
 }
 
 function sha256Hex(bytes: Uint8Array): string {

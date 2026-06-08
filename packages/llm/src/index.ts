@@ -1,3 +1,5 @@
+import { fetchWithTimeout, truncateText } from "@sivraj/core";
+
 export type SpeechToTextInput = {
   audioBase64: string;
   fileName?: string | null;
@@ -34,6 +36,28 @@ export type StructuredGenerator = {
   generateJson(input: StructuredGenerationInput): Promise<StructuredGenerationOutput>;
 };
 
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+export type ChatGenerationInput = {
+  messages: ChatMessage[];
+  temperature?: number;
+  timeoutMs?: number;
+};
+
+export type ChatGenerationOutput = {
+  content: string;
+  provider: string;
+  model: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ChatGenerator = {
+  generateChat(input: ChatGenerationInput): Promise<ChatGenerationOutput>;
+};
+
 export type SpeechToTextConfig = {
   provider: "openai";
   apiKey: string;
@@ -44,6 +68,7 @@ export type SpeechToTextConfig = {
 
 export const DEFAULT_SPEECH_TO_TEXT_MODEL = "gpt-4o-mini-transcribe";
 export const DEFAULT_STRUCTURED_GENERATION_MODEL = "gpt-4o-mini";
+export const DEFAULT_CHAT_GENERATION_MODEL = "gpt-4o-mini";
 
 export function createOpenAISpeechToTextTranscriber(
   config: SpeechToTextConfig,
@@ -81,7 +106,7 @@ export function createOpenAISpeechToTextTranscriber(
 
       if (!response.ok) {
         throw new Error(
-          `speech_to_text_failed:${response.status}:${truncate(await response.text())}`,
+          `speech_to_text_failed:${response.status}:${truncateText(await response.text(), 500)}`,
         );
       }
 
@@ -203,6 +228,80 @@ export function createConfiguredStructuredGenerator(
   });
 }
 
+export function createOpenAICompatibleChatGenerator(config: {
+  provider: string;
+  apiKey?: string | null;
+  model?: string;
+  baseUrl?: string;
+  fetch?: typeof fetch;
+  maxRetries?: number;
+  timeoutMs?: number;
+  extraHeaders?: Record<string, string>;
+}): ChatGenerator {
+  const fetchImpl = config.fetch ?? fetch;
+  const model = config.model || DEFAULT_CHAT_GENERATION_MODEL;
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(config.baseUrl || "https://api.openai.com");
+  const maxRetries = config.maxRetries ?? 1;
+  const timeoutMs = config.timeoutMs ?? 45_000;
+
+  return {
+    async generateChat(input) {
+      let lastError: Error | null = null;
+
+      for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+        try {
+          return await generateOpenAICompatibleChat({
+            apiKey: config.apiKey ?? "",
+            baseUrl,
+            extraHeaders: config.extraHeaders,
+            fetchImpl,
+            input,
+            model,
+            provider: config.provider,
+            attempt,
+            timeoutMs: input.timeoutMs ?? timeoutMs,
+          });
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error("chat_generation_failed");
+
+          if (!isRetryableChatGenerationError(lastError) || attempt > maxRetries) {
+            throw lastError;
+          }
+
+          await sleep(100 * attempt);
+        }
+      }
+
+      throw lastError ?? new Error("chat_generation_failed");
+    },
+  };
+}
+
+export function createConfiguredChatGenerator(
+  env: Record<string, string | undefined>,
+): ChatGenerator | null {
+  const provider = env["LLM_PROVIDER"] || "openai";
+
+  if (provider === "none") {
+    return null;
+  }
+
+  const apiKey = env["LLM_API_KEY"];
+  const baseUrl = defaultChatBaseUrl(provider, env["OPENAI_BASE_URL"]);
+
+  if (provider !== "ollama" && !apiKey) {
+    return null;
+  }
+
+  return createOpenAICompatibleChatGenerator({
+    provider,
+    apiKey,
+    model: env["LLM_MODEL"] || DEFAULT_CHAT_GENERATION_MODEL,
+    baseUrl,
+    timeoutMs: readPositiveInteger(env["LLM_REQUEST_TIMEOUT_MS"], 45_000),
+  });
+}
+
 function decodeBase64(value: string): Uint8Array {
   const audio = Buffer.from(value, "base64");
 
@@ -261,17 +360,12 @@ async function generateOpenAICompatibleJson(input: {
   attempt: number;
   timeoutMs: number;
 }): Promise<StructuredGenerationOutput> {
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), input.timeoutMs);
-
-  const response = await input.fetchImpl(`${input.baseUrl}/v1/chat/completions`, {
-    method: "POST",
-    signal: abortController.signal,
-    headers: {
-      authorization: `Bearer ${input.apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  const { content, usage } = await postOpenAICompatibleCompletion({
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+    fetchImpl: input.fetchImpl,
+    timeoutMs: input.timeoutMs,
+    body: {
       model: input.model,
       temperature: input.input.temperature ?? 0,
       response_format: { type: "json_object" },
@@ -279,24 +373,10 @@ async function generateOpenAICompatibleJson(input: {
         { role: "system", content: input.input.system },
         { role: "user", content: input.input.prompt },
       ],
-    }),
-  }).finally(() => clearTimeout(timeout));
-
-  if (!response.ok) {
-    throw new Error(
-      `structured_generation_failed:${response.status}:${truncate(await response.text())}`,
-    );
-  }
-
-  const payload = await response.json() as {
-    choices?: Array<{ message?: { content?: unknown } }>;
-    usage?: unknown;
-  };
-  const content = payload.choices?.[0]?.message?.content;
-
-  if (typeof content !== "string" || content.trim().length === 0) {
-    throw new Error("structured_generation_empty");
-  }
+    },
+    failurePrefix: "structured_generation_failed",
+    emptyError: "structured_generation_empty",
+  });
   const json = parseStructuredJsonContent(content);
 
   return {
@@ -304,7 +384,7 @@ async function generateOpenAICompatibleJson(input: {
     provider: input.provider,
     model: input.model,
     metadata: {
-      usage: payload.usage,
+      usage,
       attempt: input.attempt,
     },
   };
@@ -376,6 +456,132 @@ function isRetryableStructuredGenerationError(error: Error): boolean {
   ].some((fragment) => error.message.includes(fragment));
 }
 
+async function generateOpenAICompatibleChat(input: {
+  apiKey: string;
+  baseUrl: string;
+  extraHeaders?: Record<string, string>;
+  fetchImpl: typeof fetch;
+  input: ChatGenerationInput;
+  model: string;
+  provider: string;
+  attempt: number;
+  timeoutMs: number;
+}): Promise<ChatGenerationOutput> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(input.extraHeaders ?? {}),
+  };
+
+  if (input.apiKey) {
+    headers.authorization = `Bearer ${input.apiKey}`;
+  }
+
+  const { content, usage } = await postOpenAICompatibleCompletion({
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+    fetchImpl: input.fetchImpl,
+    timeoutMs: input.timeoutMs,
+    headers,
+    body: {
+      model: input.model,
+      temperature: input.input.temperature ?? 0.2,
+      messages: input.input.messages,
+    },
+    failurePrefix: "chat_generation_failed",
+    emptyError: "chat_generation_empty",
+  });
+
+  return {
+    content: content.trim(),
+    provider: input.provider,
+    model: input.model,
+    metadata: {
+      usage,
+      attempt: input.attempt,
+    },
+  };
+}
+
+async function postOpenAICompatibleCompletion(input: {
+  apiKey: string;
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  timeoutMs: number;
+  headers?: Record<string, string>;
+  body: Record<string, unknown>;
+  failurePrefix: string;
+  emptyError: string;
+}): Promise<{ content: string; usage: unknown }> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(input.headers ?? {}),
+  };
+
+  if (input.apiKey) {
+    headers.authorization = `Bearer ${input.apiKey}`;
+  }
+
+  const response = await fetchWithTimeout(input.fetchImpl, `${input.baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    timeoutMs: input.timeoutMs,
+    headers,
+    body: JSON.stringify(input.body),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `${input.failurePrefix}:${response.status}:${truncateText(await response.text())}`,
+    );
+  }
+
+  const payload = await response.json() as {
+    choices?: Array<{ message?: { content?: unknown } }>;
+    usage?: unknown;
+  };
+  const content = payload.choices?.[0]?.message?.content;
+
+  if (typeof content !== "string" || content.trim().length === 0) {
+    throw new Error(input.emptyError);
+  }
+
+  return {
+    content,
+    usage: payload.usage,
+  };
+}
+
+function isRetryableChatGenerationError(error: Error): boolean {
+  if (error.name === "AbortError") {
+    return true;
+  }
+
+  return [
+    "chat_generation_empty",
+    "chat_generation_failed:429",
+    "chat_generation_failed:500",
+    "chat_generation_failed:502",
+    "chat_generation_failed:503",
+    "chat_generation_failed:504",
+    "fetch failed",
+  ].some((fragment) => error.message.includes(fragment));
+}
+
+function defaultChatBaseUrl(provider: string, configuredBaseUrl: string | undefined): string {
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  if (provider === "openrouter") {
+    return "https://openrouter.ai/api/v1";
+  }
+
+  if (provider === "ollama") {
+    return "http://localhost:11434/v1";
+  }
+
+  return "https://api.openai.com";
+}
+
 function readPositiveInteger(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -388,10 +594,6 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function truncate(value: string): string {
-  return value.length > 500 ? `${value.slice(0, 500)}...` : value;
 }
 
 function normalizeOpenAICompatibleBaseUrl(value: string): string {

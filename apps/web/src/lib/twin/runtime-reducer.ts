@@ -1,0 +1,179 @@
+import type {
+  TwinRuntimeEvent,
+  TwinRuntimeState,
+} from "@/types/twin.types";
+
+export type TwinRuntimeAction =
+  | TwinRuntimeEvent
+  | {
+      type: "speech.audio_ready";
+      eventId: string;
+      audioUrl: string;
+    };
+
+export function createInitialTwinRuntimeState(): TwinRuntimeState {
+  return { status: "idle", processedEventIds: [] };
+}
+
+export function twinRuntimeReducer(
+  state: TwinRuntimeState,
+  action: TwinRuntimeAction,
+): TwinRuntimeState {
+  switch (action.type) {
+    case "first_meet_intro.requested":
+      return applySpeechRequest(state, {
+        eventId: action.eventId,
+        dedupeKey: action.dedupeKey,
+        text: action.text,
+        voiceStyle: action.voiceStyle,
+        sourceEventId: action.eventId,
+      });
+    case "speech.requested":
+      return applySpeechRequest(state, action);
+    case "speech.audio_ready":
+      if (state.status !== "preparing_speech" || state.eventId !== action.eventId) {
+        return state;
+      }
+
+      return {
+        status: "speaking",
+        eventId: state.eventId,
+        dedupeKey: state.dedupeKey,
+        text: state.text,
+        audioUrl: action.audioUrl,
+        sourceEventId: state.sourceEventId,
+        processedEventIds: state.processedEventIds,
+      };
+    case "speech.started":
+      return state;
+    case "speech.completed":
+      if (!isActiveRuntimeEvent(state, action.eventId)) {
+        return state;
+      }
+
+      return {
+        status: "idle",
+        processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+      };
+    case "speech.failed":
+      if (!isActiveRuntimeEvent(state, action.eventId)) {
+        return state;
+      }
+
+      return {
+        status: "failed",
+        eventId: action.eventId,
+        dedupeKey: "dedupeKey" in state ? state.dedupeKey : undefined,
+        text: "text" in state ? state.text : undefined,
+        reason: action.reason,
+        retryable: true,
+        sourceEventId: "sourceEventId" in state ? state.sourceEventId : undefined,
+        processedEventIds: state.processedEventIds,
+      };
+    case "agent.thinking_started":
+      if (hasProcessedEvent(state, action.eventId)) {
+        return state;
+      }
+
+      return {
+        status: "thinking",
+        eventId: action.eventId,
+        label: action.label,
+        processedEventIds: state.processedEventIds,
+      };
+    case "agent.thinking_completed":
+      if (state.status !== "thinking" || state.eventId !== action.eventId) {
+        return state;
+      }
+
+      return {
+        status: "idle",
+        processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+      };
+    case "agent.listening_started":
+      if (hasProcessedEvent(state, action.eventId)) {
+        return state;
+      }
+
+      return {
+        status: "listening",
+        eventId: action.eventId,
+        processedEventIds: state.processedEventIds,
+      };
+    case "agent.listening_completed":
+      if (state.status !== "listening" || state.eventId !== action.eventId) {
+        return state;
+      }
+
+      return {
+        status: "idle",
+        processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+      };
+    case "runtime.cancelled":
+      return {
+        status: "idle",
+        processedEventIds: action.eventId
+          ? markProcessed(state.processedEventIds, action.eventId)
+          : state.processedEventIds,
+      };
+    default:
+      return state;
+  }
+}
+
+function applySpeechRequest(
+  state: TwinRuntimeState,
+  event: Extract<TwinRuntimeEvent, { type: "speech.requested" }> | {
+    eventId: string;
+    dedupeKey: string;
+    text: string;
+    voiceStyle: "energetic";
+    sourceEventId?: string;
+  },
+): TwinRuntimeState {
+  if (hasProcessedEvent(state, event.eventId)) {
+    return state;
+  }
+
+  if (
+    state.status === "failed" &&
+    state.eventId === event.eventId &&
+    state.retryable
+  ) {
+    return {
+      status: "preparing_speech",
+      eventId: event.eventId,
+      dedupeKey: event.dedupeKey,
+      text: event.text,
+      voiceStyle: event.voiceStyle,
+      sourceEventId: event.sourceEventId,
+      processedEventIds: state.processedEventIds,
+    };
+  }
+
+  if (isActiveRuntimeEvent(state, event.eventId)) {
+    return state;
+  }
+
+  return {
+    status: "preparing_speech",
+    eventId: event.eventId,
+    dedupeKey: event.dedupeKey,
+    text: event.text,
+    voiceStyle: event.voiceStyle,
+    sourceEventId: event.sourceEventId,
+    processedEventIds: state.processedEventIds,
+  };
+}
+
+function hasProcessedEvent(state: TwinRuntimeState, eventId: string) {
+  return state.processedEventIds.includes(eventId);
+}
+
+function isActiveRuntimeEvent(state: TwinRuntimeState, eventId: string) {
+  return "eventId" in state && state.eventId === eventId;
+}
+
+function markProcessed(processedEventIds: string[], eventId: string) {
+  return Array.from(new Set([...processedEventIds, eventId])).slice(-50);
+}

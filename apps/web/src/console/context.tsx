@@ -1,7 +1,7 @@
-import { createContext, useContext } from 'react'
-import type { Session } from '../lib/api'
+import { createContext, use } from 'react'
+import type { Session } from '@/lib/api'
 
-export type ConsoleContextValue = {
+type ConsoleContextValue = {
   session: Session | null
   isSessionForWallet: boolean
   onSessionRefreshed: (session: Session) => void
@@ -18,7 +18,7 @@ export type ConsoleContextValue = {
 export const ConsoleContext = createContext<ConsoleContextValue | null>(null)
 
 export function useConsoleContext() {
-  const context = useContext(ConsoleContext)
+  const context = use(ConsoleContext)
 
   if (!context) {
     throw new Error('ConsoleContext is missing')

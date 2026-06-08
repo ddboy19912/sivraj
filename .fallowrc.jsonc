@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "apps/web/src/main.tsx",
+    "apps/web/src/test/setup.ts",
+    "apps/web/src/console/Console.test.tsx",
+    "apps/web/src/test/helpers.ts",
+    "apps/web/src/test/console-fixtures.ts",
+    "apps/voice-service/benchmark-helpers.test.mjs",
+    "apps/voice-service/benchmark-space.mjs"
+  ]
+}

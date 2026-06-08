@@ -1,25 +1,18 @@
+import {
+  buildAgentWritebackRequestBody,
+  buildEngineeringContextParams,
+  createSivrajRequester,
+  setSearchParam,
+  type EngineeringContextQueryArgs,
+  type JsonObject,
+} from "@sivraj/core";
 import type { McpConfig } from "./env.js";
 import type { AgentWritebackEncryptor } from "./writeback-encryption.js";
 
-export type JsonObject = Record<string, unknown>;
+export type { JsonObject };
 
-export type EngineeringContextArgs = {
-  projectName?: string;
-  projectId?: string;
-  repoName?: string;
-  packageName?: string;
-  gitRemote?: string;
-  packageManager?: string;
-  frameworks?: string[] | string;
-  lockfiles?: string[] | string;
-  rootMarkers?: string[] | string;
-  artifactId?: string;
-  includeCandidate?: boolean;
-  includeSuperseded?: boolean;
-  includeTemporary?: boolean;
+export type EngineeringContextArgs = EngineeringContextQueryArgs & {
   preset?: "codex" | "claude_code" | "cursor" | "generic_mcp";
-  maxItemsPerSection?: number;
-  limit?: number;
 };
 
 export type SearchMemoryArgs = {
@@ -42,29 +35,26 @@ export type AgentWritebackArgs = {
 };
 
 export class SivrajApiClient {
+  private readonly request: ReturnType<typeof createSivrajRequester>;
+
   constructor(
     private readonly config: McpConfig,
     private readonly writebackEncryptor: AgentWritebackEncryptor | null = null,
-  ) {}
+  ) {
+    this.request = createSivrajRequester({
+      apiUrl: config.apiUrl,
+      token: config.token,
+    });
+  }
 
   async getEngineeringContext(args: EngineeringContextArgs = {}): Promise<JsonObject> {
-    const params = new URLSearchParams();
-    setParam(params, "projectName", args.projectName ?? this.config.projectName);
-    setParam(params, "projectId", args.projectId ?? this.config.projectId);
-    setParam(params, "repoName", args.repoName);
-    setParam(params, "packageName", args.packageName);
-    setParam(params, "gitRemote", args.gitRemote);
-    setParam(params, "packageManager", args.packageManager);
-    setListParam(params, "frameworks", args.frameworks);
-    setListParam(params, "lockfiles", args.lockfiles);
-    setListParam(params, "rootMarkers", args.rootMarkers);
-    setParam(params, "artifactId", args.artifactId);
-    setParam(params, "includeCandidate", String(args.includeCandidate ?? this.config.includeCandidates));
-    setParam(params, "includeSuperseded", String(args.includeSuperseded ?? false));
-    setParam(params, "includeTemporary", String(args.includeTemporary ?? false));
-    setParam(params, "preset", args.preset);
-    setParam(params, "maxItemsPerSection", String(args.maxItemsPerSection ?? this.config.maxItemsPerSection));
-    setParam(params, "limit", String(args.limit ?? 500));
+    const params = buildEngineeringContextParams(args, {
+      projectName: this.config.projectName,
+      projectId: this.config.projectId,
+      includeCandidates: this.config.includeCandidates,
+      maxItemsPerSection: this.config.maxItemsPerSection,
+    });
+    setSearchParam(params, "preset", args.preset);
 
     return this.request("GET", `/v1/twins/${this.config.twinId}/engineering/context?${params.toString()}`);
   }
@@ -99,19 +89,7 @@ export class SivrajApiClient {
   async recordAgentWriteback(args: AgentWritebackArgs): Promise<JsonObject> {
     const body = this.config.writebackEncryption === "client"
       ? await this.encryptWriteback(args)
-      : {
-          agentName: args.agentName,
-          repo: args.repo,
-          branch: args.branch,
-          taskSummary: args.taskSummary,
-          filesTouched: args.filesTouched,
-          commandsRun: args.commandsRun,
-          testsRun: args.testsRun,
-          decisions: args.decisions,
-          bugsFound: args.bugsFound,
-          followUps: args.followUps,
-          userCorrections: args.userCorrections,
-        };
+      : buildAgentWritebackRequestBody(args);
 
     return this.request("POST", `/v1/twins/${this.config.twinId}/agents/writebacks`, body);
   }
@@ -124,48 +102,4 @@ export class SivrajApiClient {
     return this.writebackEncryptor.encryptWriteback(args);
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<JsonObject> {
-    const url = `${this.config.apiUrl}${path}`;
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.config.token}`,
-        Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const payload = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      const detail = payload && typeof payload === "object" ? JSON.stringify(payload) : response.statusText;
-      throw new Error(`Sivraj API request failed: ${response.status} ${detail}`);
-    }
-
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      throw new Error("Sivraj API returned a non-object JSON response.");
-    }
-
-    return payload as JsonObject;
-  }
-}
-
-function setParam(params: URLSearchParams, key: string, value: string | null | undefined): void {
-  if (value && value.trim().length > 0) {
-    params.set(key, value);
-  }
-}
-
-function setListParam(params: URLSearchParams, key: string, value: string[] | string | null | undefined): void {
-  if (Array.isArray(value)) {
-    const joined = value.map((item) => item.trim()).filter(Boolean).join(",");
-
-    if (joined.length > 0) {
-      params.set(key, joined);
-    }
-
-    return;
-  }
-
-  setParam(params, key, value);
 }

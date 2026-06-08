@@ -1,0 +1,39 @@
+body {
+  min-width: 320px;
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  letter-spacing: 0;
+}
+
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(0.98);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

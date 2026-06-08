@@ -503,19 +503,22 @@ Request:
 
 ```json
 {
-  "displayName": "Fortune Ogunsusi",
-  "aliases": ["Fortune", "DDBoy"],
-  "emails": ["ddboy19912@gmail.com"],
-  "phones": ["+2348169342193"],
+  "displayName": "John Doe",
+  "aliases": ["John", "Johnny"],
+  "emails": ["john.doe@example.com"],
+  "phones": ["+15555550123"],
+  "onboardingStatus": "in_progress",
   "handles": {
-    "github": ["ddboy19912"],
-    "slack": ["@fortune"],
-    "x": ["@fortune"]
+    "github": ["johndoe"],
+    "slack": ["@johndoe"],
+    "x": ["@johndoe"]
   }
 }
 ```
 
 The identity profile is attribution infrastructure, not the user's private life story. It stores speaker-matching hints so future chat, email, Slack, WhatsApp, and voice imports can classify messages as `self`, `other`, `system`, or `unknown`. Open-ended onboarding context should still be submitted as encrypted `onboarding_self_description` memory.
+
+`onboardingStatus` is the durable user onboarding lifecycle state stored on the user account. Valid values are `not_started`, `in_progress`, and `completed`. Clients should mark it `completed` only after the first memory artifact has been created and linked through `selfDescriptionArtifactId`.
 
 Source-specific speaker mappings:
 
@@ -531,10 +534,10 @@ Request:
 {
   "mappings": [
     {
-      "sourceSpeaker": "Fortune",
+      "sourceSpeaker": "John",
       "sourceSpeakerId": "U123",
       "role": "self",
-      "mappedName": "Fortune Ogunsusi"
+      "mappedName": "John Doe"
     },
     {
       "sourceSpeaker": "Ada",
@@ -545,12 +548,12 @@ Request:
 }
 ```
 
-Chat, Slack, and WhatsApp parsers record detected speaker labels in parser metadata when available. Speaker mappings let Sivraj resolve source-local labels such as `U123`, `Fortune`, or `Admin` before later speaker attribution and user-vs-other-party classification. Explicit source mappings override profile-based inference.
+Chat, Slack, and WhatsApp parsers record detected speaker labels in parser metadata when available. Speaker mappings let Sivraj resolve source-local labels such as `U123`, `John`, or `Admin` before later speaker attribution and user-vs-other-party classification. Explicit source mappings override profile-based inference.
 
 During worker processing, conversation imports are rewritten into attribution-aware memory text:
 
 ```text
-self/Fortune: I want to lead with compliance.
+self/John: I want to lead with compliance.
 other/Ada: That reduces procurement friction.
 unknown/Client: Ship it.
 ```

@@ -72,47 +72,76 @@ function stripFrontmatter(content: string): string {
   return afterClosing.startsWith("\n") ? afterClosing.slice(1) : afterClosing;
 }
 
-function renderNode(node: MarkdownNode): string {
-  switch (node.type) {
-    case "root":
-      return renderChildren(node);
-    case "heading":
-    case "paragraph":
-      return renderInlineChildren(node);
-    case "blockquote":
-    case "table":
-    case "tableRow":
-    case "tableCell":
-      return renderChildren(node);
-    case "delete":
-    case "emphasis":
-    case "strong":
-    case "link":
-    case "linkReference":
-      return renderInlineChildren(node);
-    case "list":
-      return renderList(node);
-    case "listItem":
-      return renderChildren(node);
-    case "text":
-    case "inlineCode":
-      return node.value ?? "";
-    case "code":
-      return renderCodeBlock(node);
-    case "thematicBreak":
-    case "break":
-      return "\n";
-    case "image":
-    case "imageReference":
-      return node.alt ?? "";
-    case "html":
-    case "yaml":
-    case "definition":
-    case "footnoteDefinition":
-      return "";
-    default:
-      return node.children ? renderChildren(node) : node.value ?? "";
+const INLINE_CONTAINER_TYPES = new Set([
+  "delete",
+  "emphasis",
+  "strong",
+  "link",
+  "linkReference",
+  "heading",
+  "paragraph",
+]);
+
+const BLOCK_CONTAINER_TYPES = new Set([
+  "root",
+  "blockquote",
+  "table",
+  "tableRow",
+  "tableCell",
+  "listItem",
+]);
+
+const IGNORED_TYPES = new Set([
+  "html",
+  "yaml",
+  "definition",
+  "footnoteDefinition",
+]);
+
+const LEAF_VALUE_TYPES = new Set(["text", "inlineCode"]);
+const LINE_BREAK_TYPES = new Set(["thematicBreak", "break"]);
+const MEDIA_TYPES = new Set(["image", "imageReference"]);
+
+function renderLeafNode(node: MarkdownNode, type: string): string {
+  if (LEAF_VALUE_TYPES.has(type)) {
+    return node.value ?? "";
   }
+
+  if (LINE_BREAK_TYPES.has(type)) {
+    return "\n";
+  }
+
+  if (MEDIA_TYPES.has(type)) {
+    return node.alt ?? "";
+  }
+
+  if (type === "code") {
+    return renderCodeBlock(node);
+  }
+
+  return node.children ? renderChildren(node) : node.value ?? "";
+}
+
+function renderNode(node: MarkdownNode): string {
+  const type = node.type ?? "";
+
+  if (INLINE_CONTAINER_TYPES.has(type)) {
+    return renderInlineChildren(node);
+  }
+
+  if (BLOCK_CONTAINER_TYPES.has(type)) {
+    return renderChildren(node);
+  }
+
+  if (type === "list") {
+    return renderList(node);
+  }
+
+  if (IGNORED_TYPES.has(type)) {
+    return "";
+  }
+
+  return renderLeafNode(node, type);
 }
 
 function renderChildren(node: MarkdownNode): string {

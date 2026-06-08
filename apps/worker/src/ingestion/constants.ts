@@ -1,0 +1,22 @@
+export const ENCRYPTED_DECRYPTION_FAILED = "encrypted_decryption_failed";
+
+export const ENCRYPTED_DECRYPTION_REQUIRED = "encrypted_decryption_required";
+export const MISSING_PROCESSABLE_CONTENT = "missing_processable_content";
+export const ENCRYPTED_DECRYPTION_RETRYING = "encrypted_decryption_retrying";
+export const ENCRYPTED_FRAGMENT_STORAGE_REQUIRED = "encrypted_fragment_storage_required";
+export const SPEECH_TO_TEXT_REQUIRED = "speech_to_text_required";
+export const SPEECH_TO_TEXT_FAILED = "speech_to_text_failed";
+export const SPEECH_TO_TEXT_EMPTY = "speech_to_text_empty";
+export const PARSED_MARKDOWN_EMPTY = "parsed_markdown_empty";
+export const PARSED_PLAIN_TEXT_EMPTY = "parsed_plain_text_empty";
+export const PARSED_DOCX_EMPTY = "parsed_docx_empty";
+export const PARSED_CSV_EMPTY = "parsed_csv_empty";
+export const PARSED_EMAIL_EMPTY = "parsed_email_empty";
+export const PARSED_OCR_PDF_EMPTY = "parsed_ocr_pdf_empty";
+export const PARSED_IMAGE_EMPTY = "parsed_image_empty";
+export const PARSED_GITHUB_EMPTY = "parsed_github_empty";
+export const PARSED_BROWSER_HISTORY_EMPTY = "parsed_browser_history_empty";
+export const PARSED_CHAT_EXPORT_EMPTY = "parsed_chat_export_empty";
+export const PARSED_SLACK_EXPORT_EMPTY = "parsed_slack_export_empty";
+export const PARSED_WHATSAPP_EXPORT_EMPTY = "parsed_whatsapp_export_empty";
+export const ARTIFACT_PARSE_FAILED = "artifact_parse_failed";

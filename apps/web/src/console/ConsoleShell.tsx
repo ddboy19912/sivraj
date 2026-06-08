@@ -1,23 +1,9 @@
-import { useMemo, useState } from 'react'
-import type { Session } from '../lib/api'
-import { ConsoleContext } from './context'
+import { useReducer } from 'react'
+import type { Session } from '@/lib/api'
+import { ConsoleContext } from '@/console/context'
+import { ConsolePageContent } from '@/console/ConsolePageContent'
 import './Console.css'
-import { ApiGuidePage } from './pages/ApiGuidePage'
-import { AgentContextPage } from './pages/AgentContextPage'
-import { AgentPermissionsPage } from './pages/AgentPermissionsPage'
-import { AgentWritebacksPage } from './pages/AgentWritebacksPage'
-import { ArtifactStatusPage } from './pages/ArtifactStatusPage'
-import { CandidateMemoriesPage } from './pages/CandidateMemoriesPage'
-import { ConnectorsPage } from './pages/ConnectorsPage'
-import { EngineeringSourcesPage } from './pages/EngineeringSourcesPage'
-import { EngineeringReviewPage } from './pages/EngineeringReviewPage'
-import { GraphPage } from './pages/GraphPage'
-import { IngestPage } from './pages/IngestPage'
-import { InstructionPatchPage } from './pages/InstructionPatchPage'
-import { PrivacyPage } from './pages/PrivacyPage'
-import { ReflectionsPage } from './pages/ReflectionsPage'
-import { RetrievalPage } from './pages/RetrievalPage'
-import { CONSOLE_PAGES, type ConsolePage } from './types'
+import { CONSOLE_PAGES, type ConsolePage } from '@/types/console.types'
 
 type ConsoleShellProps = {
   session: Session | null
@@ -25,37 +11,58 @@ type ConsoleShellProps = {
   onSessionRefreshed: (session: Session) => void
 }
 
-export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }: ConsoleShellProps) {
-  const [page, setPage] = useState<ConsolePage>('artifact-status')
-  const [artifactId, setArtifactId] = useState('')
-  const [jobId, setJobId] = useState('')
-  const [selectedCandidateId, setSelectedCandidateId] = useState('')
-  const [selectedReflectionId, setSelectedReflectionId] = useState('')
+type ConsoleShellState = {
+  page: ConsolePage
+  artifactId: string
+  jobId: string
+  selectedCandidateId: string
+  selectedReflectionId: string
+}
 
-  const contextValue = useMemo(
-    () => ({
-      session,
-      isSessionForWallet,
-      onSessionRefreshed,
-      artifactId,
-      setArtifactId,
-      jobId,
-      setJobId,
-      selectedCandidateId,
-      setSelectedCandidateId,
-      selectedReflectionId,
-      setSelectedReflectionId,
-    }),
-    [
-      artifactId,
-      isSessionForWallet,
-      jobId,
-      onSessionRefreshed,
-      selectedCandidateId,
-      selectedReflectionId,
-      session,
-    ],
-  )
+type ConsoleShellAction =
+  | { type: 'page'; value: ConsolePage }
+  | { type: 'artifactId'; value: string }
+  | { type: 'jobId'; value: string }
+  | { type: 'selectedCandidateId'; value: string }
+  | { type: 'selectedReflectionId'; value: string }
+
+const initialConsoleShellState: ConsoleShellState = {
+  page: 'artifact-status',
+  artifactId: '',
+  jobId: '',
+  selectedCandidateId: '',
+  selectedReflectionId: '',
+}
+
+function consoleShellReducer(
+  state: ConsoleShellState,
+  action: ConsoleShellAction,
+): ConsoleShellState {
+  return { ...state, [action.type]: action.value }
+}
+
+export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }: ConsoleShellProps) {
+  const [state, dispatch] = useReducer(consoleShellReducer, initialConsoleShellState)
+  const setArtifactId = (value: string) => dispatch({ type: 'artifactId', value })
+  const setJobId = (value: string) => dispatch({ type: 'jobId', value })
+  const setSelectedCandidateId = (value: string) =>
+    dispatch({ type: 'selectedCandidateId', value })
+  const setSelectedReflectionId = (value: string) =>
+    dispatch({ type: 'selectedReflectionId', value })
+
+  const contextValue = {
+    session,
+    isSessionForWallet,
+    onSessionRefreshed,
+    artifactId: state.artifactId,
+    setArtifactId,
+    jobId: state.jobId,
+    setJobId,
+    selectedCandidateId: state.selectedCandidateId,
+    setSelectedCandidateId,
+    selectedReflectionId: state.selectedReflectionId,
+    setSelectedReflectionId,
+  }
 
   return (
     <ConsoleContext.Provider value={contextValue}>
@@ -65,8 +72,8 @@ export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }
             <button
               key={item.id}
               type="button"
-              className={page === item.id ? 'console-nav-item active' : 'console-nav-item'}
-              onClick={() => setPage(item.id)}
+              className={state.page === item.id ? 'console-nav-item active' : 'console-nav-item'}
+              onClick={() => dispatch({ type: 'page', value: item.id })}
             >
               {item.label}
             </button>
@@ -75,25 +82,11 @@ export function ConsoleShell({ session, isSessionForWallet, onSessionRefreshed }
 
         <div className="console-shared-state">
           <span>Twin: {session?.twinId ?? '—'}</span>
-          <span>Artifact: {artifactId || '—'}</span>
-          <span>Job: {jobId || '—'}</span>
+          <span>Artifact: {state.artifactId || '—'}</span>
+          <span>Job: {state.jobId || '—'}</span>
         </div>
 
-        {page === 'ingest' ? <IngestPage /> : null}
-        {page === 'artifact-status' ? <ArtifactStatusPage /> : null}
-        {page === 'retrieval' ? <RetrievalPage /> : null}
-        {page === 'candidate-memories' ? <CandidateMemoriesPage /> : null}
-        {page === 'agent-permissions' ? <AgentPermissionsPage /> : null}
-        {page === 'agent-writebacks' ? <AgentWritebacksPage /> : null}
-        {page === 'agent-context' ? <AgentContextPage /> : null}
-        {page === 'engineering-review' ? <EngineeringReviewPage /> : null}
-        {page === 'instruction-patch' ? <InstructionPatchPage /> : null}
-        {page === 'engineering-sources' ? <EngineeringSourcesPage /> : null}
-        {page === 'graph' ? <GraphPage /> : null}
-        {page === 'reflections' ? <ReflectionsPage /> : null}
-        {page === 'connectors' ? <ConnectorsPage /> : null}
-        {page === 'privacy' ? <PrivacyPage /> : null}
-        {page === 'api-guide' ? <ApiGuidePage /> : null}
+        <ConsolePageContent page={state.page} />
       </section>
     </ConsoleContext.Provider>
   )

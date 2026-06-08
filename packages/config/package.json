@@ -12,7 +12,11 @@
     "test": "echo \"config tests not configured yet\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  },
   "devDependencies": {
+    "@types/node": "^24.12.4",
     "typescript": "~6.0.3"
   }
 }

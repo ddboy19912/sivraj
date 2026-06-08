@@ -1,0 +1,25 @@
+/* react-colorful overrides for settings drawer */
+.theme-color-picker .react-colorful {
+  width: 100%;
+  height: min(42vw, 220px);
+}
+
+.theme-color-picker .react-colorful__saturation {
+  border-radius: 16px;
+  border-bottom: 0;
+}
+
+.theme-color-picker .react-colorful__hue {
+  height: 16px;
+  margin-top: 14px;
+  border-radius: 999px;
+}
+
+.theme-color-picker .react-colorful__pointer {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    0 0 18px rgba(var(--theme-color-rgb), 0.45);
+}

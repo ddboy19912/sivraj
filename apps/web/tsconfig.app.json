@@ -4,8 +4,14 @@
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@sivraj/core": ["../../packages/core/src/index.ts"]
+    },
+    "ignoreDeprecations": "6.0",
 
     /* Bundler mode */
     "moduleResolution": "bundler",

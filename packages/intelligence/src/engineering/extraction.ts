@@ -1,5 +1,17 @@
 import type { StructuredGenerator } from "@sivraj/llm";
-import { createHash } from "node:crypto";
+import {
+  asRecord,
+  clampConfidence,
+  dedupeByConfidence,
+  looksLikeSecretValue,
+  normalizeStatement,
+  readLlmArrayField,
+  readNumber,
+  readString,
+  sanitizeSecureMetadata,
+  sha256Hex,
+  truncateForExtraction,
+} from "../extraction-utils.js";
 import {
   classifyEngineeringInstructionScope,
   detectEngineeringSourceKind,
@@ -173,7 +185,7 @@ function buildEngineeringMemoryExtractionPrompt(input: {
       path: input.input.path ?? input.input.fileName ?? null,
       sourceKind: input.sourceKind,
       candidateInstructions: input.candidateInstructions,
-      content: truncateForEngineeringExtraction(input.input.content),
+      content: truncateForExtraction(input.input.content),
     },
     outputShape: {
       memories: [
@@ -203,34 +215,20 @@ function parseEngineeringMemoryResponse(
   warnings: string[];
 } {
   const warnings: string[] = [];
-  const root = asRecord(value);
-  const rawMemories = Array.isArray(root["memories"]) ? root["memories"] : [];
-  const deduped = new Map<string, ExtractedEngineeringMemory>();
-
-  for (const memory of extractDeterministicRepoHealthMemories(input, sourceKind)) {
-    const key = `${memory.engineeringMemoryType}:${memory.scope}:${memory.normalizedStatement}`;
-    deduped.set(key, memory);
-  }
-
-  for (const raw of rawMemories) {
-    const memory = parseEngineeringMemory(raw, warnings, input, sourceKind);
-
-    if (!memory) {
-      continue;
-    }
-
-    const key = `${memory.engineeringMemoryType}:${memory.scope}:${memory.normalizedStatement}`;
-    const previous = deduped.get(key);
-
-    if (!previous || memory.confidence > previous.confidence) {
-      deduped.set(key, memory);
-    }
-  }
+  const rawMemories = readLlmArrayField(value, "memories");
+  const parsedMemories = rawMemories
+    .map((raw) => parseEngineeringMemory(raw, warnings, input, sourceKind))
+    .filter((memory): memory is ExtractedEngineeringMemory => memory !== null);
 
   return {
-    memories: Array.from(deduped.values())
-      .sort((left, right) => right.confidence - left.confidence)
-      .slice(0, maxMemories),
+    memories: dedupeByConfidence(
+      [
+        ...extractDeterministicRepoHealthMemories(input, sourceKind),
+        ...parsedMemories,
+      ],
+      (memory) => `${memory.engineeringMemoryType}:${memory.scope}:${memory.normalizedStatement}`,
+      maxMemories,
+    ),
     warnings,
   };
 }
@@ -280,7 +278,7 @@ function parseEngineeringMemory(
     sourceKind,
     warnings,
   });
-  const metadata = sanitizeMetadata(record["metadata"]);
+  const metadata = sanitizeSecureMetadata(record["metadata"]);
 
   return {
     statement: statement.trim().replace(/\s+/g, " "),
@@ -310,114 +308,136 @@ function extractDeterministicRepoHealthMemories(
   }
 
   const sections = parseMarkdownSections(input.content);
-  const memories: ExtractedEngineeringMemory[] = [];
-  const repo = readString(input.metadata?.["repo"]) ?? "repo";
-  const agentName = readString(input.metadata?.["agentName"]) ?? "coding-agent";
+  const context = {
+    repo: readString(input.metadata?.["repo"]) ?? "repo",
+    agentName: readString(input.metadata?.["agentName"]) ?? "coding-agent",
+  };
+  const memories = [
+    ...extractBugFoundMemories(sections, context),
+    ...extractTestRunMemories(sections, context),
+    ...extractRepoHealthSignalMemories(sections, "commands run", context, {
+      signal: "command_gotcha",
+      statementPrefix: "Repo health: command/build gotcha observed",
+      confidence: 0.78,
+      agentContextLine: (value) => `Remember this command/build gotcha when working in ${context.repo}: ${value}`,
+    }),
+    ...extractRepoHealthSignalMemories(sections, "follow ups", context, {
+      signal: "follow_up",
+      statementPrefix: "Repo health follow-up",
+      confidence: 0.72,
+      agentContextLine: (value) => `Track this repo-health follow-up: ${value}`,
+    }),
+    ...extractUserCorrectionMemories(sections, context),
+  ];
 
-  for (const value of sections.get("bugs found") ?? []) {
-    memories.push(createRepoHealthMemory({
-      statement: `Repo health: ${value}`,
-      engineeringMemoryType: "recurring_bug",
-      subject: repo,
-      evidence: value,
-      confidence: 0.9,
-      metadata: {
-        category: "repo_health",
-        repo,
-        agentName,
-        signal: "bug_found",
-        agentContextLine: `Watch for this repo-health issue: ${value}`,
-      },
-    }));
-  }
+  return dedupeExtractedEngineeringMemories(memories).slice(0, 20);
+}
 
-  for (const value of sections.get("tests run") ?? []) {
+type RepoHealthExtractionContext = {
+  repo: string;
+  agentName: string;
+};
+
+function extractBugFoundMemories(
+  sections: Map<string, string[]>,
+  context: RepoHealthExtractionContext,
+): ExtractedEngineeringMemory[] {
+  return (sections.get("bugs found") ?? []).map((value) => createRepoHealthMemory({
+    statement: `Repo health: ${value}`,
+    engineeringMemoryType: "recurring_bug",
+    subject: context.repo,
+    evidence: value,
+    confidence: 0.9,
+    metadata: {
+      category: "repo_health",
+      repo: context.repo,
+      agentName: context.agentName,
+      signal: "bug_found",
+      agentContextLine: `Watch for this repo-health issue: ${value}`,
+    },
+  }));
+}
+
+function extractTestRunMemories(
+  sections: Map<string, string[]>,
+  context: RepoHealthExtractionContext,
+): ExtractedEngineeringMemory[] {
+  return (sections.get("tests run") ?? []).map((value) => {
     if (looksLikeFailureSignal(value)) {
-      memories.push(createRepoHealthMemory({
+      return createRepoHealthMemory({
         statement: `Repo health: test or verification failure observed: ${value}`,
         engineeringMemoryType: "recurring_bug",
-        subject: repo,
+        subject: context.repo,
         evidence: value,
         confidence: 0.84,
         metadata: {
           category: "repo_health",
-          repo,
-          agentName,
+          repo: context.repo,
+          agentName: context.agentName,
           signal: "test_failure",
           agentContextLine: `Check this known verification failure before handoff: ${value}`,
         },
-      }));
-      continue;
+      });
     }
 
-    memories.push(createRepoHealthMemory({
-      statement: `Use this verification command or test workflow for ${repo}: ${value}`,
+    return createRepoHealthMemory({
+      statement: `Use this verification command or test workflow for ${context.repo}: ${value}`,
       engineeringMemoryType: "testing_practice",
-      subject: repo,
+      subject: context.repo,
       evidence: value,
       confidence: 0.72,
       metadata: {
         category: "repo_health",
-        repo,
-        agentName,
+        repo: context.repo,
+        agentName: context.agentName,
         signal: "test_command",
         agentContextLine: `Use this source-backed verification step when relevant: ${value}`,
       },
-    }));
-  }
+    });
+  });
+}
 
-  for (const value of sections.get("commands run") ?? []) {
+function extractRepoHealthSignalMemories(
+  sections: Map<string, string[]>,
+  sectionKey: string,
+  context: RepoHealthExtractionContext,
+  options: {
+    signal: string;
+    statementPrefix: string;
+    confidence: number;
+    agentContextLine: (value: string) => string;
+  },
+): ExtractedEngineeringMemory[] {
+  return (sections.get(sectionKey) ?? []).flatMap((value) => {
     if (!looksLikeFailureSignal(value) && !looksLikeBuildOrDependencySignal(value)) {
-      continue;
+      return [];
     }
 
-    const type = looksLikeBuildOrDependencySignal(value)
-      ? "deployment_environment"
-      : "recurring_bug";
-    memories.push(createRepoHealthMemory({
-      statement: `Repo health: command/build gotcha observed: ${value}`,
-      engineeringMemoryType: type,
-      subject: repo,
+    return [createRepoHealthMemory({
+      statement: `${options.statementPrefix}: ${value}`,
+      engineeringMemoryType: looksLikeBuildOrDependencySignal(value) ? "deployment_environment" : "recurring_bug",
+      subject: context.repo,
       evidence: value,
-      confidence: 0.78,
+      confidence: options.confidence,
       metadata: {
         category: "repo_health",
-        repo,
-        agentName,
-        signal: "command_gotcha",
-        agentContextLine: `Remember this command/build gotcha when working in ${repo}: ${value}`,
+        repo: context.repo,
+        agentName: context.agentName,
+        signal: options.signal,
+        agentContextLine: options.agentContextLine(value),
       },
-    }));
-  }
+    })];
+  });
+}
 
-  for (const value of sections.get("follow ups") ?? []) {
-    if (!looksLikeBuildOrDependencySignal(value) && !looksLikeFailureSignal(value)) {
-      continue;
-    }
-
-    const type = looksLikeBuildOrDependencySignal(value)
-      ? "deployment_environment"
-      : "recurring_bug";
-    memories.push(createRepoHealthMemory({
-      statement: `Repo health follow-up: ${value}`,
-      engineeringMemoryType: type,
-      subject: repo,
-      evidence: value,
-      confidence: 0.72,
-      metadata: {
-        category: "repo_health",
-        repo,
-        agentName,
-        signal: "follow_up",
-        agentContextLine: `Track this repo-health follow-up: ${value}`,
-      },
-    }));
-  }
-
-  for (const value of sections.get("user corrections") ?? []) {
+function extractUserCorrectionMemories(
+  sections: Map<string, string[]>,
+  context: RepoHealthExtractionContext,
+): ExtractedEngineeringMemory[] {
+  return (sections.get("user corrections") ?? []).map((value) => {
     const reviewMemory = classifyReviewCopilotCorrection(value);
 
-    memories.push(createAgentWritebackEngineeringMemory({
+    return createAgentWritebackEngineeringMemory({
       statement: `Review preference: ${value}`,
       engineeringMemoryType: reviewMemory.type,
       scope: reviewMemory.scope,
@@ -426,15 +446,13 @@ function extractDeterministicRepoHealthMemories(
       confidence: reviewMemory.confidence,
       metadata: {
         category: "review_copilot",
-        repo,
-        agentName,
+        repo: context.repo,
+        agentName: context.agentName,
         signal: "user_correction",
         agentContextLine: reviewMemory.agentContextLine,
       },
-    }));
-  }
-
-  return dedupeExtractedEngineeringMemories(memories).slice(0, 20);
+    });
+  });
 }
 
 function createRepoHealthMemory(input: {
@@ -473,7 +491,7 @@ function createAgentWritebackEngineeringMemory(input: {
     evidenceHash: sha256Hex(input.evidence),
     evidenceLength: input.evidence.length,
     metadata: {
-      ...sanitizeMetadata(input.metadata),
+      ...sanitizeSecureMetadata(input.metadata),
       ...(agentContextLine ? { agentContextLine } : {}),
       sourceKind: "agent_writeback",
       extractor: "deterministic_repo_health_extractor",
@@ -665,64 +683,42 @@ function looksLikeEngineeringInstruction(value: string): boolean {
     .test(value);
 }
 
+const ENGINEERING_SIGNAL_PATTERNS: Partial<Record<EngineeringMemoryType, RegExp>> = {
+  architecture_decision: /\b(decide|decided|decision|choose|chose|chosen|adopt|adopted|select|selected|standardize|standardized|replace|replaced|instead of|architecture|api|database|storage|framework|stack)\b/i,
+  project_convention: /\b(this repo|this project|repo uses|project uses|we use|uses pnpm|workspace|monorepo|convention|conventions|folder|directory|layout|structure|route modules?|schema|migration|package scripts?)\b/i,
+  style_rule: /\b(style|styling|naming|format|formatting|component|ui|copy|tone|review|keep|avoid|use|prefer|must|should)\b/i,
+  testing_practice: /\b(test|tests|testing|typecheck|check|build|vitest|jest|playwright|cypress|run focused|verify|verification)\b/i,
+  deployment_environment: /\b(deploy|deployment|runtime|environment|env|service|local stack|docker|compose|postgres|redis|database_url|redis_url|sui_|seal_|walrus_|vite_|token_issuer|jwt_secret|rpc|testnet|mainnet|package id|policy id|key server)\b/i,
+  security_boundary: /\b(security|privacy|private memory|encrypt|encrypted|encryption|decrypt|ciphertext|plaintext|no-plaintext|auth|permission|access control|policy|secret|token|password|key|logging|logs|postgres stores refs|must not be stored)\b/i,
+  recurring_bug: /\b(repeated|recurring|keeps?|again|twice|frequent|fail|fails|failed|failing|failure|flaky|break|breaks|broken|regression|bug|error|exception|timeout|slow|bottleneck|retry|rpc|fetch failed)\b/i,
+  coding_preference: /\b(i prefer|prefer|always|never|avoid|must|should|when coding|when working with me|coding agents? should|agents? should|use [a-z0-9@._/-]+|run [a-z0-9:._/-]+|do not|don't|before final response|codex|claude|cursor|agent)\b/i,
+  tool_preference: /\b(i prefer|prefer|always|never|avoid|must|should|when coding|when working with me|coding agents? should|agents? should|use [a-z0-9@._/-]+|run [a-z0-9:._/-]+|do not|don't|before final response|codex|claude|cursor|agent)\b/i,
+  agent_instruction: /\b(i prefer|prefer|always|never|avoid|must|should|when coding|when working with me|coding agents? should|agents? should|use [a-z0-9@._/-]+|run [a-z0-9:._/-]+|do not|don't|before final response|codex|claude|cursor|agent)\b/i,
+};
+
 function hasRequiredEngineeringSignal(
   memoryType: EngineeringMemoryType,
   statement: string,
   evidence: string,
 ): boolean {
   const value = `${statement} ${evidence}`;
+  const pattern = ENGINEERING_SIGNAL_PATTERNS[memoryType];
 
-  if (memoryType === "architecture_decision") {
-    return /\b(decide|decided|decision|choose|chose|chosen|adopt|adopted|select|selected|standardize|standardized|replace|replaced|instead of|architecture|api|database|storage|framework|stack)\b/i
-      .test(value);
+  if (!pattern) {
+    return looksLikeEngineeringInstruction(value);
   }
 
-  if (memoryType === "project_convention") {
-    return /\b(this repo|this project|repo uses|project uses|we use|uses pnpm|workspace|monorepo|convention|conventions|folder|directory|layout|structure|route modules?|schema|migration|package scripts?)\b/i
-      .test(value);
-  }
-
-  if (memoryType === "style_rule") {
-    return /\b(style|styling|naming|format|formatting|component|ui|copy|tone|review|keep|avoid|use|prefer|must|should)\b/i
-      .test(value);
-  }
-
-  if (memoryType === "testing_practice") {
-    return /\b(test|tests|testing|typecheck|check|build|vitest|jest|playwright|cypress|run focused|verify|verification)\b/i
-      .test(value);
-  }
-
-  if (memoryType === "deployment_environment") {
-    return /\b(deploy|deployment|runtime|environment|env|service|local stack|docker|compose|postgres|redis|database_url|redis_url|sui_|seal_|walrus_|vite_|token_issuer|jwt_secret|rpc|testnet|mainnet|package id|policy id|key server)\b/i
-      .test(value);
-  }
-
-  if (memoryType === "security_boundary") {
-    return /\b(security|privacy|private memory|encrypt|encrypted|encryption|decrypt|ciphertext|plaintext|no-plaintext|auth|permission|access control|policy|secret|token|password|key|logging|logs|postgres stores refs|must not be stored)\b/i
-      .test(value);
-  }
-
-  if (memoryType === "recurring_bug") {
-    return /\b(repeated|recurring|keeps?|again|twice|frequent|fail|fails|failed|failing|failure|flaky|break|breaks|broken|regression|bug|error|exception|timeout|slow|bottleneck|retry|rpc|fetch failed)\b/i
-      .test(value);
-  }
-
-  if (
-    memoryType === "coding_preference" ||
+  const target = memoryType === "coding_preference" ||
     memoryType === "tool_preference" ||
     memoryType === "agent_instruction"
-  ) {
-    return /\b(i prefer|prefer|always|never|avoid|must|should|when coding|when working with me|coding agents? should|agents? should|use [a-z0-9@._/-]+|run [a-z0-9:._/-]+|do not|don't|before final response|codex|claude|cursor|agent)\b/i
-      .test(evidence);
-  }
+    ? evidence
+    : value;
 
-  return looksLikeEngineeringInstruction(value);
+  return pattern.test(target);
 }
 
 function readReturnedEngineeringMemoryCount(value: unknown): number {
-  const memories = asRecord(value)["memories"];
-
-  return Array.isArray(memories) ? memories.length : 0;
+  return readLlmArrayField(value, "memories").length;
 }
 
 function readEngineeringMemoryType(value: unknown): EngineeringMemoryType | null {
@@ -733,94 +729,8 @@ function readEngineeringInstructionScope(value: unknown): EngineeringInstruction
   return typeof value === "string" && isEngineeringInstructionScope(value) ? value : null;
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function sanitizeMetadata(value: unknown): Record<string, unknown> {
-  const record = asRecord(value);
-  const safe: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(record)) {
-    if (isUnsafeMetadataKey(key)) {
-      continue;
-    }
-
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-      if (typeof item === "string" && looksLikeSecretValue(item)) {
-        continue;
-      }
-
-      safe[key] = item;
-    }
-  }
-
-  return safe;
-}
-
-function isUnsafeMetadataKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  return normalized.includes("evidence") ||
-    normalized.includes("statement") ||
-    normalized.includes("content") ||
-    normalized.includes("text") ||
-    normalized.includes("snippet") ||
-    normalized.includes("quote") ||
-    normalized.includes("raw") ||
-    normalized.includes("secret") ||
-    normalized.includes("private") ||
-    normalized.includes("password") ||
-    normalized.includes("token") ||
-    normalized.includes("key") ||
-    normalized.includes("mnemonic") ||
-    normalized.includes("connection");
-}
-
-function looksLikeSecretValue(value: string): boolean {
-  const trimmed = value.trim();
-
-  return /^suiprivkey/i.test(trimmed) ||
-    /^sk-[A-Za-z0-9_-]{16,}/.test(trimmed) ||
-    (trimmed.length >= 32 && /^[A-Za-z0-9_-]+$/.test(trimmed) && /[A-Z0-9]/.test(trimmed)) ||
-    /:\/\/[^:\s]+:[^@\s]+@/.test(trimmed);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function clampConfidence(value: number | null): number {
-  if (value === null) {
-    return 0.5;
-  }
-
-  return Math.max(0, Math.min(1, value));
-}
-
 function clampMaxEngineeringMemories(value: number | undefined): number {
   return Number.isInteger(value) && value && value > 0 ? Math.min(value, 50) : 20;
-}
-
-function normalizeStatement(value: string): string {
-  return value
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function truncateForEngineeringExtraction(value: string): string {
-  return value.length > 30_000 ? value.slice(0, 30_000) : value;
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function hasGlobalUserPreferenceSignal(value: string): boolean {

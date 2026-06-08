@@ -1,12 +1,14 @@
-import { TextEncoder } from "node:util";
+import type { EnvSource } from "@sivraj/config";
+import { readSuiGrpcNetwork } from "@sivraj/core";
 import {
   assertSealPolicyConfig,
   createSealEncryptor,
+  encryptAndStorePrivateSourceArtifact,
   parseSealKeyServers,
+  storeEncryptedPrivateSourceArtifact,
   type SealEncryptor,
   type SealPolicyConfig,
 } from "@sivraj/crypto-seal";
-import type { EnvSource } from "@sivraj/config";
 import {
   createWalrusStorage,
   type WalrusStorage,
@@ -18,9 +20,7 @@ import type {
   PrivateMemoryStorageOutput,
 } from "../app.js";
 
-const textEncoder = new TextEncoder();
 const DEFAULT_WALRUS_EPOCHS = 5;
-const PRIVATE_SOURCE_PAYLOAD_VERSION = 1;
 
 export function createPrivateMemoryStorage(
   env: EnvSource,
@@ -45,82 +45,36 @@ export function createPrivateMemoryStorageService(params: {
 }): PrivateMemoryStorage {
   return {
     async storePrivateMemory(input) {
-      const plaintextBytes = textEncoder.encode(
-        JSON.stringify({
-          kind: "source_artifact",
-          version: PRIVATE_SOURCE_PAYLOAD_VERSION,
+      const stored = await encryptAndStorePrivateSourceArtifact({
+        seal: params.seal,
+        walrus: params.walrus,
+        input: {
+          twinId: input.twinId,
+          sourceType: input.sourceType,
           title: input.title,
           content: input.content,
           metadata: input.metadata,
-        }),
-      );
-      const aad = textEncoder.encode(
-        JSON.stringify({
-          twinId: input.twinId,
-          sourceType: input.sourceType,
-          kind: "source_artifact",
-          version: PRIVATE_SOURCE_PAYLOAD_VERSION,
-        }),
-      );
-      const encrypted = await params.seal.encrypt({
-        data: plaintextBytes,
-        aad,
-      });
-      const stored = await params.walrus.store({
-        bytes: encrypted.encryptedBytes,
-        attributes: {
-          twinId: input.twinId,
-          sourceType: input.sourceType,
-          storageMode: "encrypted_walrus",
-          sensitivity: "private",
-          ciphertextSha256: encrypted.ciphertextSha256,
         },
       });
 
-      return {
-        rawStorageRef: stored.rawStorageRef,
-        ciphertextSha256: encrypted.ciphertextSha256,
-        encryptedBytesBase64: Buffer.from(encrypted.encryptedBytes).toString("base64"),
-        seal: {
-          packageId: encrypted.packageId,
-          policyId: encrypted.policyId,
-          threshold: encrypted.threshold,
-          keyServerObjectIds: encrypted.keyServerObjectIds,
-        },
-        walrus: {
-          blobId: stored.blobId,
-          blobObjectId: stored.blobObjectId,
-          startEpoch: stored.startEpoch,
-          endEpoch: stored.endEpoch,
-          size: stored.size,
-        },
-      } satisfies PrivateMemoryStorageOutput;
+      return stored satisfies PrivateMemoryStorageOutput;
     },
     async storeEncryptedPrivateMemory(input) {
-      const stored = await params.walrus.store({
-        bytes: input.encryptedBytes,
-        attributes: {
-          twinId: input.twinId,
-          sourceType: input.sourceType,
-          storageMode: "encrypted_walrus",
-          sensitivity: "private",
+      const stored = await storeEncryptedPrivateSourceArtifact({
+        walrus: params.walrus,
+        twinId: input.twinId,
+        sourceType: input.sourceType,
+        encrypted: {
+          encryptedBytes: input.encryptedBytes,
           ciphertextSha256: input.ciphertextSha256,
+          packageId: input.seal.packageId,
+          policyId: input.seal.policyId,
+          threshold: input.seal.threshold,
+          keyServerObjectIds: input.seal.keyServerObjectIds,
         },
       });
 
-      return {
-        rawStorageRef: stored.rawStorageRef,
-        ciphertextSha256: input.ciphertextSha256,
-        encryptedBytesBase64: Buffer.from(input.encryptedBytes).toString("base64"),
-        seal: input.seal,
-        walrus: {
-          blobId: stored.blobId,
-          blobObjectId: stored.blobObjectId,
-          startEpoch: stored.startEpoch,
-          endEpoch: stored.endEpoch,
-          size: stored.size,
-        },
-      } satisfies PrivateMemoryStorageOutput;
+      return stored satisfies PrivateMemoryStorageOutput;
     },
   };
 }
@@ -138,7 +92,7 @@ function createConfiguredPrivateMemoryStorage(
   assertSealPolicyConfig(policy);
 
   const suiClient = new SuiGrpcClient({
-    network: readSuiNetwork(env["SUI_NETWORK"]),
+    network: readSuiGrpcNetwork(env["SUI_NETWORK"]),
     baseUrl: readRequired(env, "SUI_RPC_URL"),
   });
 
@@ -154,6 +108,7 @@ function createConfiguredPrivateMemoryStorage(
         privateKey: readRequired(env, "SUI_PRIVATE_KEY"),
         epochs: readInteger(env, "WALRUS_EPOCHS", DEFAULT_WALRUS_EPOCHS),
         deletable: readBoolean(env, "WALRUS_DELETABLE", false),
+        minWriteBalanceMist: readMaybe(env, "WALRUS_MIN_WRITE_BALANCE_MIST"),
         uploadRelayUrl: readMaybe(env, "WALRUS_UPLOAD_RELAY_URL"),
         uploadRelayTipMaxMist: readMaybeInteger(
           env,
@@ -227,16 +182,6 @@ function readBoolean(env: EnvSource, key: string, fallback: boolean): boolean {
   }
 
   throw new Error(`Invalid boolean environment variable: ${key}`);
-}
-
-function readSuiNetwork(
-  value: string | undefined,
-): "mainnet" | "testnet" | "devnet" {
-  if (value === "mainnet" || value === "testnet" || value === "devnet") {
-    return value;
-  }
-
-  return "testnet";
 }
 
 function readWalrusNetwork(

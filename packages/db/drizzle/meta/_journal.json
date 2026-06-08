@@ -169,6 +169,27 @@
       "when": 1779476400000,
       "tag": "0023_twin_voice_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780509600000,
+      "tag": "0024_chat_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780596000000,
+      "tag": "0025_explicit_onboarding_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780682400000,
+      "tag": "0026_first_meet_intro_status",
+      "breakpoints": true
     }
   ]
 }

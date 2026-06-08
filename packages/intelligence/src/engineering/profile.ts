@@ -7,6 +7,26 @@ import {
   type EngineeringInstructionIssue,
   type EngineeringInstructionRecord,
 } from "./conflicts.js";
+import {
+  appendCandidateNoticeSection,
+  appendContextQualitySummary,
+  appendContextRuleLines,
+  appendExportProjectContext,
+  appendItemEvidenceMap,
+  appendPacketEvidenceRefs,
+  appendPacketIssues,
+  appendPacketWarnings,
+  fallbackAgentContextLine,
+  finalizeMarkdown,
+  formatRepoStack,
+  repoNameFromFingerprint,
+} from "./context-markdown.js";
+import {
+  looksLikeSecretValue,
+  PROFILE_EXACT_BLOCKED_METADATA_KEYS,
+  sanitizeSecureMetadataRecord,
+} from "../extraction-utils.js";
+import { normalizeRepoFingerprint } from "./repo-fingerprint.js";
 
 export type EngineeringProfileMemoryStatus =
   | "candidate"
@@ -346,80 +366,25 @@ export function buildCodingAgentContextPacket(
 ): CodingAgentContextPacket {
   const scope = normalizeContextScope(input.scope);
   const maxItemsPerSection = clampMaxEntries(input.maxItemsPerSection);
-  const warnings = new Set(input.profile.warnings);
-  const sections = emptyContextSections();
   const includeCandidate = input.includeCandidate ?? false;
   const includeSuperseded = input.includeSuperseded ?? false;
-
-  for (const [categoryKey, entries] of Object.entries(input.profile.categories) as Array<[
-    EngineeringProfileCategoryKey,
-    EngineeringProfileEntry[],
-  ]>) {
-    const sectionKey = contextSectionForCategory(categoryKey);
-
-    if (!sectionKey) {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (!scopeAllowsEntry(scope, entry.scope)) {
-        continue;
-      }
-
-      if (entry.status === "rejected") {
-        continue;
-      }
-
-      if (entry.status === "candidate" && !includeCandidate) {
-        continue;
-      }
-
-      if (entry.status === "superseded" && !includeSuperseded) {
-        continue;
-      }
-
-      if (sections[sectionKey].length >= maxItemsPerSection) {
-        continue;
-      }
-
-      sections[sectionKey].push({
-        id: entry.id,
-        type: entry.engineeringMemoryType,
-        scope: entry.scope,
-        subject: entry.subject,
-        agentContextLine: readAgentContextLine(entry),
-        confidence: entry.confidence,
-        status: entry.status,
-        metadata: entry.metadata,
-        evidence: entry.evidence,
-      });
-    }
-  }
-
-  for (const key of CONTEXT_SECTION_KEYS) {
-    sections[key] = dedupeContextItems(sections[key]);
-  }
-
+  const sections = collectContextPacketSections({
+    categories: input.profile.categories,
+    scope,
+    includeCandidate,
+    includeSuperseded,
+    maxItemsPerSection,
+  });
   const items = Object.values(sections).flat();
   const evidence = dedupeEvidence(items.map((item) => item.evidence));
   const issues = detectContextIssues(items, input.profile.generatedAt);
-  const quality = scoreCodingAgentContext({
-    items,
-    evidence,
+  const quality = scoreCodingAgentContext({ items, evidence, issues });
+  const warnings = buildContextPacketWarnings({
+    profileWarnings: input.profile.warnings,
     issues,
+    quality,
+    itemCount: items.length,
   });
-
-  for (const issue of issues) {
-    warnings.add(`context_${issue.issueType}:${issue.reason}`);
-  }
-
-  if (!quality.readyForAgent) {
-    warnings.add(`context_quality:${quality.label}`);
-  }
-
-  if (items.length === 0) {
-    warnings.add("coding_agent_context_packet_empty");
-  }
 
   return {
     purpose: "coding_agent_context",
@@ -434,7 +399,7 @@ export function buildCodingAgentContextPacket(
     evidence,
     issues,
     quality,
-    warnings: Array.from(warnings).sort(),
+    warnings,
   };
 }
 
@@ -535,9 +500,10 @@ function formatHandoffCodingAgentContextMarkdown(
   packet: CodingAgentContextPacket,
   options: CodingAgentContextMarkdownOptions,
 ): string {
-  const maxItemsPerSection = clampMaxEntries(options.maxItemsPerSection);
-  const normalizedSections = normalizePacketSections(packet.sections);
-  const items = selectHandoffItems(normalizedSections, maxItemsPerSection);
+  const items = selectHandoffItems(
+    normalizePacketSections(packet.sections),
+    clampMaxEntries(options.maxItemsPerSection),
+  );
   const lines = [
     `# ${options.title?.trim() || "Sivraj Coding Agent Context"}`,
     "",
@@ -545,7 +511,7 @@ function formatHandoffCodingAgentContextMarkdown(
     "",
     "## Project",
     `- Name: ${packet.project.name || "Unknown"}`,
-    `- Repo: ${packet.project.repoFingerprint.repoName || packet.project.repoFingerprint.packageName || "Unknown"}`,
+    `- Repo: ${repoNameFromFingerprint(packet.project.repoFingerprint)}`,
     `- Stack: ${formatRepoStack(packet.project.repoFingerprint) || "Unknown"}`,
     `- Generated: ${packet.generatedAt}`,
     "",
@@ -556,59 +522,21 @@ function formatHandoffCodingAgentContextMarkdown(
     "## Apply These Rules",
   ];
 
-  if (items.length === 0) {
-    lines.push("- No coding-agent context exported yet.");
-  } else {
-    for (const item of items) {
-      const prefix = item.status === "candidate" ? "[CANDIDATE] " : "";
-      lines.push(`- ${prefix}${item.agentContextLine || fallbackAgentContextLine(item)} Evidence: ${item.evidence.candidateMemoryId}`);
-    }
-  }
-
-  if (items.some((item) => item.status === "candidate")) {
-    lines.push("");
-    lines.push("## Candidate Notice");
-    lines.push("- Candidate rules are usable for testing, but should be approved before becoming permanent default agent behavior.");
-  }
-
+  appendContextRuleLines(lines, items, { emptyMessage: "No coding-agent context exported yet." });
+  appendCandidateNoticeSection(lines, {
+    when: "items_include_candidate",
+    items,
+    message: "Candidate rules are usable for testing, but should be approved before becoming permanent default agent behavior.",
+  });
   lines.push("");
-  lines.push("## Context Quality");
-  lines.push(`- Score: ${qualityPercent(packet.quality.score)} (${packet.quality.label})`);
-  lines.push(`- Ready for agent: ${packet.quality.readyForAgent ? "yes" : "no"}`);
-  for (const recommendation of packet.quality.recommendations.slice(0, 3)) {
-    lines.push(`- ${recommendation}`);
-  }
-
+  appendContextQualitySummary(lines, packet.quality);
   lines.push("");
   lines.push("## Evidence");
+  appendItemEvidenceMap(lines, items);
+  appendPacketWarnings(lines, packet.warnings);
+  appendPacketIssues(lines, packet.issues);
 
-  if (items.length === 0) {
-    lines.push("- No evidence refs.");
-  } else {
-    for (const item of items) {
-      lines.push(
-        `- ${item.evidence.candidateMemoryId}: artifact ${item.evidence.sourceArtifactId}; fragment ${item.evidence.memoryFragmentId}; evidence ${item.evidence.evidenceHash}`,
-      );
-    }
-  }
-
-  if (packet.warnings.length > 0) {
-    lines.push("");
-    lines.push("## Warnings");
-    for (const warning of packet.warnings) {
-      lines.push(`- ${warning}`);
-    }
-  }
-
-  if (packet.issues.length > 0) {
-    lines.push("");
-    lines.push("## Context Issues");
-    for (const issue of packet.issues) {
-      lines.push(`- ${issue.severity}: ${issue.reason}; candidate ${issue.candidateId || "unknown"}; existing ${issue.existingId || "none"}`);
-    }
-  }
-
-  return `${lines.join("\n").trim()}\n`;
+  return finalizeMarkdown(lines);
 }
 
 function formatReviewCodingAgentContextMarkdown(
@@ -617,11 +545,7 @@ function formatReviewCodingAgentContextMarkdown(
 ): string {
   const maxItemsPerSection = clampMaxEntries(options.maxItemsPerSection);
   const normalizedSections = normalizePacketSections(packet.sections);
-  const agentSpecificItems = Object.values(normalizedSections)
-    .flat()
-    .filter((item) => item.scope === "agent_specific")
-    .filter(uniqueContextItemPredicate())
-    .slice(0, maxItemsPerSection);
+  const agentSpecificItems = selectAgentSpecificReviewItems(normalizedSections, maxItemsPerSection);
   const lines = [
     `# ${options.title?.trim() || "Sivraj Engineering Context Review"}`,
     "",
@@ -630,7 +554,7 @@ function formatReviewCodingAgentContextMarkdown(
     "## Project",
     `- Name: ${packet.project.name || "Unknown"}`,
     `- ID: ${packet.project.id || "Unknown"}`,
-    `- Repo: ${packet.project.repoFingerprint.repoName || packet.project.repoFingerprint.packageName || "Unknown"}`,
+    `- Repo: ${repoNameFromFingerprint(packet.project.repoFingerprint)}`,
     `- Stack: ${formatRepoStack(packet.project.repoFingerprint) || "Unknown"}`,
     `- Generated: ${packet.generatedAt}`,
     "",
@@ -641,72 +565,17 @@ function formatReviewCodingAgentContextMarkdown(
     "",
   ];
 
-  lines.push("## High Priority For This Agent");
-  if (agentSpecificItems.length === 0) {
-    lines.push("- No agent-specific context exported.");
-  } else {
-    for (const item of agentSpecificItems) {
-      lines.push(`- ${item.agentContextLine || fallbackAgentContextLine(item)} Evidence: ${item.evidence.candidateMemoryId}`);
-    }
-  }
+  appendAgentSpecificPrioritySection(lines, agentSpecificItems);
   lines.push("");
-
-  lines.push("## Context Quality");
-  lines.push(`- Score: ${qualityPercent(packet.quality.score)} (${packet.quality.label})`);
-  lines.push(`- Ready for agent: ${packet.quality.readyForAgent ? "yes" : "no"}`);
-  if (packet.quality.strengths.length > 0) {
-    lines.push(`- Strengths: ${packet.quality.strengths.join("; ")}`);
-  }
-  if (packet.quality.risks.length > 0) {
-    lines.push(`- Risks: ${packet.quality.risks.join("; ")}`);
-  }
-  for (const recommendation of packet.quality.recommendations.slice(0, 3)) {
-    lines.push(`- ${recommendation}`);
-  }
+  appendContextQualitySummary(lines, packet.quality, { includeStrengthsRisks: true });
   lines.push("");
-
-  for (const sectionKey of CONTEXT_SECTION_KEYS) {
-    const items = sectionKey === "agentInstructions" && normalizedSections.agentInstructions.length === 0
-      ? agentSpecificItems
-      : normalizedSections[sectionKey].slice(0, maxItemsPerSection);
-    lines.push(`## ${humanizeContextSection(sectionKey)}`);
-
-    if (items.length === 0) {
-      lines.push("- No context exported.");
-      lines.push("");
-      continue;
-    }
-
-    for (const item of items) {
-      lines.push(formatContextItem(item));
-    }
-
-    lines.push("");
-  }
-
+  appendReviewContextSections(lines, normalizedSections, agentSpecificItems, maxItemsPerSection);
   lines.push("## Evidence");
-  for (const ref of packet.evidence) {
-    lines.push(
-      `- Candidate ${ref.candidateMemoryId}; artifact ${ref.sourceArtifactId}; fragment ${ref.memoryFragmentId}; evidence ${ref.evidenceHash}`,
-    );
-  }
-  if (packet.warnings.length > 0) {
-    lines.push("");
-    lines.push("## Warnings");
-    for (const warning of packet.warnings) {
-      lines.push(`- ${warning}`);
-    }
-  }
+  appendPacketEvidenceRefs(lines, packet.evidence);
+  appendPacketWarnings(lines, packet.warnings);
+  appendPacketIssues(lines, packet.issues);
 
-  if (packet.issues.length > 0) {
-    lines.push("");
-    lines.push("## Context Issues");
-    for (const issue of packet.issues) {
-      lines.push(`- ${issue.severity}: ${issue.reason}; candidate ${issue.candidateId || "unknown"}; existing ${issue.existingId || "none"}`);
-    }
-  }
-
-  return `${lines.join("\n").trim()}\n`;
+  return finalizeMarkdown(lines);
 }
 
 function formatInstructionPatchMarkdown(input: {
@@ -728,60 +597,31 @@ function formatInstructionPatchMarkdown(input: {
     "- Treat evidence IDs as traceability handles, not as source text.",
     "",
     "## Project Context",
-    "",
-    `- Project: ${packet.project.name || "Unknown"}`,
-    `- Repo: ${packet.project.repoFingerprint.repoName || packet.project.repoFingerprint.packageName || "Unknown"}`,
-    `- Stack: ${formatRepoStack(packet.project.repoFingerprint) || "Unknown"}`,
-    `- Sivraj quality: ${qualityPercent(packet.quality.score)} (${packet.quality.label})`,
-    "",
-    "## Privacy Boundary",
-    "",
+  ];
+
+  appendExportProjectContext(lines, packet, "Project");
+  lines.push(
     "- Raw private memories are not included in this file.",
     "- Uploaded document bodies and plaintext source statements are not included.",
     "- Rules below are derived from source-backed Sivraj evidence IDs.",
     "",
     "## Working Rules",
     "",
-  ];
+  );
+  appendContextRuleLines(lines, items, {
+    emptyMessage: "No approved repo-safe engineering rules are ready for export yet.",
+  });
+  appendCandidateNoticeSection(lines, {
+    when: "include_candidate_flag",
+    includeCandidate,
+    message: "Candidate rules are included for testing only. Approve them in Sivraj before relying on them as permanent repo policy.",
+    blankLineBeforeBullet: true,
+  });
+  lines.push("", "## Evidence Map", "");
+  appendItemEvidenceMap(lines, items);
+  appendPacketIssues(lines, packet.issues, { title: "## Review Notes", limit: 8 });
 
-  if (items.length === 0) {
-    lines.push("- No approved repo-safe engineering rules are ready for export yet.");
-  } else {
-    for (const item of items) {
-      const prefix = item.status === "candidate" ? "[CANDIDATE] " : "";
-      lines.push(`- ${prefix}${item.agentContextLine || fallbackAgentContextLine(item)} Evidence: ${item.evidence.candidateMemoryId}`);
-    }
-  }
-
-  if (includeCandidate) {
-    lines.push("");
-    lines.push("## Candidate Notice");
-    lines.push("");
-    lines.push("- Candidate rules are included for testing only. Approve them in Sivraj before relying on them as permanent repo policy.");
-  }
-
-  lines.push("");
-  lines.push("## Evidence Map");
-  lines.push("");
-
-  if (items.length === 0) {
-    lines.push("- No evidence refs.");
-  } else {
-    for (const item of items) {
-      lines.push(`- ${item.evidence.candidateMemoryId}: artifact ${item.evidence.sourceArtifactId}; fragment ${item.evidence.memoryFragmentId}; evidence ${item.evidence.evidenceHash}`);
-    }
-  }
-
-  if (packet.issues.length > 0) {
-    lines.push("");
-    lines.push("## Review Notes");
-    lines.push("");
-    for (const issue of packet.issues.slice(0, 8)) {
-      lines.push(`- ${issue.severity}: ${issue.reason}; candidate ${issue.candidateId || "unknown"}; existing ${issue.existingId || "none"}`);
-    }
-  }
-
-  return `${lines.join("\n").trim()}\n`;
+  return finalizeMarkdown(lines);
 }
 
 function formatCursorRulesMdc(input: {
@@ -801,51 +641,30 @@ function formatCursorRulesMdc(input: {
     "Apply these source-backed rules when working in this repository. Current user instructions and local repository files take priority.",
     "",
     "## Project",
-    "",
-    `- Name: ${packet.project.name || "Unknown"}`,
-    `- Repo: ${packet.project.repoFingerprint.repoName || packet.project.repoFingerprint.packageName || "Unknown"}`,
-    `- Stack: ${formatRepoStack(packet.project.repoFingerprint) || "Unknown"}`,
-    `- Sivraj quality: ${qualityPercent(packet.quality.score)} (${packet.quality.label})`,
-    "",
-    "## Privacy Boundary",
-    "",
+  ];
+
+  appendExportProjectContext(lines, packet);
+  lines.push(
     "- Raw private memories are not included.",
     "- Uploaded document bodies and plaintext source statements are not included.",
     "- Rules are derived from evidence IDs that can be reviewed in Sivraj.",
     "",
     "## Rules",
     "",
-  ];
+  );
+  appendContextRuleLines(lines, items, {
+    emptyMessage: "No approved repo-safe engineering rules are ready for Cursor yet.",
+  });
+  appendCandidateNoticeSection(lines, {
+    when: "include_candidate_flag",
+    includeCandidate,
+    message: "Candidate rules are included for testing only. Approve them in Sivraj before making them permanent Cursor rules.",
+    blankLineBeforeBullet: true,
+  });
+  lines.push("", "## Evidence", "");
+  appendItemEvidenceMap(lines, items);
 
-  if (items.length === 0) {
-    lines.push("- No approved repo-safe engineering rules are ready for Cursor yet.");
-  } else {
-    for (const item of items) {
-      const prefix = item.status === "candidate" ? "[CANDIDATE] " : "";
-      lines.push(`- ${prefix}${item.agentContextLine || fallbackAgentContextLine(item)} Evidence: ${item.evidence.candidateMemoryId}`);
-    }
-  }
-
-  if (includeCandidate) {
-    lines.push("");
-    lines.push("## Candidate Notice");
-    lines.push("");
-    lines.push("- Candidate rules are included for testing only. Approve them in Sivraj before making them permanent Cursor rules.");
-  }
-
-  lines.push("");
-  lines.push("## Evidence");
-  lines.push("");
-
-  if (items.length === 0) {
-    lines.push("- No evidence refs.");
-  } else {
-    for (const item of items) {
-      lines.push(`- ${item.evidence.candidateMemoryId}: artifact ${item.evidence.sourceArtifactId}; fragment ${item.evidence.memoryFragmentId}; evidence ${item.evidence.evidenceHash}`);
-    }
-  }
-
-  return `${lines.join("\n").trim()}\n`;
+  return finalizeMarkdown(lines);
 }
 
 function formatGenericMcpJson(input: {
@@ -1016,7 +835,10 @@ function normalizeProfileMemory(
       evidenceHash: memory.evidenceHash,
       evidenceLength: memory.evidenceLength,
     },
-    metadata: sanitizeProfileMetadata(memory.metadata),
+    metadata: sanitizeSecureMetadataRecord(memory.metadata, {
+      allowAgentContextLine: true,
+      exactBlockedKeys: PROFILE_EXACT_BLOCKED_METADATA_KEYS,
+    }),
   };
 }
 
@@ -1061,40 +883,186 @@ const CONTEXT_SECTION_KEYS: CodingAgentContextPacketSectionKey[] = [
   "knownPitfalls",
 ];
 
+const CONTEXT_SECTION_FOR_CATEGORY: Record<EngineeringProfileCategoryKey, CodingAgentContextPacketSectionKey | null> = {
+  architectureDecisions: "architectureRules",
+  projectConventions: "projectConventions",
+  styleRules: "styleRules",
+  deploymentEnvironment: "deploymentEnvironment",
+  securityBoundaries: "securityBoundaries",
+  recurringBugs: "knownPitfalls",
+  codingPreferences: "userPreferences",
+  toolPreferences: "userPreferences",
+  agentInstructions: "agentInstructions",
+  testingPractices: "testingPractices",
+};
+
+const HUMANIZED_CONTEXT_SECTION: Record<CodingAgentContextPacketSectionKey, string> = {
+  agentInstructions: "Agent Instructions",
+  userPreferences: "User Coding Preferences",
+  projectConventions: "Project Conventions",
+  architectureRules: "Architecture Decisions",
+  styleRules: "Style Rules",
+  testingPractices: "Testing Practices",
+  deploymentEnvironment: "Deployment Environment",
+  securityBoundaries: "Security Boundaries",
+  knownPitfalls: "Known Pitfalls",
+};
+
+const SCOPE_VISIBILITY_FLAG: Record<EngineeringInstructionScope, keyof CodingAgentContextScope> = {
+  global_user: "includeGlobalUser",
+  project: "includeProject",
+  organization: "includeOrganization",
+  agent_specific: "includeAgentSpecific",
+  temporary: "includeTemporary",
+};
+
 function humanizeContextSection(key: CodingAgentContextPacketSectionKey): string {
-  if (key === "agentInstructions") {
-    return "Agent Instructions";
+  return HUMANIZED_CONTEXT_SECTION[key];
+}
+
+function collectContextPacketSections(input: {
+  categories: EngineeringProjectProfile["categories"];
+  scope: CodingAgentContextScope;
+  includeCandidate: boolean;
+  includeSuperseded: boolean;
+  maxItemsPerSection: number;
+}): Record<CodingAgentContextPacketSectionKey, CodingAgentContextPacketItem[]> {
+  const sections = emptyContextSections();
+
+  for (const [categoryKey, entries] of Object.entries(input.categories) as Array<[
+    EngineeringProfileCategoryKey,
+    EngineeringProfileEntry[],
+  ]>) {
+    const sectionKey = contextSectionForCategory(categoryKey);
+
+    if (!sectionKey) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!shouldIncludeProfileEntry(entry, input.scope, input.includeCandidate, input.includeSuperseded)) {
+        continue;
+      }
+
+      if (sections[sectionKey].length >= input.maxItemsPerSection) {
+        continue;
+      }
+
+      sections[sectionKey].push(profileEntryToContextItem(entry));
+    }
   }
 
-  if (key === "userPreferences") {
-    return "User Coding Preferences";
+  for (const key of CONTEXT_SECTION_KEYS) {
+    sections[key] = dedupeContextItems(sections[key]);
   }
 
-  if (key === "projectConventions") {
-    return "Project Conventions";
+  return sections;
+}
+
+function shouldIncludeProfileEntry(
+  entry: EngineeringProfileEntry,
+  scope: CodingAgentContextScope,
+  includeCandidate: boolean,
+  includeSuperseded: boolean,
+): boolean {
+  if (!scopeAllowsEntry(scope, entry.scope)) {
+    return false;
   }
 
-  if (key === "architectureRules") {
-    return "Architecture Decisions";
+  if (entry.status === "rejected") {
+    return false;
   }
 
-  if (key === "styleRules") {
-    return "Style Rules";
+  if (entry.status === "candidate" && !includeCandidate) {
+    return false;
   }
 
-  if (key === "testingPractices") {
-    return "Testing Practices";
+  return !(entry.status === "superseded" && !includeSuperseded);
+}
+
+function profileEntryToContextItem(entry: EngineeringProfileEntry): CodingAgentContextPacketItem {
+  return {
+    id: entry.id,
+    type: entry.engineeringMemoryType,
+    scope: entry.scope,
+    subject: entry.subject,
+    agentContextLine: readAgentContextLine(entry),
+    confidence: entry.confidence,
+    status: entry.status,
+    metadata: entry.metadata,
+    evidence: entry.evidence,
+  };
+}
+
+function buildContextPacketWarnings(input: {
+  profileWarnings: string[];
+  issues: EngineeringInstructionIssue[];
+  quality: CodingAgentContextQuality;
+  itemCount: number;
+}): string[] {
+  const warnings = new Set(input.profileWarnings);
+
+  for (const issue of input.issues) {
+    warnings.add(`context_${issue.issueType}:${issue.reason}`);
   }
 
-  if (key === "deploymentEnvironment") {
-    return "Deployment Environment";
+  if (!input.quality.readyForAgent) {
+    warnings.add(`context_quality:${input.quality.label}`);
   }
 
-  if (key === "securityBoundaries") {
-    return "Security Boundaries";
+  if (input.itemCount === 0) {
+    warnings.add("coding_agent_context_packet_empty");
   }
 
-  return "Known Pitfalls";
+  return Array.from(warnings).sort();
+}
+
+function selectAgentSpecificReviewItems(
+  sections: Record<CodingAgentContextPacketSectionKey, CodingAgentContextPacketItem[]>,
+  maxItems: number,
+): CodingAgentContextPacketItem[] {
+  return Object.values(sections)
+    .flat()
+    .filter((item) => item.scope === "agent_specific")
+    .filter(uniqueContextItemPredicate())
+    .slice(0, maxItems);
+}
+
+function appendAgentSpecificPrioritySection(
+  lines: string[],
+  agentSpecificItems: CodingAgentContextPacketItem[],
+): void {
+  lines.push("## High Priority For This Agent");
+  appendContextRuleLines(lines, agentSpecificItems, {
+    emptyMessage: "No agent-specific context exported.",
+    showCandidatePrefix: false,
+  });
+}
+
+function appendReviewContextSections(
+  lines: string[],
+  normalizedSections: Record<CodingAgentContextPacketSectionKey, CodingAgentContextPacketItem[]>,
+  agentSpecificItems: CodingAgentContextPacketItem[],
+  maxItemsPerSection: number,
+): void {
+  for (const sectionKey of CONTEXT_SECTION_KEYS) {
+    const items = sectionKey === "agentInstructions" && normalizedSections.agentInstructions.length === 0
+      ? agentSpecificItems
+      : normalizedSections[sectionKey].slice(0, maxItemsPerSection);
+    lines.push(`## ${humanizeContextSection(sectionKey)}`);
+
+    if (items.length === 0) {
+      lines.push("- No context exported.");
+      lines.push("");
+      continue;
+    }
+
+    for (const item of items) {
+      lines.push(formatContextItem(item));
+    }
+
+    lines.push("");
+  }
 }
 
 function formatContextItem(item: CodingAgentContextPacketItem): string {
@@ -1278,45 +1246,6 @@ function readAgentContextLine(entry: EngineeringProfileEntry): string {
   return nestedLine ?? fallbackAgentContextLine(entry);
 }
 
-function fallbackAgentContextLine(item: {
-  type?: EngineeringMemoryType;
-  engineeringMemoryType?: EngineeringMemoryType;
-  subject: string | null;
-}): string {
-  const type = item.type ?? item.engineeringMemoryType ?? "agent_instruction";
-  const subject = item.subject?.trim() || null;
-
-  if (type === "tool_preference" && subject) {
-    return `Use ${subject} when this project or task calls for that tool.`;
-  }
-
-  if (type === "coding_preference" && subject) {
-    return `Respect the user's coding preference around ${subject}.`;
-  }
-
-  if (type === "testing_practice") {
-    return subject
-      ? `Follow the source-backed testing practice for ${subject}.`
-      : "Follow the source-backed testing practice before handoff.";
-  }
-
-  if (type === "security_boundary") {
-    return subject
-      ? `Respect the source-backed security boundary for ${subject}.`
-      : "Respect the source-backed security boundary.";
-  }
-
-  if (type === "project_convention" && subject) {
-    return `Follow the source-backed project convention for ${subject}.`;
-  }
-
-  const readableType = type.replace(/_/g, " ");
-
-  return subject
-    ? `Apply the source-backed ${readableType} for ${subject}.`
-    : `Apply this source-backed ${readableType}.`;
-}
-
 function readSafeContextLine(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -1324,7 +1253,7 @@ function readSafeContextLine(value: unknown): string | null {
 
   const trimmed = value.trim().replace(/\s+/g, " ");
 
-  if (trimmed.length < 8 || looksLikeSecretMetadataValue(trimmed)) {
+  if (trimmed.length < 8 || looksLikeSecretValue(trimmed)) {
     return null;
   }
 
@@ -1340,73 +1269,23 @@ function readRecord(value: unknown): Record<string, unknown> {
 function contextSectionForCategory(
   key: EngineeringProfileCategoryKey,
 ): CodingAgentContextPacketSectionKey | null {
-  if (key === "codingPreferences" || key === "toolPreferences") {
-    return "userPreferences";
-  }
-
-  if (key === "architectureDecisions") {
-    return "architectureRules";
-  }
-
-  if (key === "projectConventions") {
-    return "projectConventions";
-  }
-
-  if (key === "styleRules") {
-    return "styleRules";
-  }
-
-  if (key === "deploymentEnvironment") {
-    return "deploymentEnvironment";
-  }
-
-  if (key === "securityBoundaries") {
-    return "securityBoundaries";
-  }
-
-  if (key === "recurringBugs") {
-    return "knownPitfalls";
-  }
-
-  if (key === "agentInstructions") {
-    return "agentInstructions";
-  }
-
-  if (key === "testingPractices") {
-    return "testingPractices";
-  }
-
-  return null;
+  return CONTEXT_SECTION_FOR_CATEGORY[key];
 }
 
+const DEFAULT_CONTEXT_SCOPE: CodingAgentContextScope = {
+  includeGlobalUser: true,
+  includeProject: true,
+  includeOrganization: true,
+  includeAgentSpecific: true,
+  includeTemporary: false,
+};
+
 function normalizeContextScope(scope: Partial<CodingAgentContextScope> | undefined): CodingAgentContextScope {
-  return {
-    includeGlobalUser: scope?.includeGlobalUser ?? true,
-    includeProject: scope?.includeProject ?? true,
-    includeOrganization: scope?.includeOrganization ?? true,
-    includeAgentSpecific: scope?.includeAgentSpecific ?? true,
-    includeTemporary: scope?.includeTemporary ?? false,
-  };
+  return { ...DEFAULT_CONTEXT_SCOPE, ...scope };
 }
 
 function scopeAllowsEntry(scope: CodingAgentContextScope, entryScope: EngineeringInstructionScope): boolean {
-  if (entryScope === "global_user") {
-    return scope.includeGlobalUser;
-  }
-
-  if (entryScope === "project") {
-    return scope.includeProject;
-  }
-
-  if (entryScope === "organization") {
-    return scope.includeOrganization;
-  }
-
-  if (entryScope === "agent_specific") {
-    return scope.includeAgentSpecific;
-  }
-
-  return scope.includeTemporary;
+  return scope[SCOPE_VISIBILITY_FLAG[entryScope]];
 }
 
 function compareProfileEntries(left: EngineeringProfileEntry, right: EngineeringProfileEntry): number {
@@ -1424,22 +1303,6 @@ function compareProfileEntries(left: EngineeringProfileEntry, right: Engineering
   }
 
   return right.confidence - left.confidence;
-}
-
-function normalizeRepoFingerprint(
-  value: Partial<EngineeringRepoFingerprint> | null | undefined,
-): EngineeringRepoFingerprint {
-  return {
-    projectId: normalizeNullableString(value?.projectId),
-    projectName: normalizeNullableString(value?.projectName),
-    repoName: normalizeNullableString(value?.repoName),
-    packageName: normalizeNullableString(value?.packageName),
-    gitRemote: normalizeGitRemote(value?.gitRemote),
-    packageManager: normalizeNullableString(value?.packageManager)?.toLowerCase() ?? null,
-    frameworks: normalizeStringList(value?.frameworks),
-    lockfiles: normalizeStringList(value?.lockfiles),
-    rootMarkers: normalizeStringList(value?.rootMarkers),
-  };
 }
 
 function annotateEntryForRepo(
@@ -1466,87 +1329,98 @@ function annotateEntryForRepo(
 }
 
 function calculateRepoMatchScore(entry: EngineeringProfileEntry, fingerprint: EngineeringRepoFingerprint): number {
-  let score = 0;
   const metadata = entry.metadata;
   const line = readAgentContextLine(entry);
 
-  if (fingerprint.projectId && normalizedEquals(metadata["projectId"], fingerprint.projectId)) {
-    score += 6;
-  }
+  return REPO_MATCH_RULES.reduce((score, rule) => score + rule({ entry, fingerprint, metadata, line }), 0);
+}
 
-  if (fingerprint.projectName && textMatches(line, fingerprint.projectName)) {
-    score += 3;
-  }
+const REPO_MATCH_RULES: Array<(input: {
+  entry: EngineeringProfileEntry;
+  fingerprint: EngineeringRepoFingerprint;
+  metadata: Record<string, unknown>;
+  line: string;
+}) => number> = [
+  ({ fingerprint, metadata }) => (
+    fingerprint.projectId && normalizedEquals(metadata["projectId"], fingerprint.projectId) ? 6 : 0
+  ),
+  ({ fingerprint, line }) => (
+    fingerprint.projectName && textMatches(line, fingerprint.projectName) ? 3 : 0
+  ),
+  ({ fingerprint, metadata, line }) => {
+    if (!fingerprint.repoName) {
+      return 0;
+    }
 
-  if (
-    fingerprint.repoName &&
-    (
+    return (
       normalizedEquals(metadata["repoName"], fingerprint.repoName) ||
       normalizedEquals(metadata["repositoryName"], fingerprint.repoName) ||
       textMatches(line, fingerprint.repoName)
-    )
-  ) {
-    score += 5;
-  }
+    ) ? 5 : 0;
+  },
+  ({ fingerprint, metadata, line }) => {
+    if (!fingerprint.packageName) {
+      return 0;
+    }
 
-  if (
-    fingerprint.packageName &&
-    (
+    return (
       normalizedEquals(metadata["packageName"], fingerprint.packageName) ||
       textMatches(line, fingerprint.packageName)
-    )
-  ) {
-    score += 5;
-  }
+    ) ? 5 : 0;
+  },
+  ({ fingerprint, metadata }) => (
+    fingerprint.gitRemote &&
+    normalizedEquals(normalizeGitRemote(readStringMetadata(metadata["gitRemote"])), fingerprint.gitRemote)
+      ? 6
+      : 0
+  ),
+  ({ fingerprint, metadata, line }) => {
+    if (!fingerprint.packageManager) {
+      return 0;
+    }
 
-  if (fingerprint.gitRemote && normalizedEquals(normalizeGitRemote(readStringMetadata(metadata["gitRemote"])), fingerprint.gitRemote)) {
-    score += 6;
-  }
-
-  if (
-    fingerprint.packageManager &&
-    (
+    return (
       normalizedEquals(metadata["packageManager"], fingerprint.packageManager) ||
       textMatches(line, fingerprint.packageManager)
-    )
-  ) {
-    score += 3;
+    ) ? 3 : 0;
+  },
+  ({ fingerprint, metadata, line }) => fingerprint.frameworks.reduce((score, framework) => (
+    normalizedEquals(metadata["framework"], framework) || textMatches(line, framework)
+      ? score + 2
+      : score
+  ), 0),
+];
+
+function packageManagerConflictScore(text: string, fingerprint: EngineeringRepoFingerprint): number {
+  if (!fingerprint.packageManager) {
+    return 0;
   }
 
-  for (const framework of fingerprint.frameworks) {
-    if (normalizedEquals(metadata["framework"], framework) || textMatches(line, framework)) {
-      score += 2;
-    }
+  const managers = ["pnpm", "npm", "yarn", "bun"].filter((manager) => textHasWord(text, manager));
+
+  return managers.length > 0 && !managers.includes(fingerprint.packageManager) ? 1 : 0;
+}
+
+function frameworkConflictScore(text: string, fingerprint: EngineeringRepoFingerprint): number {
+  if (fingerprint.frameworks.length === 0) {
+    return 0;
   }
 
-  return score;
+  const mentionsNext = textHasWord(text, "next") || textHasWord(text, "nextjs");
+  const mentionsVite = textHasWord(text, "vite");
+  const repoUsesVite = fingerprint.frameworks.includes("vite");
+  const repoUsesNext = fingerprint.frameworks.some((framework) =>
+    framework === "next" || framework === "nextjs" || framework === "next.js");
+
+  return (repoUsesVite && mentionsNext) || (repoUsesNext && mentionsVite) ? 1 : 0;
 }
 
 function calculateRepoConflictScore(entry: EngineeringProfileEntry, fingerprint: EngineeringRepoFingerprint): number {
-  let score = 0;
   const metadata = entry.metadata;
   const line = readAgentContextLine(entry);
   const text = normalizeContextLine(`${line} ${entry.subject ?? ""} ${Object.values(metadata).join(" ")}`);
 
-  if (fingerprint.packageManager) {
-    const managers = ["pnpm", "npm", "yarn", "bun"].filter((manager) => textHasWord(text, manager));
-    if (managers.length > 0 && !managers.includes(fingerprint.packageManager)) {
-      score += 1;
-    }
-  }
-
-  if (fingerprint.frameworks.length > 0) {
-    const mentionsNext = textHasWord(text, "next") || textHasWord(text, "nextjs");
-    const mentionsVite = textHasWord(text, "vite");
-    const repoUsesVite = fingerprint.frameworks.some((framework) => framework === "vite");
-    const repoUsesNext = fingerprint.frameworks.some((framework) => framework === "next" || framework === "nextjs" || framework === "next.js");
-
-    if ((repoUsesVite && mentionsNext) || (repoUsesNext && mentionsVite)) {
-      score += 1;
-    }
-  }
-
-  return score;
+  return packageManagerConflictScore(text, fingerprint) + frameworkConflictScore(text, fingerprint);
 }
 
 function detectContextIssues(
@@ -1594,103 +1468,193 @@ function scoreCodingAgentContext(input: {
   evidence: EngineeringProfileEvidenceRef[];
   issues: EngineeringInstructionIssue[];
 }): CodingAgentContextQuality {
-  const items = input.items;
-  const approvedOrActiveItems = items.filter((item) => item.status === "approved" || item.status === "active").length;
-  const candidateItems = items.filter((item) => item.status === "candidate").length;
-  const repoMatchedItems = items.filter((item) => readNumberMetadata(item.metadata["repoMatchScore"]) > 0).length;
-  const weakUnknownSourceItems = items.filter(isWeakUnknownSourceItem).length;
-  const highSeverityIssueCount = input.issues.filter((issue) => issue.severity === "high").length;
-  const populatedSections = CONTEXT_SECTION_KEYS.filter((key) => input.items.some((item) => sectionContainsItem(key, item))).length;
-  const sectionCoverage = CONTEXT_SECTION_KEYS.length === 0 ? 0 : populatedSections / CONTEXT_SECTION_KEYS.length;
-  const strengths: string[] = [];
-  const risks: string[] = [];
-  const recommendations: string[] = [];
-  let score = 0;
-
-  if (items.length > 0) {
-    score += Math.min(0.22, items.length * 0.035);
-  } else {
-    risks.push("No context items are available for export.");
-    recommendations.push("Upload or approve engineering memories before using this packet with a coding agent.");
-  }
-
-  if (input.evidence.length > 0) {
-    score += Math.min(0.16, input.evidence.length * 0.025);
-    strengths.push("Context is source-backed with evidence references.");
-  }
-
-  if (approvedOrActiveItems > 0) {
-    score += Math.min(0.24, approvedOrActiveItems * 0.04);
-    strengths.push("Approved or active memories are present.");
-  } else if (items.length > 0) {
-    risks.push("All exported context is still candidate status.");
-    recommendations.push("Approve high-confidence engineering memories before production agent handoff.");
-  }
-
-  if (repoMatchedItems > 0) {
-    score += Math.min(0.18, repoMatchedItems * 0.045);
-    strengths.push("Some context matches the current repo fingerprint.");
-  } else if (items.length > 0) {
-    risks.push("No exported context is explicitly matched to the current repo fingerprint.");
-    recommendations.push("Pass repo name, package name, package manager, and framework metadata when requesting context.");
-  }
-
-  if (sectionCoverage > 0) {
-    score += Math.min(0.12, sectionCoverage * 0.12);
-  }
-
-  if (candidateItems > approvedOrActiveItems && items.length > 0) {
-    score -= 0.08;
-    risks.push("Candidate memories outnumber approved or active memories.");
-  }
-
-  if (weakUnknownSourceItems > 0) {
-    score -= Math.min(0.12, weakUnknownSourceItems * 0.04);
-    risks.push("Some exported items have weak or unknown source metadata.");
-    recommendations.push("Prefer agent instruction files, repo docs, and approved notes with clear source metadata.");
-  }
-
-  if (input.issues.length > 0) {
-    score -= Math.min(0.24, input.issues.length * 0.08);
-    risks.push("Conflicting or stale context issues were detected.");
-    recommendations.push("Review context issues before handing this packet to an autonomous coding agent.");
-  }
-
-  if (highSeverityIssueCount > 0) {
-    score -= 0.2;
-    risks.push("High-severity context issues are present.");
-  }
-
-  const normalizedScore = Math.max(0, Math.min(1, Number(score.toFixed(2))));
+  const metrics = summarizeContextQualityMetrics(input);
+  const feedback = buildContextQualityFeedback(metrics, input);
+  const normalizedScore = Math.max(0, Math.min(1, Number(feedback.score.toFixed(2))));
   const label = qualityLabel(normalizedScore, {
     issueCount: input.issues.length,
-    highSeverityIssueCount,
-    totalItems: items.length,
+    highSeverityIssueCount: metrics.highSeverityIssueCount,
+    totalItems: metrics.totalItems,
   });
 
-  if (recommendations.length === 0) {
-    recommendations.push("Packet is suitable for coding-agent handoff; keep reviewing new candidate memories as they arrive.");
+  if (feedback.recommendations.length === 0) {
+    feedback.recommendations.push("Packet is suitable for coding-agent handoff; keep reviewing new candidate memories as they arrive.");
   }
 
   return {
     score: normalizedScore,
     label,
     readyForAgent: label === "excellent" || label === "good" || label === "usable",
-    strengths: dedupeStrings(strengths),
-    risks: dedupeStrings(risks),
-    recommendations: dedupeStrings(recommendations),
+    strengths: dedupeStrings(feedback.strengths),
+    risks: dedupeStrings(feedback.risks),
+    recommendations: dedupeStrings(feedback.recommendations),
     metrics: {
-      totalItems: items.length,
-      approvedOrActiveItems,
-      candidateItems,
+      totalItems: metrics.totalItems,
+      approvedOrActiveItems: metrics.approvedOrActiveItems,
+      candidateItems: metrics.candidateItems,
       evidenceRefs: input.evidence.length,
       issueCount: input.issues.length,
-      highSeverityIssueCount,
-      repoMatchedItems,
-      weakUnknownSourceItems,
-      sectionCoverage: Number(sectionCoverage.toFixed(2)),
+      highSeverityIssueCount: metrics.highSeverityIssueCount,
+      repoMatchedItems: metrics.repoMatchedItems,
+      weakUnknownSourceItems: metrics.weakUnknownSourceItems,
+      sectionCoverage: Number(metrics.sectionCoverage.toFixed(2)),
     },
   };
+}
+
+function summarizeContextQualityMetrics(input: {
+  items: CodingAgentContextPacketItem[];
+  issues: EngineeringInstructionIssue[];
+}) {
+  const populatedSections = CONTEXT_SECTION_KEYS
+    .filter((key) => input.items.some((item) => sectionContainsItem(key, item)))
+    .length;
+
+  return {
+    totalItems: input.items.length,
+    approvedOrActiveItems: input.items.filter((item) => item.status === "approved" || item.status === "active").length,
+    candidateItems: input.items.filter((item) => item.status === "candidate").length,
+    repoMatchedItems: input.items.filter((item) => readNumberMetadata(item.metadata["repoMatchScore"]) > 0).length,
+    weakUnknownSourceItems: input.items.filter(isWeakUnknownSourceItem).length,
+    highSeverityIssueCount: input.issues.filter((issue) => issue.severity === "high").length,
+    sectionCoverage: CONTEXT_SECTION_KEYS.length === 0 ? 0 : populatedSections / CONTEXT_SECTION_KEYS.length,
+  };
+}
+
+function buildContextQualityFeedback(
+  metrics: ReturnType<typeof summarizeContextQualityMetrics>,
+  input: {
+    items: CodingAgentContextPacketItem[];
+    evidence: EngineeringProfileEvidenceRef[];
+    issues: EngineeringInstructionIssue[];
+  },
+) {
+  const strengths: string[] = [];
+  const risks: string[] = [];
+  const recommendations: string[] = [];
+  let score = 0;
+
+  score += scoreContextItemVolume(metrics.totalItems, risks, recommendations);
+  score += scoreContextEvidence(input.evidence.length, strengths);
+  score += scoreApprovedContext(metrics.totalItems, metrics.approvedOrActiveItems, strengths, risks, recommendations);
+  score += scoreRepoMatchedContext(metrics.totalItems, metrics.repoMatchedItems, strengths, risks, recommendations);
+  score += scoreSectionCoverage(metrics.sectionCoverage);
+  score -= penalizeCandidateHeavyContext(metrics.totalItems, metrics.candidateItems, metrics.approvedOrActiveItems, risks);
+  score -= penalizeWeakUnknownSources(metrics.weakUnknownSourceItems, risks, recommendations);
+  score -= penalizeContextIssues(input.issues.length, risks, recommendations);
+  score -= penalizeHighSeverityIssues(metrics.highSeverityIssueCount, risks);
+
+  return { score, strengths, risks, recommendations };
+}
+
+function scoreContextItemVolume(totalItems: number, risks: string[], recommendations: string[]): number {
+  if (totalItems > 0) {
+    return Math.min(0.22, totalItems * 0.035);
+  }
+
+  risks.push("No context items are available for export.");
+  recommendations.push("Upload or approve engineering memories before using this packet with a coding agent.");
+  return 0;
+}
+
+function scoreContextEvidence(evidenceCount: number, strengths: string[]): number {
+  if (evidenceCount === 0) {
+    return 0;
+  }
+
+  strengths.push("Context is source-backed with evidence references.");
+  return Math.min(0.16, evidenceCount * 0.025);
+}
+
+function scoreApprovedContext(
+  totalItems: number,
+  approvedOrActiveItems: number,
+  strengths: string[],
+  risks: string[],
+  recommendations: string[],
+): number {
+  if (approvedOrActiveItems > 0) {
+    strengths.push("Approved or active memories are present.");
+    return Math.min(0.24, approvedOrActiveItems * 0.04);
+  }
+
+  if (totalItems > 0) {
+    risks.push("All exported context is still candidate status.");
+    recommendations.push("Approve high-confidence engineering memories before production agent handoff.");
+  }
+
+  return 0;
+}
+
+function scoreRepoMatchedContext(
+  totalItems: number,
+  repoMatchedItems: number,
+  strengths: string[],
+  risks: string[],
+  recommendations: string[],
+): number {
+  if (repoMatchedItems > 0) {
+    strengths.push("Some context matches the current repo fingerprint.");
+    return Math.min(0.18, repoMatchedItems * 0.045);
+  }
+
+  if (totalItems > 0) {
+    risks.push("No exported context is explicitly matched to the current repo fingerprint.");
+    recommendations.push("Pass repo name, package name, package manager, and framework metadata when requesting context.");
+  }
+
+  return 0;
+}
+
+function scoreSectionCoverage(sectionCoverage: number): number {
+  return sectionCoverage > 0 ? Math.min(0.12, sectionCoverage * 0.12) : 0;
+}
+
+function penalizeCandidateHeavyContext(
+  totalItems: number,
+  candidateItems: number,
+  approvedOrActiveItems: number,
+  risks: string[],
+): number {
+  if (candidateItems > approvedOrActiveItems && totalItems > 0) {
+    risks.push("Candidate memories outnumber approved or active memories.");
+    return 0.08;
+  }
+
+  return 0;
+}
+
+function penalizeWeakUnknownSources(
+  weakUnknownSourceItems: number,
+  risks: string[],
+  recommendations: string[],
+): number {
+  if (weakUnknownSourceItems === 0) {
+    return 0;
+  }
+
+  risks.push("Some exported items have weak or unknown source metadata.");
+  recommendations.push("Prefer agent instruction files, repo docs, and approved notes with clear source metadata.");
+  return Math.min(0.12, weakUnknownSourceItems * 0.04);
+}
+
+function penalizeContextIssues(issueCount: number, risks: string[], recommendations: string[]): number {
+  if (issueCount === 0) {
+    return 0;
+  }
+
+  risks.push("Conflicting or stale context issues were detected.");
+  recommendations.push("Review context issues before handing this packet to an autonomous coding agent.");
+  return Math.min(0.24, issueCount * 0.08);
+}
+
+function penalizeHighSeverityIssues(highSeverityIssueCount: number, risks: string[]): number {
+  if (highSeverityIssueCount === 0) {
+    return 0;
+  }
+
+  risks.push("High-severity context issues are present.");
+  return 0.2;
 }
 
 function sectionContainsItem(sectionKey: CodingAgentContextPacketSectionKey, item: CodingAgentContextPacketItem): boolean {
@@ -1724,10 +1688,6 @@ function qualityLabel(
   return "weak";
 }
 
-function qualityPercent(score: number): string {
-  return `${Math.round(score * 100)}%`;
-}
-
 function dedupeStrings(values: string[]): string[] {
   return Array.from(new Set(values));
 }
@@ -1756,82 +1716,6 @@ function normalizeStatus(value: EngineeringProfileMemoryRecord["status"]): Engin
   return typeof value === "string" && PROFILE_STATUSES.includes(value as EngineeringProfileMemoryStatus)
     ? value as EngineeringProfileMemoryStatus
     : "candidate";
-}
-
-function sanitizeProfileMetadata(value: unknown): Record<string, unknown> {
-  const record = value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  const safe: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(record)) {
-    if (isUnsafeProfileMetadataKey(key)) {
-      continue;
-    }
-
-    if (typeof item === "string") {
-      if (looksLikeSecretMetadataValue(item)) {
-        continue;
-      }
-
-      safe[key] = item;
-      continue;
-    }
-
-    if (typeof item === "number" || typeof item === "boolean") {
-      safe[key] = item;
-    }
-  }
-
-  return safe;
-}
-
-function isUnsafeProfileMetadataKey(key: string): boolean {
-  const normalized = key.toLowerCase();
-
-  if (normalized === "agentcontextline") {
-    return false;
-  }
-
-  return [
-    "archiveMs",
-    "batchStorage",
-    "candidateMemoryArchiveQueued",
-    "confidence",
-    "evidenceHash",
-    "evidenceLength",
-    "extractor",
-    "model",
-    "normalizedStatementHash",
-    "provider",
-    "statementCount",
-    "statementIndex",
-    "storage",
-    "storageMode",
-    "subject",
-  ].some((blocked) => normalized === blocked.toLowerCase()) ||
-    normalized.includes("statement") ||
-    normalized.includes("content") ||
-    normalized.includes("text") ||
-    normalized.includes("snippet") ||
-    normalized.includes("quote") ||
-    normalized.includes("raw") ||
-    normalized.includes("secret") ||
-    normalized.includes("private") ||
-    normalized.includes("password") ||
-    normalized.includes("token") ||
-    normalized.includes("key") ||
-    normalized.includes("mnemonic") ||
-    normalized.includes("connection");
-}
-
-function looksLikeSecretMetadataValue(value: string): boolean {
-  const trimmed = value.trim();
-
-  return /^suiprivkey/i.test(trimmed) ||
-    /^sk-[A-Za-z0-9_-]{16,}/.test(trimmed) ||
-    (trimmed.length >= 32 && /^[A-Za-z0-9_-]+$/.test(trimmed) && /[A-Z0-9]/.test(trimmed)) ||
-    /:\/\/[^:\s]+:[^@\s]+@/.test(trimmed);
 }
 
 function countBy<TItem, TKey extends string>(
@@ -1930,9 +1814,3 @@ function readNumberMetadata(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function formatRepoStack(fingerprint: EngineeringRepoFingerprint): string {
-  return [
-    fingerprint.packageManager,
-    ...fingerprint.frameworks,
-  ].filter(Boolean).join(", ");
-}

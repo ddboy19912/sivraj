@@ -3,14 +3,6 @@ import type { AuthClaims } from "@sivraj/auth";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { ApiDb } from "../app.js";
 
-export async function hasActiveAgentGrant(input: {
-  db: ApiDb;
-  auth: AuthClaims;
-  twinId: string;
-}): Promise<boolean> {
-  return hasActiveAgentGrantForScopes(input);
-}
-
 export async function hasActiveAgentGrantForScopes(input: {
   db: ApiDb;
   auth: AuthClaims;

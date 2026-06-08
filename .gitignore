@@ -29,3 +29,8 @@ yarn-debug.log*
 tmp/
 temp/
 .cache/
+
+# Generated fallow reports
+.fallow-*.json
+
+.pnpm-store/

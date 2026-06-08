@@ -39,7 +39,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -88,7 +88,7 @@
 }
 
 .console-form span {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 700;
 }
@@ -115,7 +115,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 700;
 }
@@ -162,7 +162,7 @@
 .console-footnote,
 .console-banner {
   margin: 0;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .console-banner.warn {
@@ -191,7 +191,7 @@
 
 .console-receipt dt,
 .console-panel dt {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -250,7 +250,7 @@
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -267,7 +267,7 @@
 }
 
 .console-mini-dl dt {
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .console-mini-dl dd {
@@ -333,7 +333,7 @@
 
 .console-context-items span,
 .console-context-items small {
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .console-list li {
@@ -347,7 +347,7 @@
 }
 
 .console-list li.context-node .text-action {
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .console-checklist {

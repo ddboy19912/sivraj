@@ -12,6 +12,9 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "@sivraj/core": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^24.12.4",
     "typescript": "~6.0.3",

@@ -9,10 +9,11 @@
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck",
     "lint": "echo \"core lint not configured yet\"",
-    "test": "echo \"core tests not configured yet\"",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
   }
 }

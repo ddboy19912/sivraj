@@ -1,151 +1,32 @@
-import { useEffect, useState } from 'react'
-import { errorMessage, getAuthedJson, postAuthedJson } from '../../lib/api'
-import { useConsoleContext } from '../context'
-import type { ReflectionRun } from '../types'
+import { ConsolePage, ConsoleStatus } from '@/console/console-page-ui'
+import { ReflectionsGenerateForm } from '@/console/pages/reflections/ReflectionsGenerateForm'
+import { ReflectionsRunsTable } from '@/console/pages/reflections/ReflectionsRunsTable'
+import { useReflectionsPage } from '@/console/pages/reflections/use-reflections-page'
 
 export function ReflectionsPage() {
-  const { session, isSessionForWallet, onSessionRefreshed, selectedReflectionId, setSelectedReflectionId } =
-    useConsoleContext()
-  const [periodStart, setPeriodStart] = useState('')
-  const [periodEnd, setPeriodEnd] = useState('')
-  const [runs, setRuns] = useState<ReflectionRun[]>([])
-  const [status, setStatus] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
-
-  async function loadRuns() {
-    if (!session || !isSessionForWallet) {
-      setStatus('Sign in required.')
-      return
-    }
-
-    setIsLoading(true)
-
-    try {
-      const response = await getAuthedJson<{ reflections: ReflectionRun[] }>(
-        `/v1/twins/${session.twinId}/reflections`,
-        session,
-        onSessionRefreshed,
-      )
-      setRuns(response.reflections)
-      setStatus(`${response.reflections.length} reflection run(s).`)
-    } catch (error) {
-      setRuns([])
-      setStatus(errorMessage(error))
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (isSessionForWallet) {
-      void loadRuns()
-    }
-  }, [isSessionForWallet, session?.twinId])
-
-  async function handleGenerate(event: React.FormEvent) {
-    event.preventDefault()
-
-    if (!session || !isSessionForWallet) {
-      setStatus('Sign in required.')
-      return
-    }
-
-    setIsGenerating(true)
-
-    try {
-      const body: Record<string, unknown> = {}
-
-      if (periodStart) {
-        body.periodStart = new Date(periodStart).toISOString()
-      }
-
-      if (periodEnd) {
-        body.periodEnd = new Date(periodEnd).toISOString()
-      }
-
-      const response = await postAuthedJson<{
-        reflectionRunId: string
-        status: string
-        jobId?: string
-      }>(
-        `/v1/twins/${session.twinId}/reflections/weekly`,
-        body,
-        session,
-        onSessionRefreshed,
-      )
-      setSelectedReflectionId(response.reflectionRunId)
-      setStatus(`Weekly reflection queued (${response.reflectionRunId}).`)
-      await loadRuns()
-    } catch (error) {
-      setStatus(errorMessage(error))
-    } finally {
-      setIsGenerating(false)
-    }
-  }
+  const reflections = useReflectionsPage()
 
   return (
-    <section className="console-page">
-      <div className="section-heading">
-        <p className="eyebrow">Testing console</p>
-        <h2>Weekly reflection test</h2>
-      </div>
+    <ConsolePage title="Weekly reflection test">
+      <ReflectionsGenerateForm
+        periodStart={reflections.periodStart}
+        periodEnd={reflections.periodEnd}
+        isSessionForWallet={reflections.isSessionForWallet}
+        isGenerating={reflections.isGenerating}
+        isLoading={reflections.isLoading}
+        onPeriodStartChange={reflections.setPeriodStart}
+        onPeriodEndChange={reflections.setPeriodEnd}
+        onSubmit={reflections.handleGenerate}
+        onRefresh={() => void reflections.loadRuns()}
+      />
 
-      <form className="console-form inline" onSubmit={handleGenerate}>
-        <label>
-          <span>Period start</span>
-          <input type="datetime-local" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} />
-        </label>
-        <label>
-          <span>Period end</span>
-          <input type="datetime-local" value={periodEnd} onChange={(event) => setPeriodEnd(event.target.value)} />
-        </label>
-        <div className="console-actions">
-          <button className="primary-action" type="submit" disabled={!isSessionForWallet || isGenerating}>
-            {isGenerating ? 'Generating...' : 'Generate weekly reflection'}
-          </button>
-          <button className="secondary-action" type="button" disabled={isLoading} onClick={() => void loadRuns()}>
-            Refresh list
-          </button>
-        </div>
-      </form>
+      <ConsoleStatus status={reflections.status} />
 
-      {status ? <p className="console-status">{status}</p> : null}
-
-      <div className="console-table-wrap">
-        <table className="console-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Status</th>
-              <th>Period</th>
-              <th>Storage ref</th>
-              <th>Hash</th>
-              <th>Metadata</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id} className={run.id === selectedReflectionId ? 'selected' : undefined}>
-                <td>
-                  <button className="text-action" type="button" onClick={() => setSelectedReflectionId(run.id)}>
-                    {run.id.slice(0, 8)}…
-                  </button>
-                </td>
-                <td>{run.status}</td>
-                <td>
-                  {run.periodStart} → {run.periodEnd}
-                </td>
-                <td>{run.summaryStorageRef ?? '—'}</td>
-                <td>{run.summarySha256 ?? '—'}</td>
-                <td>
-                  <code>{JSON.stringify(run.metadata)}</code>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <ReflectionsRunsTable
+        runs={reflections.runs}
+        selectedReflectionId={reflections.selectedReflectionId}
+        onSelectRun={reflections.setSelectedReflectionId}
+      />
+    </ConsolePage>
   )
 }

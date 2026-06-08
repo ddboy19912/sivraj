@@ -5,75 +5,25 @@ import {
   parseSealKeyServers,
   type SealPolicyConfig,
 } from "./index";
-
-const policy: SealPolicyConfig = {
-  packageId: "0xpackage",
-  policyId: "0xpolicy",
-  threshold: 1,
-  keyServers: [{ objectId: "0xkeyserver", weight: 1 }],
-};
+import {
+  run_seal_encryption_adap_encrypts_with_the_configured_policy_and_returns_ciphert,
+  run_seal_encryption_adap_parses_comma_separated_key_servers,
+  run_seal_encryption_adap_parses_json_key_servers,
+  run_seal_encryption_adap_rejects_impossible_threshold_config
+} from "./index.test-scenarios.js";
 
 describe("Seal encryption adapter", () => {
-  it("encrypts with the configured policy and returns ciphertext metadata", async () => {
-    const calls: unknown[] = [];
-    const encryptor = createSealEncryptor({
-      suiClient: {} as never,
-      policy,
-      client: {
-        async encrypt(input) {
-          calls.push(input);
-          return { encryptedObject: new Uint8Array([1, 2, 3]) };
-        },
-      },
-    });
+  it("encrypts with the configured policy and returns ciphertext metadata", () => run_seal_encryption_adap_encrypts_with_the_configured_policy_and_returns_ciphert());
+});
 
-    const result = await encryptor.encrypt({
-      data: new TextEncoder().encode("private memory"),
-    });
+describe("Seal encryption adapter", () => {
+  it("parses comma-separated key servers", () => run_seal_encryption_adap_parses_comma_separated_key_servers());
+});
 
-    expect(calls).toEqual([
-      {
-        threshold: 1,
-        packageId: "0xpackage",
-        id: "0xpolicy",
-        data: new TextEncoder().encode("private memory"),
-        aad: undefined,
-      },
-    ]);
-    expect(result).toMatchObject({
-      encryptedBytes: new Uint8Array([1, 2, 3]),
-      ciphertextSha256:
-        "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
-      packageId: "0xpackage",
-      policyId: "0xpolicy",
-      threshold: 1,
-      keyServerObjectIds: ["0xkeyserver"],
-    });
-  });
+describe("Seal encryption adapter", () => {
+  it("parses JSON key servers", () => run_seal_encryption_adap_parses_json_key_servers());
+});
 
-  it("parses comma-separated key servers", () => {
-    expect(parseSealKeyServers("0xone, 0xtwo")).toEqual([
-      { objectId: "0xone", weight: 1 },
-      { objectId: "0xtwo", weight: 1 },
-    ]);
-  });
-
-  it("parses JSON key servers", () => {
-    expect(
-      parseSealKeyServers(
-        '[{"objectId":"0xone","weight":2,"aggregatorUrl":"https://seal.example"}]',
-      ),
-    ).toEqual([
-      { objectId: "0xone", weight: 2, aggregatorUrl: "https://seal.example" },
-    ]);
-  });
-
-  it("rejects impossible threshold config", () => {
-    expect(() =>
-      assertSealPolicyConfig({
-        ...policy,
-        threshold: 2,
-      }),
-    ).toThrow("Seal threshold cannot exceed total key server weight");
-  });
+describe("Seal encryption adapter", () => {
+  it("rejects impossible threshold config", () => run_seal_encryption_adap_rejects_impossible_threshold_config());
 });

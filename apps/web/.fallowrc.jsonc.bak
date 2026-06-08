@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  // Run from monorepo root so workspace deps (e.g. @sivraj/core) resolve correctly.
+  "extends": ["../../.fallowrc.jsonc"],
+  // Package-relative entry points when running fallow from apps/web.
+  "entry": [
+    "src/main.tsx",
+    "src/test/setup.ts",
+    "src/console/Console.test.tsx",
+    "src/test/helpers.ts",
+    "src/test/console-fixtures.ts"
+  ]
+}

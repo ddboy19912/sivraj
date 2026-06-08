@@ -185,6 +185,7 @@ Root `.env.example` is source of truth.
 - `WALRUS_NETWORK`: Target network.
 - `WALRUS_EPOCHS`: Number of Walrus epochs to store encrypted private memory.
 - `WALRUS_DELETABLE`: Whether Walrus blobs should be deletable.
+- `WALRUS_MIN_WRITE_BALANCE_MIST`: Minimum recommended SUI balance, in MIST, for the server storage wallet before Walrus writes. Defaults to `200000000`.
 - `WALRUS_UPLOAD_RELAY_URL`: Optional upload relay URL. Recommended on testnet to avoid direct storage-node confirmation failures.
 - `WALRUS_UPLOAD_RELAY_TIP_MAX_MIST`: Optional max relay tip in MIST.
 - `WALRUS_AGGREGATOR_URL`: Optional HTTP aggregator URL for worker reads. Recommended on testnet as a fallback when direct SDK storage-node reads fail.
@@ -201,6 +202,8 @@ Root `.env.example` is source of truth.
 - `SUI_NETWORK`: Target Sui network.
 - `SUI_RPC_URL`: Sui RPC endpoint.
 - `SUI_PRIVATE_KEY`: Server-side key for Walrus storage transactions.
+
+If Walrus writes fail with `MoveAbort ... 0x2::balance::split ... abort code: 2`, fund the public address derived from `SUI_PRIVATE_KEY` on the configured `SUI_NETWORK`. The API reports the storage wallet's current SUI balance, configured minimum, and shortfall when this failure is detected.
 
 ### Auth
 

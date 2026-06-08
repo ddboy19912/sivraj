@@ -12,6 +12,19 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import {
+  connectorSyncStateColumns,
+  createdAtColumn,
+  metadataColumn,
+  nullableTwinIdColumn,
+  optionalUuidRef,
+  primaryId,
+  rowTimestamps,
+  textArrayColumn,
+  twinIdColumn,
+  tzTimestamp,
+  uuidArrayColumn,
+} from "./column-helpers.js";
 
 export const sourceTypeEnum = pgEnum("source_type", [
   "upload",
@@ -89,6 +102,18 @@ export const candidateMemoryStatusEnum = pgEnum("candidate_memory_status", [
   "superseded",
 ]);
 
+export const onboardingStatusEnum = pgEnum("onboarding_status", [
+  "not_started",
+  "in_progress",
+  "completed",
+]);
+
+export const firstMeetIntroStatusEnum = pgEnum("first_meet_intro_status", [
+  "not_started",
+  "issued",
+  "consumed",
+]);
+
 export const speakerRoleEnum = pgEnum("speaker_role", [
   "self",
   "other",
@@ -141,6 +166,25 @@ export const reflectionStatusEnum = pgEnum("reflection_status", [
   "skipped",
 ]);
 
+export const llmProviderKindEnum = pgEnum("llm_provider_kind", [
+  "openai",
+  "openrouter",
+  "ollama",
+  "custom_openai_compatible",
+]);
+
+export const llmProviderStatusEnum = pgEnum("llm_provider_status", [
+  "connected",
+  "disconnected",
+  "error",
+]);
+
+export const chatMessageRoleEnum = pgEnum("chat_message_role", [
+  "system",
+  "user",
+  "assistant",
+]);
+
 export const connectorProviderEnum = pgEnum("connector_provider", [
   "github",
   "notion",
@@ -186,25 +230,29 @@ export const connectorSyncItemActionEnum = pgEnum("connector_sync_item_action", 
 ]);
 
 export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: primaryId(),
   email: text("email").unique(),
   displayName: text("display_name"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  onboardingStatus: onboardingStatusEnum("onboarding_status")
+    .notNull()
+    .default("not_started"),
+  firstMeetIntroStatus: firstMeetIntroStatusEnum("first_meet_intro_status")
+    .notNull()
+    .default("not_started"),
+  ...rowTimestamps(),
 });
 
 export const walletAccounts = pgTable(
   "wallet_accounts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: primaryId(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     chain: text("chain").notNull().default("sui"),
     address: text("address").notNull(),
     isPrimary: boolean("is_primary").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("wallet_accounts_user_id_idx").on(t.userId),
@@ -215,15 +263,14 @@ export const walletAccounts = pgTable(
 export const twins = pgTable(
   "twins",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: primaryId(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     summary: text("summary"),
     currentGoals: jsonb("current_goals").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [index("twins_user_id_idx").on(t.userId)],
 );
@@ -231,30 +278,15 @@ export const twins = pgTable(
 export const twinIdentityProfiles = pgTable(
   "twin_identity_profiles",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     displayName: text("display_name"),
-    aliases: text("aliases")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    emails: text("emails")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    phones: text("phones")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    aliases: textArrayColumn("aliases"),
+    emails: textArrayColumn("emails"),
+    phones: textArrayColumn("phones"),
     handles: jsonb("handles").$type<unknown>(),
-    selfDescriptionArtifactId: uuid("self_description_artifact_id").references(
-      () => sourceArtifacts.id,
-      { onDelete: "set null" },
-    ),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    selfDescriptionArtifactId: optionalUuidRef("self_description_artifact_id", () => sourceArtifacts),
+    ...rowTimestamps(),
   },
   (t) => [
     uniqueIndex("twin_identity_profiles_twin_id_idx").on(t.twinId),
@@ -264,47 +296,60 @@ export const twinIdentityProfiles = pgTable(
 export const twinVoiceProfiles = pgTable(
   "twin_voice_profiles",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     mode: text("mode").notNull().default("preset"),
     presetVoiceId: text("preset_voice_id").notNull().default("warm_operator"),
     provider: text("provider").notNull().default("chatterbox_turbo"),
-    referenceArtifactId: uuid("reference_artifact_id").references(
-      () => sourceArtifacts.id,
-      { onDelete: "set null" },
-    ),
-    consentAt: timestamp("consent_at", { withTimezone: true }),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    referenceArtifactId: optionalUuidRef("reference_artifact_id", () => sourceArtifacts),
+    consentAt: tzTimestamp("consent_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
   },
   (t) => [
     uniqueIndex("twin_voice_profiles_twin_id_idx").on(t.twinId),
   ],
 );
 
+export const llmProviderConfigs = pgTable(
+  "llm_provider_configs",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    providerKind: llmProviderKindEnum("provider_kind").notNull(),
+    status: llmProviderStatusEnum("status").notNull().default("connected"),
+    displayName: text("display_name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    model: text("model").notNull(),
+    apiKeyCiphertext: text("api_key_ciphertext"),
+    apiKeyIv: text("api_key_iv"),
+    apiKeyTag: text("api_key_tag"),
+    apiKeySha256: text("api_key_sha256"),
+    metadata: metadataColumn(),
+    lastTestedAt: tzTimestamp("last_tested_at"),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    uniqueIndex("llm_provider_configs_twin_id_idx").on(t.twinId),
+    index("llm_provider_configs_provider_kind_idx").on(t.providerKind),
+    index("llm_provider_configs_status_idx").on(t.status),
+  ],
+);
+
 export const refreshSessions = pgTable(
   "refresh_sessions",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: primaryId(),
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    twinId: twinIdColumn(() => twins),
     walletAddress: text("wallet_address").notNull(),
     tokenHash: text("token_hash").notNull(),
-    scopes: text("scopes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    scopes: textArrayColumn("scopes"),
+    expiresAt: tzTimestamp("expires_at").notNull(),
+    revokedAt: tzTimestamp("revoked_at"),
+    ...rowTimestamps(),
   },
   (t) => [
     index("refresh_sessions_user_id_idx").on(t.userId),
@@ -313,41 +358,70 @@ export const refreshSessions = pgTable(
   ],
 );
 
+export const chatThreads = pgTable(
+  "chat_threads",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    title: text("title").notNull().default("New chat"),
+    llmProviderConfigId: optionalUuidRef("llm_provider_config_id", () => llmProviderConfigs),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("chat_threads_twin_id_idx").on(t.twinId),
+    index("chat_threads_updated_at_idx").on(t.updatedAt),
+    index("chat_threads_provider_config_id_idx").on(t.llmProviderConfigId),
+  ],
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    role: chatMessageRoleEnum("role").notNull(),
+    content: text("content").notNull(),
+    providerKind: llmProviderKindEnum("provider_kind"),
+    model: text("model"),
+    memoryFragmentIds: uuidArrayColumn("memory_fragment_ids"),
+    citations: jsonb("citations").$type<unknown>(),
+    usage: jsonb("usage").$type<unknown>(),
+    metadata: metadataColumn(),
+    createdAt: createdAtColumn(),
+  },
+  (t) => [
+    index("chat_messages_twin_id_idx").on(t.twinId),
+    index("chat_messages_thread_id_idx").on(t.threadId),
+    index("chat_messages_created_at_idx").on(t.createdAt),
+  ],
+);
+
 export const apiClients = pgTable("api_clients", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: primaryId(),
   name: text("name").notNull(),
   type: text("type").notNull(),
-  metadata: jsonb("metadata").$type<unknown>(),
-  redirectUris: text("redirect_uris")
-    .array()
-    .notNull()
-    .default(sql`'{}'::text[]`),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  metadata: metadataColumn(),
+  redirectUris: textArrayColumn("redirect_uris"),
+  ...rowTimestamps(),
 });
 
 export const permissionGrants = pgTable(
   "permission_grants",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     clientId: uuid("client_id")
       .notNull()
       .references(() => apiClients.id, { onDelete: "cascade" }),
-    scopes: text("scopes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    memoryDomains: text("memory_domains")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    expiresAt: timestamp("expires_at", { withTimezone: true }),
-    revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    scopes: textArrayColumn("scopes"),
+    memoryDomains: textArrayColumn("memory_domains"),
+    expiresAt: tzTimestamp("expires_at"),
+    revokedAt: tzTimestamp("revoked_at"),
+    ...rowTimestamps(),
   },
   (t) => [
     index("permission_grants_twin_id_idx").on(t.twinId),
@@ -358,28 +432,16 @@ export const permissionGrants = pgTable(
 export const accessPolicies = pgTable(
   "access_policies",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     subjectType: accessPolicySubjectTypeEnum("subject_type").notNull(),
     subjectId: uuid("subject_id").notNull(),
     scope: text("scope").notNull(),
-    allowedNodeTypes: text("allowed_node_types")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    allowedSourceTypes: text("allowed_source_types")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    deniedTags: text("denied_tags")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-    expiresAt: timestamp("expires_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    allowedNodeTypes: textArrayColumn("allowed_node_types"),
+    allowedSourceTypes: textArrayColumn("allowed_source_types"),
+    deniedTags: textArrayColumn("denied_tags"),
+    expiresAt: tzTimestamp("expires_at"),
+    ...rowTimestamps(),
   },
   (t) => [index("access_policies_twin_id_idx").on(t.twinId)],
 );
@@ -387,27 +449,18 @@ export const accessPolicies = pgTable(
 export const sourceArtifacts = pgTable(
   "source_artifacts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     sourceType: sourceTypeEnum("source_type").notNull(),
     uri: text("uri"),
     rawStorageRef: text("raw_storage_ref"),
     hash: text("hash"),
-    connectorAccountId: uuid("connector_account_id").references(() => connectorAccounts.id, {
-      onDelete: "set null",
-    }),
-    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
-      onDelete: "set null",
-    }),
-    connectorSyncRunId: uuid("connector_sync_run_id").references(() => connectorSyncRuns.id, {
-      onDelete: "set null",
-    }),
-    metadata: jsonb("metadata").$type<unknown>(),
+    connectorAccountId: optionalUuidRef("connector_account_id", () => connectorAccounts),
+    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
+    connectorSyncRunId: optionalUuidRef("connector_sync_run_id", () => connectorSyncRuns),
+    metadata: metadataColumn(),
     ingestionStatus: ingestionStatusEnum("ingestion_status").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("source_artifacts_twin_id_idx").on(t.twinId),
@@ -421,27 +474,16 @@ export const sourceArtifacts = pgTable(
 export const connectorAccounts = pgTable(
   "connector_accounts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     provider: connectorProviderEnum("provider").notNull(),
     status: connectorAccountStatusEnum("status").notNull().default("connected"),
     externalAccountId: text("external_account_id"),
     displayName: text("display_name").notNull(),
-    scopes: text("scopes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    scopes: textArrayColumn("scopes"),
     syncCadence: text("sync_cadence").notNull().default("manual"),
     tokenRef: text("token_ref"),
-    cursor: text("cursor"),
-    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
-    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
-    errorCode: text("error_code"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...connectorSyncStateColumns(),
   },
   (t) => [
     index("connector_accounts_twin_id_idx").on(t.twinId),
@@ -458,10 +500,8 @@ export const connectorAccounts = pgTable(
 export const connectorSources = pgTable(
   "connector_sources",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     connectorAccountId: uuid("connector_account_id")
       .notNull()
       .references(() => connectorAccounts.id, { onDelete: "cascade" }),
@@ -471,13 +511,7 @@ export const connectorSources = pgTable(
     displayName: text("display_name").notNull(),
     uri: text("uri"),
     status: connectorAccountStatusEnum("status").notNull().default("connected"),
-    cursor: text("cursor"),
-    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
-    nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
-    errorCode: text("error_code"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...connectorSyncStateColumns(),
   },
   (t) => [
     index("connector_sources_twin_id_idx").on(t.twinId),
@@ -494,16 +528,12 @@ export const connectorSources = pgTable(
 export const connectorSyncRuns = pgTable(
   "connector_sync_runs",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     connectorAccountId: uuid("connector_account_id")
       .notNull()
       .references(() => connectorAccounts.id, { onDelete: "cascade" }),
-    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
-      onDelete: "set null",
-    }),
+    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
     provider: connectorProviderEnum("provider").notNull(),
     mode: connectorSyncModeEnum("mode").notNull(),
     status: connectorSyncRunStatusEnum("status").notNull(),
@@ -515,11 +545,10 @@ export const connectorSyncRuns = pgTable(
     failedCount: integer("failed_count").notNull().default(0),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    startedAt: tzTimestamp("started_at"),
+    completedAt: tzTimestamp("completed_at"),
+    ...rowTimestamps(),
   },
   (t) => [
     index("connector_sync_runs_twin_id_idx").on(t.twinId),
@@ -533,28 +562,22 @@ export const connectorSyncRuns = pgTable(
 export const connectorSyncItems = pgTable(
   "connector_sync_items",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     connectorSyncRunId: uuid("connector_sync_run_id")
       .notNull()
       .references(() => connectorSyncRuns.id, { onDelete: "cascade" }),
     connectorAccountId: uuid("connector_account_id")
       .notNull()
       .references(() => connectorAccounts.id, { onDelete: "cascade" }),
-    connectorSourceId: uuid("connector_source_id").references(() => connectorSources.id, {
-      onDelete: "set null",
-    }),
-    sourceArtifactId: uuid("source_artifact_id").references(() => sourceArtifacts.id, {
-      onDelete: "set null",
-    }),
+    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
+    sourceArtifactId: optionalUuidRef("source_artifact_id", () => sourceArtifacts),
     externalItemId: text("external_item_id").notNull(),
     action: connectorSyncItemActionEnum("action").notNull(),
     reason: text("reason"),
     contentHash: text("content_hash"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    createdAt: createdAtColumn(),
   },
   (t) => [
     index("connector_sync_items_twin_id_idx").on(t.twinId),
@@ -572,22 +595,19 @@ export const connectorSyncItems = pgTable(
 export const memoryFragments = pgTable(
   "memory_fragments",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     sourceArtifactId: uuid("source_artifact_id")
       .notNull()
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
     contentStorageRef: text("content_storage_ref"),
     contentSha256: text("content_sha256"),
     embeddingRef: text("embedding_ref"),
-    metadata: jsonb("metadata").$type<unknown>(),
+    metadata: metadataColumn(),
     importanceScore: doublePrecision("importance_score"),
     confidenceScore: doublePrecision("confidence_score"),
-    occurredAt: timestamp("occurred_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    occurredAt: tzTimestamp("occurred_at"),
+    ...rowTimestamps(),
   },
   (t) => [
     index("memory_fragments_twin_id_idx").on(t.twinId),
@@ -599,10 +619,8 @@ export const memoryFragments = pgTable(
 export const sourceSpeakerMappings = pgTable(
   "source_speaker_mappings",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     sourceArtifactId: uuid("source_artifact_id")
       .notNull()
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
@@ -610,9 +628,8 @@ export const sourceSpeakerMappings = pgTable(
     sourceSpeakerId: text("source_speaker_id"),
     role: speakerRoleEnum("role").notNull(),
     mappedName: text("mapped_name"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("source_speaker_mappings_twin_id_idx").on(t.twinId),
@@ -627,18 +644,15 @@ export const sourceSpeakerMappings = pgTable(
 export const graphNodes = pgTable(
   "graph_nodes",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     nodeType: graphNodeTypeEnum("node_type").notNull(),
     name: text("name").notNull(),
     normalizedName: text("normalized_name").notNull(),
     description: text("description"),
     properties: jsonb("properties").$type<unknown>(),
     confidenceScore: doublePrecision("confidence_score"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("graph_nodes_twin_id_idx").on(t.twinId),
@@ -654,10 +668,8 @@ export const graphNodes = pgTable(
 export const graphEdges = pgTable(
   "graph_edges",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     fromNodeId: uuid("from_node_id")
       .notNull()
       .references(() => graphNodes.id, { onDelete: "cascade" }),
@@ -666,13 +678,9 @@ export const graphEdges = pgTable(
       .references(() => graphNodes.id, { onDelete: "cascade" }),
     edgeType: text("edge_type").notNull(),
     description: text("description"),
-    evidenceMemoryIds: uuid("evidence_memory_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::uuid[]`),
+    evidenceMemoryIds: uuidArrayColumn("evidence_memory_ids"),
     confidenceScore: doublePrecision("confidence_score"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("graph_edges_twin_id_idx").on(t.twinId),
@@ -685,25 +693,16 @@ export const graphEdges = pgTable(
 export const insights = pgTable(
   "insights",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     insightType: insightTypeEnum("insight_type").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
-    evidenceMemoryIds: uuid("evidence_memory_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::uuid[]`),
-    relatedNodeIds: uuid("related_node_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::uuid[]`),
+    evidenceMemoryIds: uuidArrayColumn("evidence_memory_ids"),
+    relatedNodeIds: uuidArrayColumn("related_node_ids"),
     confidenceScore: doublePrecision("confidence_score"),
     userFeedback: text("user_feedback"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("insights_twin_id_idx").on(t.twinId),
@@ -714,21 +713,18 @@ export const insights = pgTable(
 export const canonicalMemories = pgTable(
   "canonical_memories",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     memoryType: candidateMemoryTypeEnum("memory_type").notNull(),
     canonicalKey: text("canonical_key").notNull(),
     subject: text("subject"),
     status: candidateMemoryStatusEnum("status").notNull().default("candidate"),
     evidenceCount: doublePrecision("evidence_count").notNull().default(1),
     confidenceScore: doublePrecision("confidence_score"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    firstSeenAt: tzTimestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: tzTimestamp("last_seen_at").notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("canonical_memories_twin_id_idx").on(t.twinId),
@@ -740,12 +736,9 @@ export const canonicalMemories = pgTable(
 export const candidateMemories = pgTable(
   "candidate_memories",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
-    canonicalMemoryId: uuid("canonical_memory_id")
-      .references(() => canonicalMemories.id, { onDelete: "set null" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    canonicalMemoryId: optionalUuidRef("canonical_memory_id", () => canonicalMemories),
     sourceArtifactId: uuid("source_artifact_id")
       .notNull()
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
@@ -759,9 +752,8 @@ export const candidateMemories = pgTable(
     evidenceHash: text("evidence_hash").notNull(),
     evidenceLength: doublePrecision("evidence_length"),
     confidenceScore: doublePrecision("confidence_score"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("candidate_memories_twin_id_idx").on(t.twinId),
@@ -780,17 +772,15 @@ export const candidateMemories = pgTable(
 export const userFeedbackEvents = pgTable(
   "user_feedback_events",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     targetType: feedbackTargetTypeEnum("target_type").notNull(),
     targetId: uuid("target_id").notNull(),
     feedbackType: feedbackTypeEnum("feedback_type").notNull(),
     actorType: text("actor_type").notNull().default("user"),
     actorId: text("actor_id").notNull(),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    createdAt: createdAtColumn(),
   },
   (t) => [
     index("user_feedback_events_twin_id_idx").on(t.twinId),
@@ -803,18 +793,15 @@ export const userFeedbackEvents = pgTable(
 export const reflectionRuns = pgTable(
   "reflection_runs",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
-    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
-    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    periodStart: tzTimestamp("period_start").notNull(),
+    periodEnd: tzTimestamp("period_end").notNull(),
     status: reflectionStatusEnum("status").notNull(),
     summaryStorageRef: text("summary_storage_ref"),
     summarySha256: text("summary_sha256"),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
   },
   (t) => [
     index("reflection_runs_twin_id_idx").on(t.twinId),
@@ -826,25 +813,17 @@ export const reflectionRuns = pgTable(
 export const contextPackets = pgTable(
   "context_packets",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     requesterId: uuid("requester_id").notNull(),
     query: text("query").notNull(),
     scope: text("scope").notNull(),
-    memoryFragmentIds: uuid("memory_fragment_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::uuid[]`),
-    graphNodeIds: uuid("graph_node_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::uuid[]`),
+    memoryFragmentIds: uuidArrayColumn("memory_fragment_ids"),
+    graphNodeIds: uuidArrayColumn("graph_node_ids"),
     summary: text("summary"),
     citations: jsonb("citations").$type<unknown>(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: tzTimestamp("expires_at"),
+    createdAt: createdAtColumn(),
   },
   (t) => [
     index("context_packets_twin_id_idx").on(t.twinId),
@@ -855,19 +834,16 @@ export const contextPackets = pgTable(
 export const agentWritebacks = pgTable(
   "agent_writebacks",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id")
-      .notNull()
-      .references(() => twins.id, { onDelete: "cascade" }),
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
     clientId: uuid("client_id")
       .notNull()
       .references(() => apiClients.id, { onDelete: "cascade" }),
     status: agentWritebackStatusEnum("status").notNull(),
     payload: jsonb("payload").$type<unknown>().notNull(),
-    approvedAt: timestamp("approved_at", { withTimezone: true }),
-    rejectedAt: timestamp("rejected_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    approvedAt: tzTimestamp("approved_at"),
+    rejectedAt: tzTimestamp("rejected_at"),
+    ...rowTimestamps(),
   },
   (t) => [
     index("agent_writebacks_twin_id_idx").on(t.twinId),
@@ -878,19 +854,15 @@ export const agentWritebacks = pgTable(
 export const webhookEndpoints = pgTable(
   "webhook_endpoints",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
+    id: primaryId(),
     clientId: uuid("client_id")
       .notNull()
       .references(() => apiClients.id, { onDelete: "cascade" }),
     url: text("url").notNull(),
-    events: text("events")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    events: textArrayColumn("events"),
     secretRef: text("secret_ref"),
     enabled: boolean("enabled").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    ...rowTimestamps(),
   },
   (t) => [index("webhook_endpoints_client_id_idx").on(t.clientId)],
 );
@@ -898,15 +870,15 @@ export const webhookEndpoints = pgTable(
 export const auditEvents = pgTable(
   "audit_events",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    twinId: uuid("twin_id").references(() => twins.id, { onDelete: "set null" }),
+    id: primaryId(),
+    twinId: nullableTwinIdColumn(() => twins),
     actorType: text("actor_type").notNull(),
     actorId: text("actor_id"),
     eventType: text("event_type").notNull(),
     resourceType: text("resource_type").notNull(),
     resourceId: text("resource_id").notNull(),
-    metadata: jsonb("metadata").$type<unknown>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    metadata: metadataColumn(),
+    createdAt: createdAtColumn(),
   },
   (t) => [index("audit_events_twin_id_idx").on(t.twinId), index("audit_events_created_at_idx").on(t.createdAt)],
 );

@@ -6,7 +6,15 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadMcpConfig } from "./env.js";
 import { detectLocalRepoFingerprint, mergeRepoFingerprint } from "./repo-fingerprint.js";
+import { readContextExportMarkdown } from "./context-export.js";
+import {
+  formatSearchResults,
+  formatSources,
+  formatWritebackList,
+  formatWritebackResponse,
+} from "./format.js";
 import { SivrajApiClient, type JsonObject } from "./sivraj-client.js";
+import { engineeringContextInputSchema } from "./tool-schemas.js";
 import { createMcpWritebackEncryptor } from "./writeback-encryption.js";
 
 const config = loadMcpConfig();
@@ -73,38 +81,12 @@ server.registerTool(
   {
     title: "Get Sivraj engineering context",
     description: "Return a concise, private-safe engineering context packet for coding agents.",
-    inputSchema: {
-      projectName: z.string().optional(),
-      projectId: z.string().optional(),
-      repoName: z.string().optional(),
-      packageName: z.string().optional(),
-      gitRemote: z.string().optional(),
-      packageManager: z.string().optional(),
-      frameworks: z.array(z.string()).optional(),
-      lockfiles: z.array(z.string()).optional(),
-      rootMarkers: z.array(z.string()).optional(),
-      artifactId: z.string().uuid().optional(),
-      includeCandidate: z.boolean().optional(),
-      includeSuperseded: z.boolean().optional(),
-      includeTemporary: z.boolean().optional(),
-      preset: z.enum(["codex", "claude_code", "cursor", "generic_mcp"]).optional(),
-      maxItemsPerSection: z.number().int().positive().max(100).optional(),
-      limit: z.number().int().positive().max(1000).optional(),
-    },
+    inputSchema: engineeringContextInputSchema,
   },
   async (args) => {
     const response = await client.getEngineeringContext(mergeRepoFingerprint(localRepoFingerprint, args));
-    const contextExport = response["contextExport"];
-    const exportContent = contextExport && typeof contextExport === "object" && !Array.isArray(contextExport)
-      ? (contextExport as Record<string, unknown>)["content"]
-      : null;
-    const markdown = typeof exportContent === "string"
-      ? exportContent
-      : typeof response["contextMarkdown"] === "string"
-        ? response["contextMarkdown"]
-      : JSON.stringify(response, null, 2);
 
-    return textResult(markdown, response);
+    return textResult(readContextExportMarkdown(response), response);
   },
 );
 
@@ -146,24 +128,7 @@ server.registerTool(
   {
     title: "Get Sivraj project profile",
     description: "Return the structured engineering project profile used to build coding-agent context.",
-    inputSchema: {
-      projectName: z.string().optional(),
-      projectId: z.string().optional(),
-      repoName: z.string().optional(),
-      packageName: z.string().optional(),
-      gitRemote: z.string().optional(),
-      packageManager: z.string().optional(),
-      frameworks: z.array(z.string()).optional(),
-      lockfiles: z.array(z.string()).optional(),
-      rootMarkers: z.array(z.string()).optional(),
-      artifactId: z.string().uuid().optional(),
-      includeCandidate: z.boolean().optional(),
-      includeSuperseded: z.boolean().optional(),
-      includeTemporary: z.boolean().optional(),
-      preset: z.enum(["codex", "claude_code", "cursor", "generic_mcp"]).optional(),
-      maxItemsPerSection: z.number().int().positive().max(100).optional(),
-      limit: z.number().int().positive().max(1000).optional(),
-    },
+    inputSchema: engineeringContextInputSchema,
   },
   async (args) => {
     const response = await client.getProjectProfile(mergeRepoFingerprint(localRepoFingerprint, args));
@@ -224,88 +189,3 @@ function resourceText(uri: string, text: string) {
   };
 }
 
-function formatSources(response: JsonObject): string {
-  const sources = Array.isArray(response["sources"]) ? response["sources"] : [];
-  const lines = ["# Sivraj Engineering Sources", ""];
-
-  if (sources.length === 0) {
-    lines.push("No engineering sources found.");
-    return lines.join("\n");
-  }
-
-  for (const source of sources) {
-    if (!source || typeof source !== "object" || Array.isArray(source)) {
-      continue;
-    }
-
-    const record = source as Record<string, unknown>;
-    lines.push(`- ${String(record["displayName"] ?? record["artifactId"] ?? "Unknown source")}`);
-    lines.push(`  - artifact: ${String(record["artifactId"] ?? "unknown")}`);
-    lines.push(`  - type: ${String(record["sourceType"] ?? "unknown")}`);
-    lines.push(`  - memories: ${String(record["extractedEngineeringMemoryCount"] ?? 0)}`);
-  }
-
-  return lines.join("\n");
-}
-
-function formatSearchResults(response: JsonObject): string {
-  const query = typeof response["query"] === "string" ? response["query"] : "";
-  const results = Array.isArray(response["results"]) ? response["results"] : [];
-  const lines = [`# Sivraj Memory Search`, "", `Query: ${query}`, ""];
-
-  if (results.length === 0) {
-    lines.push("No matching memories found.");
-    return lines.join("\n");
-  }
-
-  for (const result of results) {
-    if (!result || typeof result !== "object" || Array.isArray(result)) {
-      continue;
-    }
-
-    const record = result as Record<string, unknown>;
-    lines.push(`## ${String(record["id"] ?? "memory")}`);
-    lines.push(`Score: ${String(record["score"] ?? "unknown")}`);
-    lines.push(`Source artifact: ${String(record["sourceArtifactId"] ?? "unknown")}`);
-    lines.push("");
-    lines.push(String(record["content"] ?? ""));
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
-function formatWritebackResponse(response: JsonObject): string {
-  return [
-    "# Sivraj Agent Writeback Recorded",
-    "",
-    `Writeback: ${String(response["writebackId"] ?? "unknown")}`,
-    `Status: ${String(response["status"] ?? "unknown")}`,
-    `Storage: ${String(response["storageMode"] ?? "unknown")}`,
-    `Review: ${String(response["warning"] ?? "pending_review")}`,
-  ].join("\n");
-}
-
-function formatWritebackList(response: JsonObject): string {
-  const writebacks = Array.isArray(response["writebacks"]) ? response["writebacks"] : [];
-  const lines = ["# Sivraj Recent Agent Writebacks", ""];
-
-  if (writebacks.length === 0) {
-    lines.push("No agent writebacks found.");
-    return lines.join("\n");
-  }
-
-  for (const writeback of writebacks) {
-    if (!writeback || typeof writeback !== "object" || Array.isArray(writeback)) {
-      continue;
-    }
-
-    const record = writeback as Record<string, unknown>;
-    lines.push(`- ${String(record["agentName"] ?? "coding-agent")} / ${String(record["status"] ?? "unknown")}`);
-    lines.push(`  - writeback: ${String(record["id"] ?? "unknown")}`);
-    lines.push(`  - repo: ${String(record["repo"] ?? "unknown")}`);
-    lines.push(`  - created: ${String(record["createdAt"] ?? "unknown")}`);
-  }
-
-  return lines.join("\n");
-}

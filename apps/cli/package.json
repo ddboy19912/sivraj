@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@sivraj/config": "workspace:*",
+    "@sivraj/core": "workspace:*",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {

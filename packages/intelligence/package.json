@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@sivraj/core": "workspace:*",
     "@sivraj/llm": "workspace:*"
   },
   "devDependencies": {

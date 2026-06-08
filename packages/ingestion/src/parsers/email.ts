@@ -1,7 +1,13 @@
+import { createRequire } from "node:module";
 import { simpleParser, type AddressObject } from "mailparser";
 import type { ParsedArtifact } from "../types.js";
+import { normalizeWhitespaceText } from "./shared/text.js";
 
 const EMAIL_PARSER_NAME = "email";
+const require = createRequire(import.meta.url);
+const he = require("he") as {
+  decode(value: string): string;
+};
 
 export async function parseEmail(input: {
   content: string;
@@ -17,7 +23,7 @@ export async function parseEmail(input: {
       addressText(parsed.from) ? `From: ${addressText(parsed.from)}` : null,
       addressText(parsed.to) ? `To: ${addressText(parsed.to)}` : null,
       parsed.date ? `Date: ${parsed.date.toISOString()}` : null,
-      normalizeEmailBody(parsed.text || stripHtml(parsed.html || "")),
+      normalizeWhitespaceText(parsed.text || stripHtml(parsed.html || "")),
     ].filter((part): part is string => Boolean(part && part.trim()));
     const content = parts.join("\n").trim();
 
@@ -36,7 +42,7 @@ export async function parseEmail(input: {
     };
   } catch {
     warnings.push("email_parse_recovered_with_plain_text");
-    const content = normalizeEmailBody(input.content);
+    const content = normalizeWhitespaceText(input.content);
 
     if (!content) {
       warnings.push("email_empty_after_parse");
@@ -54,17 +60,6 @@ export async function parseEmail(input: {
   }
 }
 
-function normalizeEmailBody(content: string): string {
-  return content
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 function addressText(value: AddressObject | AddressObject[] | undefined): string | null {
   if (!value) {
     return null;
@@ -78,12 +73,10 @@ function addressText(value: AddressObject | AddressObject[] | undefined): string
 }
 
 function stripHtml(content: string): string {
-  return content
+  const withoutTags = content
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/<[^>]+>/g, " ");
+
+  return he.decode(withoutTags);
 }

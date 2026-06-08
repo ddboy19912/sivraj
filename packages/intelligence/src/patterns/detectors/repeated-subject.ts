@@ -6,6 +6,7 @@ import type {
   PatternType,
 } from "../types.js";
 import type { MemoryType } from "../../index.js";
+import { buildDetectedPatternEvidenceFields, repeatedEvidenceConfidence, unique } from "./detector-utils.js";
 
 const REPEATED_SUBJECT_MEMORY_TYPES: Array<{
   memoryType: MemoryType;
@@ -57,10 +58,7 @@ function detectRepeatedSubject(
     .map(([normalizedSubject, group]) => {
       const firstSubject = group.find((signal) => signal.subject)?.subject ?? normalizedSubject;
       const evidenceCount = group.length;
-      const confidence = Math.min(
-        0.95,
-        average(group.map((signal) => signal.confidence)) + Math.min(0.2, (evidenceCount - 2) * 0.05),
-      );
+      const confidence = repeatedEvidenceConfidence(group);
 
       return {
         patternType,
@@ -69,11 +67,7 @@ function detectRepeatedSubject(
         normalizedSubject,
         confidence,
         evidenceCount,
-        sourceArtifactIds: unique(group.map((signal) => signal.sourceArtifactId)),
-        memoryFragmentIds: unique(group.map((signal) => signal.memoryFragmentId)),
-        candidateMemoryIds: unique(group.map((signal) => signal.candidateMemoryId)),
-        memoryTypes: unique(group.map((signal) => signal.memoryType)),
-        sourceTypes: unique(group.map((signal) => signal.sourceType)),
+        ...buildDetectedPatternEvidenceFields(group),
         detector: "repeated_subject_detector",
       };
     });
@@ -101,16 +95,4 @@ function patternHash(
 
 function normalizeSubject(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function average(values: number[]): number {
-  if (values.length === 0) {
-    return 0.5;
-  }
-
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function unique<T>(values: T[]): T[] {
-  return Array.from(new Set(values));
 }

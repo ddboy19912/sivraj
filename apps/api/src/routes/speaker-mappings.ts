@@ -1,8 +1,10 @@
-import { auditEvents, sourceArtifacts, sourceSpeakerMappings } from "@sivraj/db";
+import { asRecord, sanitizePrimitiveMetadata } from "@sivraj/intelligence";
+import { auditEvents, sourceSpeakerMappings } from "@sivraj/db";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
 import { requireAuth, type AuthEnv } from "../middleware/auth.js";
+import { authorizeTwinArtifactRoute } from "../lib/http/route-auth.js";
 
 const SPEAKER_ROLES = ["self", "other", "system", "unknown"] as const;
 
@@ -25,31 +27,22 @@ export function createSpeakerMappingRoutes({ db }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
 
   routes.get("/:artifactId/speaker-mappings", requireAuth, async (c) => {
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-    const artifactId = c.req.param("artifactId");
+    const gate = await authorizeTwinArtifactRoute(c, db, undefined, {
+      missingError: "missing_path_param",
+    });
 
-    if (!twinId || !artifactId) {
-      return c.json({ error: "missing_path_param" }, 400);
+    if (!gate.ok) {
+      return gate.response;
     }
 
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
-
-    const artifact = await findArtifact(db, twinId, artifactId);
-
-    if (!artifact) {
-      return c.json({ error: "artifact_not_found" }, 404);
-    }
-
+    const { twinId, artifact } = gate.value;
     const mappings = await db
       .select()
       .from(sourceSpeakerMappings)
       .where(
         and(
           eq(sourceSpeakerMappings.twinId, twinId),
-          eq(sourceSpeakerMappings.sourceArtifactId, artifactId),
+          eq(sourceSpeakerMappings.sourceArtifactId, artifact.id),
         ),
       );
 
@@ -57,23 +50,16 @@ export function createSpeakerMappingRoutes({ db }: AppDependencies) {
   });
 
   routes.put("/:artifactId/speaker-mappings", requireAuth, async (c) => {
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-    const artifactId = c.req.param("artifactId");
+    const gate = await authorizeTwinArtifactRoute(c, db, undefined, {
+      missingError: "missing_path_param",
+    });
 
-    if (!twinId || !artifactId) {
-      return c.json({ error: "missing_path_param" }, 400);
+    if (!gate.ok) {
+      return gate.response;
     }
 
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
-
-    const artifact = await findArtifact(db, twinId, artifactId);
-
-    if (!artifact) {
-      return c.json({ error: "artifact_not_found" }, 404);
-    }
+    const { auth, twinId, artifact } = gate.value;
+    const artifactId = artifact.id;
 
     const body = await c.req.json().catch(() => null);
     const mappings = readMappings(body);
@@ -123,21 +109,6 @@ export function createSpeakerMappingRoutes({ db }: AppDependencies) {
   });
 
   return routes;
-}
-
-async function findArtifact(db: AppDependencies["db"], twinId: string, artifactId: string) {
-  const [artifact] = await db
-    .select()
-    .from(sourceArtifacts)
-    .where(
-      and(
-        eq(sourceArtifacts.id, artifactId),
-        eq(sourceArtifacts.twinId, twinId),
-      ),
-    )
-    .limit(1);
-
-  return artifact ?? null;
 }
 
 function formatResponse(artifact: unknown, mappings: unknown[]): SpeakerMappingResponse {
@@ -203,7 +174,7 @@ function readMappings(value: unknown): Array<{
       sourceSpeakerId,
       role,
       mappedName,
-      metadata: sanitizeMetadata(record["metadata"]),
+      metadata: sanitizePrimitiveMetadata(record["metadata"]),
     });
   }
 
@@ -230,23 +201,4 @@ function optionalString(value: unknown): string | null {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function sanitizeMetadata(value: unknown): Record<string, unknown> {
-  const record = asRecord(value);
-  const safe: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(record)) {
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-      safe[key] = item;
-    }
-  }
-
-  return safe;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }

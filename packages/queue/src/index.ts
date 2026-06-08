@@ -393,14 +393,15 @@ export function createLazyTransientCiphertextCache(
   };
 }
 
-export function createArtifactProcessingWorker(
+function createQueueWorker<T>(
+  queueName: string,
   redisUrl: string,
-  processor: (data: ArtifactProcessingJobData, job: Job<ArtifactProcessingJobData>) => Promise<void>,
+  processor: (data: T, job: Job<T>) => Promise<void>,
   options: { concurrency?: number } = {},
 ): ArtifactProcessingWorker {
-  const worker = new Worker<ArtifactProcessingJobData>(
-    ARTIFACT_PROCESSING_QUEUE_NAME,
-    async (job: Job<ArtifactProcessingJobData>) => {
+  const worker = new Worker<T>(
+    queueName,
+    async (job: Job<T>) => {
       await processor(job.data, job);
     },
     {
@@ -414,16 +415,24 @@ export function createArtifactProcessingWorker(
       await worker.close();
     },
     onFailed(listener) {
-      worker.on("failed", (job: Job<ArtifactProcessingJobData> | undefined, error) => {
+      worker.on("failed", (job: Job<T> | undefined, error) => {
         listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
       });
     },
     onCompleted(listener) {
-      worker.on("completed", (job: Job<ArtifactProcessingJobData>) => {
+      worker.on("completed", (job: Job<T>) => {
         listener(job?.id ? String(job.id) : undefined);
       });
     },
   };
+}
+
+export function createArtifactProcessingWorker(
+  redisUrl: string,
+  processor: (data: ArtifactProcessingJobData, job: Job<ArtifactProcessingJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): ArtifactProcessingWorker {
+  return createQueueWorker(ARTIFACT_PROCESSING_QUEUE_NAME, redisUrl, processor, options);
 }
 
 export function createIntelligenceProcessingWorker(
@@ -431,32 +440,7 @@ export function createIntelligenceProcessingWorker(
   processor: (data: IntelligenceProcessingJobData, job: Job<IntelligenceProcessingJobData>) => Promise<void>,
   options: { concurrency?: number } = {},
 ): IntelligenceProcessingWorker {
-  const worker = new Worker<IntelligenceProcessingJobData>(
-    INTELLIGENCE_PROCESSING_QUEUE_NAME,
-    async (job: Job<IntelligenceProcessingJobData>) => {
-      await processor(job.data, job);
-    },
-    {
-      connection: redisConnection(redisUrl),
-      concurrency: options.concurrency ?? 2,
-    },
-  );
-
-  return {
-    async close() {
-      await worker.close();
-    },
-    onFailed(listener) {
-      worker.on("failed", (job: Job<IntelligenceProcessingJobData> | undefined, error) => {
-        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
-      });
-    },
-    onCompleted(listener) {
-      worker.on("completed", (job: Job<IntelligenceProcessingJobData>) => {
-        listener(job?.id ? String(job.id) : undefined);
-      });
-    },
-  };
+  return createQueueWorker(INTELLIGENCE_PROCESSING_QUEUE_NAME, redisUrl, processor, options);
 }
 
 export function createCandidateMemoryArchiveWorker(
@@ -464,32 +448,12 @@ export function createCandidateMemoryArchiveWorker(
   processor: (data: CandidateMemoryArchiveJobData, job: Job<CandidateMemoryArchiveJobData>) => Promise<void>,
   options: { concurrency?: number } = {},
 ): CandidateMemoryArchiveWorker {
-  const worker = new Worker<CandidateMemoryArchiveJobData>(
+  return createQueueWorker(
     CANDIDATE_MEMORY_ARCHIVE_QUEUE_NAME,
-    async (job: Job<CandidateMemoryArchiveJobData>) => {
-      await processor(job.data, job);
-    },
-    {
-      connection: redisConnection(redisUrl),
-      concurrency: options.concurrency ?? 1,
-    },
+    redisUrl,
+    processor,
+    { concurrency: options.concurrency ?? 1 },
   );
-
-  return {
-    async close() {
-      await worker.close();
-    },
-    onFailed(listener) {
-      worker.on("failed", (job: Job<CandidateMemoryArchiveJobData> | undefined, error) => {
-        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
-      });
-    },
-    onCompleted(listener) {
-      worker.on("completed", (job: Job<CandidateMemoryArchiveJobData>) => {
-        listener(job?.id ? String(job.id) : undefined);
-      });
-    },
-  };
 }
 
 export function createWeeklyReflectionWorker(
@@ -497,32 +461,12 @@ export function createWeeklyReflectionWorker(
   processor: (data: WeeklyReflectionJobData, job: Job<WeeklyReflectionJobData>) => Promise<void>,
   options: { concurrency?: number } = {},
 ): WeeklyReflectionWorker {
-  const worker = new Worker<WeeklyReflectionJobData>(
+  return createQueueWorker(
     WEEKLY_REFLECTION_QUEUE_NAME,
-    async (job: Job<WeeklyReflectionJobData>) => {
-      await processor(job.data, job);
-    },
-    {
-      connection: redisConnection(redisUrl),
-      concurrency: options.concurrency ?? 1,
-    },
+    redisUrl,
+    processor,
+    { concurrency: options.concurrency ?? 1 },
   );
-
-  return {
-    async close() {
-      await worker.close();
-    },
-    onFailed(listener) {
-      worker.on("failed", (job: Job<WeeklyReflectionJobData> | undefined, error) => {
-        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
-      });
-    },
-    onCompleted(listener) {
-      worker.on("completed", (job: Job<WeeklyReflectionJobData>) => {
-        listener(job?.id ? String(job.id) : undefined);
-      });
-    },
-  };
 }
 
 export function createConnectorSyncWorker(
@@ -530,32 +474,12 @@ export function createConnectorSyncWorker(
   processor: (data: ConnectorSyncJobData, job: Job<ConnectorSyncJobData>) => Promise<void>,
   options: { concurrency?: number } = {},
 ): ConnectorSyncWorker {
-  const worker = new Worker<ConnectorSyncJobData>(
+  return createQueueWorker(
     CONNECTOR_SYNC_QUEUE_NAME,
-    async (job: Job<ConnectorSyncJobData>) => {
-      await processor(job.data, job);
-    },
-    {
-      connection: redisConnection(redisUrl),
-      concurrency: options.concurrency ?? 1,
-    },
+    redisUrl,
+    processor,
+    { concurrency: options.concurrency ?? 1 },
   );
-
-  return {
-    async close() {
-      await worker.close();
-    },
-    onFailed(listener) {
-      worker.on("failed", (job: Job<ConnectorSyncJobData> | undefined, error) => {
-        listener(job?.id ? String(job.id) : undefined, error, job?.attemptsMade);
-      });
-    },
-    onCompleted(listener) {
-      worker.on("completed", (job: Job<ConnectorSyncJobData>) => {
-        listener(job?.id ? String(job.id) : undefined);
-      });
-    },
-  };
 }
 
 export function createArtifactStatusPublisher(redisUrl: string): ArtifactStatusPublisher {

@@ -8,12 +8,27 @@ const env = {
   SIVRAJ_TOKEN: "token-1",
 };
 
-test("context command prints preset export content", async () => {
+async function withMockFetch<T>(
+  respond: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>,
+  runTest: (calls: Array<{ url: string; init?: RequestInit }>) => Promise<T>,
+): Promise<T> {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     calls.push({ url: String(input), init });
-    return new Response(JSON.stringify({
+    return respond(input, init);
+  };
+
+  try {
+    return await runTest(calls);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("context command prints preset export content", async () => {
+  await withMockFetch(
+    () => new Response(JSON.stringify({
       contextMarkdown: "# fallback",
       contextExport: {
         preset: "cursor",
@@ -25,26 +40,20 @@ test("context command prints preset export content", async () => {
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
-    });
-  };
-
-  try {
-    const output = await run(["context", "--preset", "cursor", "--repo-name", "sivraj"], env);
-    assert.match(output, /Sivraj Cursor Rules/);
-    assert.equal(calls.length, 1);
-    assert.match(calls[0]?.url ?? "", /preset=cursor/);
-    assert.match(calls[0]?.url ?? "", /repoName=sivraj/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+    }),
+    async (calls) => {
+      const output = await run(["context", "--preset", "cursor", "--repo-name", "sivraj"], env);
+      assert.match(output, /Sivraj Cursor Rules/);
+      assert.equal(calls.length, 1);
+      assert.match(calls[0]?.url ?? "", /preset=cursor/);
+      assert.match(calls[0]?.url ?? "", /repoName=sivraj/);
+    },
+  );
 });
 
 test("writeback command posts session summary", async () => {
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    calls.push({ url: String(input), init });
-    return new Response(JSON.stringify({
+  await withMockFetch(
+    () => new Response(JSON.stringify({
       writebackId: "writeback-1",
       status: "pending",
       storageMode: "encrypted_walrus",
@@ -52,31 +61,28 @@ test("writeback command posts session summary", async () => {
     }), {
       status: 201,
       headers: { "Content-Type": "application/json" },
-    });
-  };
-
-  try {
-    const output = await run([
-      "writeback",
-      "--agent-name",
-      "Codex",
-      "--summary",
-      "Implemented CLI.",
-      "--files-touched",
-      "apps/cli/src/index.ts",
-    ], env);
-    assert.match(output, /writeback-1/);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.url, "http://api.test/v1/twins/twin-1/agents/writebacks");
-    assert.equal(calls[0]?.init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
-      agentName: "Codex",
-      taskSummary: "Implemented CLI.",
-      filesTouched: ["apps/cli/src/index.ts"],
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+    }),
+    async (calls) => {
+      const output = await run([
+        "writeback",
+        "--agent-name",
+        "Codex",
+        "--summary",
+        "Implemented CLI.",
+        "--files-touched",
+        "apps/cli/src/index.ts",
+      ], env);
+      assert.match(output, /writeback-1/);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]?.url, "http://api.test/v1/twins/twin-1/agents/writebacks");
+      assert.equal(calls[0]?.init?.method, "POST");
+      assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+        agentName: "Codex",
+        taskSummary: "Implemented CLI.",
+        filesTouched: ["apps/cli/src/index.ts"],
+      });
+    },
+  );
 });
 
 test("writeback command requires summary", async () => {

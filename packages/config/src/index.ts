@@ -1,3 +1,5 @@
+export { loadNearestEnv, type LoadNearestEnvOptions } from "./load-nearest-env.js";
+
 export type NodeEnv = "development" | "test" | "production";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 

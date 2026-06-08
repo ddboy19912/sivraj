@@ -4,6 +4,7 @@ import {
   loadMemorySearchConfig,
   type MemorySearchConfig,
 } from "@sivraj/config";
+import type { PrivateSourceStorageOutput } from "@sivraj/crypto-seal";
 import {
   createLazyArtifactProcessingQueue,
   createLazyArtifactStatusPublisher,
@@ -23,6 +24,7 @@ import { createArtifactRoutes } from "./routes/artifacts.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createAgentTokenRoutes } from "./routes/agent-tokens.js";
 import { createCandidateMemoryRoutes } from "./routes/candidate-memories.js";
+import { createChatRoutes } from "./routes/chat.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { createConnectorRoutes } from "./routes/connectors.js";
 import { createEngineeringRoutes } from "./routes/engineering.js";
@@ -38,11 +40,12 @@ import { createMemoryRoutes } from "./routes/memories.js";
 import { createReflectionRoutes } from "./routes/reflections.js";
 import { createSecurityRoutes } from "./routes/security.js";
 import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
+import { createTwinProfileRoutes } from "./routes/twin-profile.js";
 import { createVoiceRoutes } from "./routes/voice.js";
 import {
   createConfiguredPrivateMemoryReader,
   type PrivateMemoryReader,
-} from "./services/private-memory-reader.js";
+} from "@sivraj/private-memory-reader";
 import { createPrivateMemoryStorage } from "./services/private-memory-storage.js";
 import {
   createConfiguredVoiceSynthesizer,
@@ -64,6 +67,8 @@ export type AppDependencies = {
   weeklyReflectionQueue?: WeeklyReflectionQueue;
   memorySearchConfig?: MemorySearchConfig;
   voiceSynthesizer?: VoiceSynthesizer;
+  voicePreviewAssetDir?: string;
+  llmFetch?: typeof fetch;
 };
 
 export type SupportedArtifactSourceType =
@@ -104,24 +109,7 @@ export type EncryptedPrivateMemoryStorageInput = {
   seal: PrivateMemoryStorageOutput["seal"];
 };
 
-export type PrivateMemoryStorageOutput = {
-  rawStorageRef: string;
-  ciphertextSha256: string;
-  encryptedBytesBase64?: string;
-  seal: {
-    packageId: string;
-    policyId: string;
-    threshold: number;
-    keyServerObjectIds: string[];
-  };
-  walrus: {
-    blobId: string;
-    blobObjectId: string;
-    startEpoch: number;
-    endEpoch: number;
-    size: string;
-  };
-};
+export type PrivateMemoryStorageOutput = PrivateSourceStorageOutput;
 
 export type PrivateMemoryStorage = {
   storePrivateMemory(
@@ -132,7 +120,7 @@ export type PrivateMemoryStorage = {
   ): Promise<PrivateMemoryStorageOutput>;
 };
 
-export function createApp(
+function createApp(
   dependencies: AppDependencies = {
     db,
     privateMemoryStorage: createPrivateMemoryStorage(process.env),
@@ -155,6 +143,7 @@ export function createApp(
     ),
     memorySearchConfig: loadMemorySearchConfig(process.env),
     voiceSynthesizer: createConfiguredVoiceSynthesizer(process.env),
+    voicePreviewAssetDir: process.env["VOICE_PREVIEW_ASSET_DIR"],
   },
 ) {
   const app = new Hono();
@@ -171,6 +160,7 @@ export function createApp(
   app.route("/health", healthRoutes);
   app.route("/v1/auth", createAuthRoutes(dependencies));
   app.route("/v1/twins/:twinId/agents", createAgentTokenRoutes(dependencies));
+  app.route("/v1/twins/:twinId", createTwinProfileRoutes(dependencies));
   app.route("/v1/twins/:twinId", createIdentityProfileRoutes(dependencies));
   app.route(
     "/v1/twins/:twinId/imports/github",
@@ -200,6 +190,7 @@ export function createApp(
   app.route("/v1/twins/:twinId/graph", createGraphRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));
   app.route("/v1/twins/:twinId/feedback", createFeedbackRoutes(dependencies));
+  app.route("/v1/twins/:twinId/chat", createChatRoutes(dependencies));
   app.route("/v1/twins/:twinId/voice", createVoiceRoutes(dependencies));
   app.route(
     "/v1/twins/:twinId/reflections",

@@ -6,14 +6,15 @@
  * Licensed under the Polyform Non-Resale License 1.0.0.
  */
 
-import { useMemo, type ComponentProps } from "react";
-import type { LocalAudioTrack, RemoteAudioTrack } from "livekit-client";
 import type {
   AgentState,
   TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
-import { ReactShaderToy } from "./react-shader-toy";
-import { useAgentAudioVisualizerAura } from "../../hooks/agents-ui/use-agent-audio-visualizer-aura";
+import type { LocalAudioTrack, RemoteAudioTrack } from "livekit-client";
+import type { ComponentProps } from "react";
+import { ReactShaderToy } from "@/components/agents-ui/react-shader-toy";
+import { useAgentAudioVisualizerAura } from "@/hooks/agents-ui/use-agent-audio-visualizer-aura";
+import { useTheme } from "@/providers/theme-context";
 
 const DEFAULT_COLOR = "#1FD5F9";
 
@@ -141,16 +142,18 @@ type AgentAudioVisualizerAuraProps = {
 };
 
 export function AgentAudioVisualizerAura({
-  state = "connecting",
-  color = DEFAULT_COLOR,
+  state = "disconnected",
+  color: colorProp,
   colorShift = 0.05,
   audioTrack,
   className,
   ...props
 }: AgentAudioVisualizerAuraProps & ComponentProps<"div">) {
+  const { color: themeColor } = useTheme();
+  const color = colorProp ?? themeColor;
   const { speed, scale, amplitude, frequency, brightness } =
     useAgentAudioVisualizerAura(state, audioTrack);
-  const rgbColor = useMemo(() => hexToRgb(color), [color]);
+  const rgbColor = hexToRgb(color);
 
   return (
     <div className={className} data-lk-state={state} {...props}>

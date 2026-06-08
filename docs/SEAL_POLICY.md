@@ -27,6 +27,7 @@ SEAL_POLICY_ID=<shared OwnerPolicy object ID>
 SEAL_KEY_SERVERS=<comma-separated Seal key server object IDs or JSON configs>
 SUI_RPC_URL=https://fullnode.testnet.sui.io:443
 SUI_PRIVATE_KEY=<funded server-side Sui private key for Walrus writes>
+WALRUS_MIN_WRITE_BALANCE_MIST=200000000
 WALRUS_UPLOAD_RELAY_URL=https://upload-relay.testnet.walrus.space
 WALRUS_UPLOAD_RELAY_TIP_MAX_MIST=1000
 ```

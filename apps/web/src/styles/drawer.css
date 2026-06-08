@@ -1,0 +1,13 @@
+@layer components {
+  .drawer-overlay-backdrop {
+    background:
+      radial-gradient(
+        circle at 76% 50%,
+        rgba(var(--theme-color-rgb), 0.18),
+        transparent 34%
+      ),
+      rgba(0, 0, 0, 0.58);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}

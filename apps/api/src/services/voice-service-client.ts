@@ -1,5 +1,11 @@
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
+import { fetchWithTimeout, truncateText } from "@sivraj/core";
+import {
+  buildGradioQueueJoinBody,
+  decodeGradioAudioOutput,
+  gradioJoinError,
+  parseGradioQueueResult,
+} from "./voice-service-gradio.js";
 
 export type VoicePreset = {
   id: string;
@@ -53,7 +59,7 @@ const CARTESIA_PRESET_VOICE_IDS: Record<string, string> = {
   calm_guide: "ef191366-f52f-447a-a398-ed8c0f2943a1",
 };
 
-export const VOICE_PRESETS: VoicePreset[] = [
+const VOICE_PRESETS: VoicePreset[] = [
   {
     id: "warm_operator",
     name: "Skylar",
@@ -137,7 +143,7 @@ export function createConfiguredVoiceSynthesizer(
     : createHttpVoiceSynthesizer(config);
 }
 
-export function createCartesiaVoiceSynthesizer(config: {
+function createCartesiaVoiceSynthesizer(config: {
   apiKey?: string;
   apiVersion?: string;
   modelId?: string;
@@ -163,59 +169,35 @@ export function createCartesiaVoiceSynthesizer(config: {
         throw new Error(`cartesia_voice_id_missing:${input.voiceId}`);
       }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        config.timeoutMs ?? 45_000,
-      );
-
-      try {
-        const response = await fetchImpl("https://api.cartesia.ai/tts/bytes", {
-          method: "POST",
-          signal: controller.signal,
-          headers: {
-            authorization: `Bearer ${config.apiKey}`,
-            "cartesia-version": config.apiVersion ?? "2026-03-01",
-            "content-type": "application/json",
+      const response = await fetchWithTimeout(fetchImpl, "https://api.cartesia.ai/tts/bytes", {
+        method: "POST",
+        timeoutMs: config.timeoutMs ?? 45_000,
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "cartesia-version": config.apiVersion ?? "2026-03-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model_id: config.modelId ?? "sonic-3.5",
+          transcript: input.text,
+          voice: {
+            mode: "id",
+            id: voiceId,
           },
-          body: JSON.stringify({
-            model_id: config.modelId ?? "sonic-3.5",
-            transcript: input.text,
-            voice: {
-              mode: "id",
-              id: voiceId,
-            },
-            output_format: {
-              container: "wav",
-              encoding: "pcm_f32le",
-              sample_rate: 44_100,
-            },
-            language: input.language ?? "en",
-            generation_config: {
-              speed: 1,
-              volume: 1,
-            },
-          }),
-        });
+          output_format: {
+            container: "wav",
+            encoding: "pcm_f32le",
+            sample_rate: 44_100,
+          },
+          language: input.language ?? "en",
+          generation_config: {
+            speed: 1,
+            volume: 1,
+          },
+        }),
+      });
 
-        if (!response.ok) {
-          throw new Error(
-            `cartesia_tts_failed:${response.status}:${truncate(await response.text())}`,
-          );
-        }
-
-        const audioBytes = new Uint8Array(await response.arrayBuffer());
-        if (audioBytes.length === 0) {
-          throw new Error("voice_service_empty_audio");
-        }
-
-        return {
-          audioBytes,
-          contentType: response.headers.get("content-type") ?? "audio/wav",
-        };
-      } finally {
-        clearTimeout(timeout);
-      }
+      return readVoiceSynthesisResponse(response, "cartesia_tts_failed");
     },
     async cloneVoice(input) {
       const form = new FormData();
@@ -238,13 +220,13 @@ export function createCartesiaVoiceSynthesizer(config: {
 
       if (!response.ok) {
         throw new Error(
-          `cartesia_clone_failed:${response.status}:${truncate(await response.text())}`,
+          `cartesia_clone_failed:${response.status}:${truncateText(await response.text())}`,
         );
       }
 
       const payload = await response.json() as { id?: unknown };
       if (typeof payload.id !== "string" || !payload.id) {
-        throw new Error(`cartesia_clone_missing_voice_id:${truncate(JSON.stringify(payload))}`);
+        throw new Error(`cartesia_clone_missing_voice_id:${truncateText(JSON.stringify(payload))}`);
       }
 
       return { providerVoiceId: payload.id };
@@ -252,7 +234,7 @@ export function createCartesiaVoiceSynthesizer(config: {
   };
 }
 
-export function createHttpVoiceSynthesizer(config: {
+function createHttpVoiceSynthesizer(config: {
   serviceUrl: string;
   apiKey?: string;
   timeoutMs?: number;
@@ -263,40 +245,22 @@ export function createHttpVoiceSynthesizer(config: {
   return {
     provider: "chatterbox_turbo",
     async synthesize(input) {
-      const controller = new AbortController();
-      const timeout = setTimeout(
-        () => controller.abort(),
-        config.timeoutMs ?? 45_000,
-      );
-
-      const response = await fetchImpl(`${config.serviceUrl}/synthesize`, {
+      const response = await fetchWithTimeout(fetchImpl, `${config.serviceUrl}/synthesize`, {
         method: "POST",
-        signal: controller.signal,
+        timeoutMs: config.timeoutMs ?? 45_000,
         headers: {
           "content-type": "application/json",
           ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
         },
         body: JSON.stringify(input),
-      }).finally(() => clearTimeout(timeout));
+      });
 
-      if (!response.ok) {
-        throw new Error(`voice_service_failed:${response.status}:${truncate(await response.text())}`);
-      }
-
-      const audioBytes = new Uint8Array(await response.arrayBuffer());
-      if (audioBytes.length === 0) {
-        throw new Error("voice_service_empty_audio");
-      }
-
-      return {
-        audioBytes,
-        contentType: response.headers.get("content-type") ?? "audio/wav",
-      };
+      return readVoiceSynthesisResponse(response, "voice_service_failed");
     },
   };
 }
 
-export function createGradioVoiceSynthesizer(config: {
+function createGradioVoiceSynthesizer(config: {
   serviceUrl: string;
   apiKey?: string;
   timeoutMs?: number;
@@ -314,7 +278,16 @@ export function createGradioVoiceSynthesizer(config: {
       );
 
       try {
-        const sessionHash = `sivraj-${randomUUID()}`;
+        const joinBody = buildGradioQueueJoinBody({
+          text: input.text,
+          voiceId: input.voiceId,
+          language: input.language,
+          style: input.style,
+          exaggeration: input.exaggeration,
+          referenceAudioBase64: input.referenceAudioBase64,
+          referenceMimeType: input.referenceMimeType,
+          apiKey: config.apiKey,
+        });
         const joinResponse = await fetchImpl(
           `${config.serviceUrl}/gradio_api/queue/join`,
           {
@@ -323,59 +296,31 @@ export function createGradioVoiceSynthesizer(config: {
             headers: {
               "content-type": "application/json",
             },
-            body: JSON.stringify({
-              data: [
-                input.text,
-                input.voiceId,
-                input.language ?? "en",
-                input.style ?? "",
-                input.exaggeration ?? 0,
-                input.referenceAudioBase64 ?? "",
-                input.referenceMimeType ?? "",
-                config.apiKey ?? "",
-              ],
-              event_data: null,
-              fn_index: 0,
-              trigger_id: 12,
-              session_hash: sessionHash,
-            }),
+            body: JSON.stringify(joinBody),
           },
         );
 
         if (!joinResponse.ok) {
-          throw new Error(
-            `voice_service_failed:${joinResponse.status}:${truncate(await joinResponse.text())}`,
-          );
+          throw gradioJoinError(joinResponse.status, await joinResponse.text());
         }
 
         const queueResponse = await fetchImpl(
-          `${config.serviceUrl}/gradio_api/queue/data?session_hash=${encodeURIComponent(sessionHash)}`,
+          `${config.serviceUrl}/gradio_api/queue/data?session_hash=${encodeURIComponent(joinBody.session_hash)}`,
           { signal: controller.signal },
         );
 
         if (!queueResponse.ok) {
-          throw new Error(
-            `voice_service_failed:${queueResponse.status}:${truncate(await queueResponse.text())}`,
-          );
+          throw gradioJoinError(queueResponse.status, await queueResponse.text());
         }
 
         const completed = parseGradioQueueResult(await queueResponse.text());
         if (!completed.success) {
           throw new Error(
-            `voice_service_failed:gradio:${truncate(JSON.stringify(completed.output))}`,
+            `voice_service_failed:gradio:${truncateText(JSON.stringify(completed.output))}`,
           );
         }
 
-        const audioBase64 = parseGradioAudioResult(completed.output);
-        const audioBytes = new Uint8Array(Buffer.from(audioBase64, "base64"));
-        if (audioBytes.length === 0) {
-          throw new Error("voice_service_empty_audio");
-        }
-
-        return {
-          audioBytes,
-          contentType: "audio/wav",
-        };
+        return decodeGradioAudioOutput(completed.output);
       } finally {
         clearTimeout(timeout);
       }
@@ -396,8 +341,23 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function truncate(value: string): string {
-  return value.length > 4_000 ? `${value.slice(0, 4_000)}...` : value;
+async function readVoiceSynthesisResponse(
+  response: Response,
+  failurePrefix: string,
+): Promise<VoiceSynthesisOutput> {
+  if (!response.ok) {
+    throw new Error(`${failurePrefix}:${response.status}:${truncateText(await response.text())}`);
+  }
+
+  const audioBytes = new Uint8Array(await response.arrayBuffer());
+  if (audioBytes.length === 0) {
+    throw new Error("voice_service_empty_audio");
+  }
+
+  return {
+    audioBytes,
+    contentType: response.headers.get("content-type") ?? "audio/wav",
+  };
 }
 
 function stripDataUrlPrefix(value: string): string {
@@ -406,96 +366,3 @@ function stripDataUrlPrefix(value: string): string {
   return index >= 0 ? value.slice(index + marker.length) : value;
 }
 
-function parseGradioAudioResult(value: unknown): string {
-  if (typeof value !== "string") {
-    const result = readFirstString(value);
-    if (result) {
-      return result;
-    }
-
-    throw new Error(`voice_service_missing_audio:${truncate(JSON.stringify(value))}`);
-  }
-
-  const dataLines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .filter((line) => line && line !== "null");
-
-  for (const line of dataLines.reverse()) {
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      const result = readFirstString(parsed);
-      if (result) {
-        return result;
-      }
-    } catch {
-      if (line.length > 0) {
-        return line;
-      }
-    }
-  }
-
-  throw new Error(`voice_service_missing_audio:${truncate(value)}`);
-}
-
-function parseGradioQueueResult(value: string): {
-  output: unknown;
-  success: boolean;
-} {
-  const dataLines = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim())
-    .filter((line) => line && line !== "null");
-
-  for (const line of dataLines.reverse()) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "msg" in parsed &&
-      (parsed as { msg?: unknown }).msg === "process_completed"
-    ) {
-      return {
-        output: (parsed as { output?: unknown }).output,
-        success: (parsed as { success?: unknown }).success === true,
-      };
-    }
-  }
-
-  throw new Error(`voice_service_missing_queue_result:${truncate(value)}`);
-}
-
-function readFirstString(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const result = readFirstString(item);
-      if (result) {
-        return result;
-      }
-    }
-  }
-
-  if (value && typeof value === "object" && "data" in value) {
-    return readFirstString((value as { data?: unknown }).data);
-  }
-
-  if (value && typeof value === "object" && "output" in value) {
-    return readFirstString((value as { output?: unknown }).output);
-  }
-
-  return undefined;
-}

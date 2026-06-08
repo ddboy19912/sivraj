@@ -15,6 +15,17 @@ const authConfig = {
   tokenIssuer: "sivraj-test",
 };
 
+async function createSignedWalletChallenge(walletAddress?: string) {
+  const keypair = new Ed25519Keypair();
+  const address = walletAddress ?? keypair.getPublicKey().toSuiAddress();
+  const challenge = await createWalletChallenge(authConfig, address);
+  const signed = await keypair.signPersonalMessage(
+    new TextEncoder().encode(challenge.message),
+  );
+
+  return { keypair, walletAddress: address, challenge, signed };
+}
+
 describe("parseBearerToken", () => {
   it("returns the bearer token", () => {
     expect(parseBearerToken("Bearer abc123")).toBe("abc123");
@@ -83,12 +94,7 @@ describe("scopes", () => {
 
 describe("wallet challenge", () => {
   it("verifies a real Sui personal message signature", async () => {
-    const keypair = new Ed25519Keypair();
-    const walletAddress = keypair.getPublicKey().toSuiAddress();
-    const challenge = await createWalletChallenge(authConfig, walletAddress);
-    const signed = await keypair.signPersonalMessage(
-      new TextEncoder().encode(challenge.message),
-    );
+    const { walletAddress, challenge, signed } = await createSignedWalletChallenge();
 
     const wallet = await verifyWalletChallenge({
       config: authConfig,
@@ -102,11 +108,7 @@ describe("wallet challenge", () => {
   });
 
   it("rejects a mismatched wallet address", async () => {
-    const keypair = new Ed25519Keypair();
-    const challenge = await createWalletChallenge(authConfig);
-    const signed = await keypair.signPersonalMessage(
-      new TextEncoder().encode(challenge.message),
-    );
+    const { challenge, signed } = await createSignedWalletChallenge();
 
     await expect(
       verifyWalletChallenge({
@@ -120,12 +122,7 @@ describe("wallet challenge", () => {
   });
 
   it("rejects a mismatched challenge message", async () => {
-    const keypair = new Ed25519Keypair();
-    const walletAddress = keypair.getPublicKey().toSuiAddress();
-    const challenge = await createWalletChallenge(authConfig, walletAddress);
-    const signed = await keypair.signPersonalMessage(
-      new TextEncoder().encode(challenge.message),
-    );
+    const { walletAddress, challenge, signed } = await createSignedWalletChallenge();
 
     await expect(
       verifyWalletChallenge({

@@ -1,0 +1,56 @@
+/**
+ * Liquid glass — frosted, Apple-like surfaces (blur-first, light fill).
+ * Matches the original onboarding panel: translucent tint + strong backdrop blur.
+ */
+@layer components {
+  .liquid-glass,
+  .liquid-glass-dense {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid var(--liquid-glass-border);
+    -webkit-backdrop-filter: blur(var(--liquid-glass-blur))
+      saturate(var(--liquid-glass-saturate));
+    backdrop-filter: blur(var(--liquid-glass-blur))
+      saturate(var(--liquid-glass-saturate));
+    box-shadow: var(--liquid-glass-shadow);
+  }
+
+  .liquid-glass {
+    background: var(--liquid-glass-bg);
+  }
+
+  .liquid-glass-dense {
+    background: var(--liquid-glass-bg-dense);
+    box-shadow: var(--liquid-glass-shadow-dense);
+  }
+
+  /* Top specular edge (onboarding panel hairline) */
+  .liquid-glass::before,
+  .liquid-glass-dense::before {
+    pointer-events: none;
+    position: absolute;
+    inset-inline: 1.5rem;
+    top: 0;
+    z-index: 0;
+    height: 1px;
+    content: "";
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.32),
+      transparent
+    );
+  }
+}
+
+:root {
+  --liquid-glass-border: rgba(255, 255, 255, 0.14);
+  --liquid-glass-blur: 40px;
+  --liquid-glass-saturate: 150%;
+  --liquid-glass-bg: rgba(0, 0, 0, 0.32);
+  --liquid-glass-bg-dense: rgba(255, 255, 255, 0.07);
+  --liquid-glass-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  --liquid-glass-shadow-dense: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}

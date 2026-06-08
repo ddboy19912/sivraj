@@ -1,6 +1,26 @@
 import type { StructuredGenerator } from "@sivraj/llm";
-import { createHash } from "node:crypto";
+import {
+  asRecord,
+  clampConfidence,
+  dedupeByConfidence,
+  normalizeStatement,
+  readLlmArrayField,
+  readNumber,
+  readString,
+  readStringArray,
+  sanitizePrimitiveMetadata,
+  sha256Hex,
+  truncateForExtraction,
+} from "./extraction-utils.js";
 
+export {
+  asRecord,
+  looksLikeSecretValue,
+  PROFILE_EXACT_BLOCKED_METADATA_KEYS,
+  sanitizePrimitiveMetadata,
+  sanitizeSecureMetadataRecord,
+  type SecureMetadataKeyPolicy,
+} from "./extraction-utils.js";
 export * from "./patterns/index.js";
 export * from "./engineering/index.js";
 
@@ -521,29 +541,16 @@ function parseEntityResponse(value: unknown, maxEntities: number): {
   warnings: string[];
 } {
   const warnings: string[] = [];
-  const root = asRecord(value);
-  const rawEntities = Array.isArray(root["entities"]) ? root["entities"] : [];
-  const deduped = new Map<string, ExtractedEntity>();
-
-  for (const raw of rawEntities) {
-    const entity = parseEntity(raw, warnings);
-
-    if (!entity) {
-      continue;
-    }
-
-    const key = `${entity.type}:${entity.normalizedName}`;
-    const previous = deduped.get(key);
-
-    if (!previous || entity.confidence > previous.confidence) {
-      deduped.set(key, entity);
-    }
-  }
+  const parsedEntities = readLlmArrayField(value, "entities")
+    .map((raw) => parseEntity(raw, warnings))
+    .filter((entity): entity is ExtractedEntity => entity !== null);
 
   return {
-    entities: Array.from(deduped.values())
-      .sort((left, right) => right.confidence - left.confidence)
-      .slice(0, maxEntities),
+    entities: dedupeByConfidence(
+      parsedEntities,
+      (entity) => `${entity.type}:${entity.normalizedName}`,
+      maxEntities,
+    ),
     warnings,
   };
 }
@@ -555,35 +562,18 @@ function parseMemoryResponse(value: unknown, maxMemories: number, options: {
   warnings: string[];
 } {
   const warnings: string[] = [];
-  const root = asRecord(value);
-  const rawMemories = Array.isArray(root["memories"]) ? root["memories"] : [];
-  const deduped = new Map<string, ExtractedMemory>();
-
-  for (const raw of rawMemories) {
-    const memory = parseMemory(raw, warnings);
-
-    if (!memory) {
-      continue;
-    }
-
-    const filtered = options.attributionAware ? applyAttributionMemoryPolicy(memory, warnings) : memory;
-
-    if (!filtered) {
-      continue;
-    }
-
-    const key = `${filtered.memoryType}:${filtered.normalizedStatement}`;
-    const previous = deduped.get(key);
-
-    if (!previous || filtered.confidence > previous.confidence) {
-      deduped.set(key, filtered);
-    }
-  }
+  const parsedMemories = readLlmArrayField(value, "memories")
+    .map((raw) => parseMemory(raw, warnings))
+    .filter((memory): memory is ExtractedMemory => memory !== null)
+    .map((memory) => options.attributionAware ? applyAttributionMemoryPolicy(memory, warnings) : memory)
+    .filter((memory): memory is ExtractedMemory => memory !== null);
 
   return {
-    memories: Array.from(deduped.values())
-      .sort((left, right) => right.confidence - left.confidence)
-      .slice(0, maxMemories),
+    memories: dedupeByConfidence(
+      parsedMemories,
+      (memory) => `${memory.memoryType}:${memory.normalizedStatement}`,
+      maxMemories,
+    ),
     warnings,
   };
 }
@@ -699,15 +689,11 @@ function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
 }
 
 function readReturnedEntityCount(value: unknown): number {
-  const entities = asRecord(value)["entities"];
-
-  return Array.isArray(entities) ? entities.length : 0;
+  return readLlmArrayField(value, "entities").length;
 }
 
 function readReturnedMemoryCount(value: unknown): number {
-  const memories = asRecord(value)["memories"];
-
-  return Array.isArray(memories) ? memories.length : 0;
+  return readLlmArrayField(value, "memories").length;
 }
 
 function readEntityType(value: unknown): EntityType | null {
@@ -718,45 +704,8 @@ function readMemoryType(value: unknown): MemoryType | null {
   return MEMORY_TYPES.includes(value as MemoryType) ? value as MemoryType : null;
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function readStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? Array.from(new Set(value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean)))
-    : [];
-}
-
 function sanitizeMetadata(value: unknown): Record<string, unknown> {
-  const record = asRecord(value);
-  const safe: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(record)) {
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-      safe[key] = item;
-    }
-  }
-
-  return safe;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function clampConfidence(value: number | null): number {
-  if (value === null) {
-    return 0.5;
-  }
-
-  return Math.max(0, Math.min(1, value));
+  return sanitizePrimitiveMetadata(value);
 }
 
 function clampMaxEntities(value: number | undefined): number {
@@ -765,10 +714,6 @@ function clampMaxEntities(value: number | undefined): number {
 
 function clampMaxMemories(value: number | undefined): number {
   return Number.isInteger(value) && value && value > 0 ? Math.min(value, 50) : 20;
-}
-
-function truncateForExtraction(value: string): string {
-  return value.length > 30_000 ? value.slice(0, 30_000) : value;
 }
 
 function isConversationSource(sourceType: string): boolean {
@@ -798,27 +743,24 @@ function isAttributionAwareContent(value: string): boolean {
   return /(^|\n)(?:\[[^\]]+\]\s+)?(?:self|other|unknown|system)\/[^:\n]+:/i.test(value);
 }
 
-function readEvidenceSpeakerRole(value: unknown): SpeakerRole | null {
+const EVIDENCE_SPEAKER_ROLES = new Set<SpeakerRole>(["self", "other", "unknown", "system"]);
+
+export function readEvidenceSpeakerRole(value: unknown): SpeakerRole | null {
   if (typeof value !== "string") {
     return null;
   }
 
   const normalized = value.trim();
 
-  if (
-    normalized === "self"
-    || normalized === "other"
-    || normalized === "unknown"
-    || normalized === "system"
-  ) {
-    return normalized;
+  if (EVIDENCE_SPEAKER_ROLES.has(normalized as SpeakerRole)) {
+    return normalized as SpeakerRole;
   }
 
   const match = /(?:^|\n)(?:\[[^\]]+\]\s+)?(self|other|unknown|system)\/[^:\n]+:/i.exec(normalized);
   const role = match?.[1]?.toLowerCase();
 
-  return role === "self" || role === "other" || role === "unknown" || role === "system"
-    ? role
+  return role && EVIDENCE_SPEAKER_ROLES.has(role as SpeakerRole)
+    ? role as SpeakerRole
     : null;
 }
 
@@ -839,13 +781,3 @@ function isPersonalClaimMemory(memory: ExtractedMemory): boolean {
     .test(memory.normalizedStatement);
 }
 
-function normalizeStatement(value: string): string {
-  return value
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}

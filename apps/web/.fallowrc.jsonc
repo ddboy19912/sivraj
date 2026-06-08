@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "src/tests/setup.ts",
+    "src/console/Console.test.tsx",
+    "src/tests/helpers.ts",
+    "src/tests/fixtures/console-fixtures.ts"
+  ]
+}

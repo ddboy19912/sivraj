@@ -1,18 +1,19 @@
-import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
-import { promisify } from "node:util";
 import type { ParsedArtifact } from "../types.js";
+import {
+  createEmptyParseResult,
+  defaultOcrCommandRunner,
+  normalizeOcrText,
+  readBase64Payload,
+  type OcrCommandRunner,
+} from "./shared/ocr.js";
 
-const execFileAsync = promisify(execFile);
 const IMAGE_PARSER_NAME = "image_ocr";
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 
-export type ImageOcrCommandRunner = (
-  command: string,
-  args: string[],
-) => Promise<{ stdout: string; stderr: string }>;
+export type ImageOcrCommandRunner = OcrCommandRunner;
 
 export async function parseImage(input: {
   content: string;
@@ -22,18 +23,18 @@ export async function parseImage(input: {
 }): Promise<ParsedArtifact> {
   const originalLength = input.content.length;
   const warnings: string[] = [];
-  const imageBytes = readBase64Image(input.content);
+  const imageBytes = readBase64Payload(input.content);
 
   if (imageBytes.length === 0) {
     warnings.push("image_empty_payload");
-    return emptyResult(originalLength, warnings);
+    return createEmptyParseResult(IMAGE_PARSER_NAME, originalLength, warnings);
   }
 
   if (imageBytes.length > MAX_IMAGE_BYTES) {
     throw new Error(`Image payload exceeds ${MAX_IMAGE_BYTES} bytes.`);
   }
 
-  const runner = input.runner ?? defaultCommandRunner;
+  const runner = input.runner ?? defaultOcrCommandRunner;
   const directory = await mkdtemp(join(tmpdir(), "sivraj-image-ocr-"));
 
   try {
@@ -61,19 +62,6 @@ export async function parseImage(input: {
   }
 }
 
-function readBase64Image(content: string): Buffer {
-  const trimmed = content.trim();
-  const base64 = trimmed.startsWith("data:")
-    ? (trimmed.split(",", 2)[1] ?? "")
-    : trimmed;
-
-  if (!base64) {
-    return Buffer.alloc(0);
-  }
-
-  return Buffer.from(base64, "base64");
-}
-
 function readImageExtension(title: string | null | undefined, mimeType: string | null | undefined): string {
   const titleExtension = title ? extname(title).toLowerCase() : "";
 
@@ -94,37 +82,4 @@ function readImageExtension(title: string | null | undefined, mimeType: string |
   }
 
   return ".png";
-}
-
-async function defaultCommandRunner(
-  command: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(command, args, {
-    maxBuffer: 20 * 1024 * 1024,
-  });
-}
-
-function normalizeOcrText(content: string): string {
-  return content
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim())
-    .filter(Boolean)
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function emptyResult(originalLength: number, warnings: string[]): ParsedArtifact {
-  return {
-    content: "",
-    parser: {
-      name: IMAGE_PARSER_NAME,
-      originalLength,
-      parsedLength: 0,
-      warnings,
-    },
-  };
 }

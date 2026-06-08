@@ -6,7 +6,9 @@ import {
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
-import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
+import { requireAuth, type AuthEnv } from "../middleware/auth.js";
+import { authorizeTwinRoute, twinScopedJsonHandler } from "../lib/http/route-auth.js";
+import { sanitizeStrictSafeMetadata } from "../lib/safe-metadata.js";
 
 const FEEDBACK_TARGET_TYPES = [
   "candidate_memory",
@@ -34,34 +36,11 @@ type FeedbackType = typeof FEEDBACK_TYPES[number];
 export function createFeedbackRoutes({ db }: AppDependencies) {
   const feedbackRoutes = new Hono<AuthEnv>();
 
-  feedbackRoutes.post("/", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
-
-    if (scopeError) {
-      return scopeError;
-    }
-
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-
-    if (!twinId) {
-      return c.json({ error: "missing_twin_id" }, 400);
-    }
-
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
-
-    const body = await c.req.json().catch(() => null);
-
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return c.json({ error: "invalid_json_body" }, 400);
-    }
-
+  feedbackRoutes.post("/", requireAuth, twinScopedJsonHandler("memory:read", async (c, { auth, twinId, body }) => {
     const targetType = readEnum(body["targetType"], FEEDBACK_TARGET_TYPES);
     const targetId = readUuid(body["targetId"]);
     const feedbackType = readEnum(body["feedbackType"], FEEDBACK_TYPES);
-    const metadata = sanitizeFeedbackMetadata(body["metadata"]);
+    const metadata = sanitizeStrictSafeMetadata(body["metadata"]);
 
     if (!targetType) {
       return c.json({ error: "invalid_feedback_target_type" }, 400);
@@ -125,7 +104,7 @@ export function createFeedbackRoutes({ db }: AppDependencies) {
       feedbackType,
       candidateMemoryStatus,
     }, 201);
-  });
+  }));
 
   return feedbackRoutes;
 }
@@ -184,45 +163,3 @@ function readUuid(value: unknown): string | null {
     : null;
 }
 
-function sanitizeFeedbackMetadata(value: unknown): Record<string, unknown> | null {
-  if (value === undefined || value === null) {
-    return {};
-  }
-
-  if (typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  const metadata: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.trim();
-
-    if (!normalizedKey || isPlaintextLikeMetadataKey(normalizedKey)) {
-      return null;
-    }
-
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean" || item === null) {
-      metadata[normalizedKey] = item;
-      continue;
-    }
-
-    if (Array.isArray(item) && item.every((arrayItem) =>
-      typeof arrayItem === "string" ||
-      typeof arrayItem === "number" ||
-      typeof arrayItem === "boolean" ||
-      arrayItem === null
-    )) {
-      metadata[normalizedKey] = item;
-      continue;
-    }
-
-    return null;
-  }
-
-  return metadata;
-}
-
-function isPlaintextLikeMetadataKey(key: string): boolean {
-  return ["body", "content", "message", "note", "statement", "text"].includes(key.toLowerCase());
-}

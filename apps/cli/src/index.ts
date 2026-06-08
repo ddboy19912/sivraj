@@ -2,16 +2,14 @@
 import "dotenv/config";
 
 import { loadMcpServerConfig } from "@sivraj/config";
-import { readFile, writeFile } from "node:fs/promises";
-import { parseArgs, readBooleanOption, readListOption, readNumberOption, readStringOption } from "./args.js";
-import { SivrajCliClient, type ContextRequest, type WritebackRequest } from "./client.js";
+import { parseArgs } from "./args.js";
 import {
-  formatContextSummary,
-  formatDemoResponse,
-  formatEvalHarnessResponse,
-  formatWritebackResponse,
-  readContextExportContent,
-} from "./format.js";
+  createCliClient,
+  runContextCommand,
+  runDemoCommand,
+  runEvalCommand,
+  runWritebackCommand,
+} from "./commands.js";
 
 const USAGE = `Sivraj CLI
 
@@ -47,137 +45,23 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv = process.env):
     return USAGE;
   }
 
-  const config = loadMcpServerConfig(env);
-  const client = new SivrajCliClient(config);
+  const client = createCliClient(env);
+  const includeCandidatesDefault = loadMcpServerConfig(env).includeCandidates;
 
-  if (parsed.command === "context") {
-    const context = await client.getContext(readContextRequest(parsed.options, config.includeCandidates));
-    const output = readBooleanOption(parsed.options, "json", false)
-      ? `${JSON.stringify(context, null, 2)}\n`
-      : readBooleanOption(parsed.options, "summary", false)
-        ? `${formatContextSummary(context)}\n`
-        : readContextExportContent(context);
-    const outputPath = readStringOption(parsed.options, "output");
-
-    if (outputPath) {
-      await writeFile(outputPath, output);
-      return `Wrote Sivraj context export to ${outputPath}\n`;
-    }
-
-    return output;
+  switch (parsed.command) {
+    case "context":
+      return runContextCommand(client, parsed.options, includeCandidatesDefault);
+    case "writeback":
+      return runWritebackCommand(client, parsed.options);
+    case "demo":
+    case "research-demo":
+    case "strategy-demo":
+      return runDemoCommand(client, parsed.command, parsed.options, includeCandidatesDefault);
+    case "eval":
+      return runEvalCommand(client, parsed.options);
+    default:
+      throw new Error(`Unknown command: ${parsed.command}\n\n${USAGE}`);
   }
-
-  if (parsed.command === "writeback") {
-    const writeback = await client.createWriteback(await readWritebackRequest(parsed.options));
-    return `${formatWritebackResponse(writeback)}\n`;
-  }
-
-  if (parsed.command === "demo" || parsed.command === "research-demo" || parsed.command === "strategy-demo") {
-    const context = await client.getContext(readContextRequest(parsed.options, config.includeCandidates));
-    const shouldRecordWriteback = readBooleanOption(parsed.options, "recordWriteback", false);
-    const writeback = shouldRecordWriteback
-      ? await client.createWriteback(await readWritebackRequest({
-        ...parsed.options,
-        summary: readStringOption(parsed.options, "summary") ??
-          "Demo coding-agent session fetched Sivraj context and validated the handoff flow.",
-      }))
-      : undefined;
-    const mode = parsed.command === "research-demo"
-      ? "research"
-      : parsed.command === "strategy-demo"
-        ? "strategy"
-        : "coding";
-
-    return `${formatDemoResponse({
-      context,
-      writeback,
-      mode,
-      question: readStringOption(parsed.options, "question"),
-    })}\n`;
-  }
-
-  if (parsed.command === "eval") {
-    const task = readStringOption(parsed.options, "task") ?? "Unspecified coding-agent task";
-    const context = await client.getContext(readContextRequest({
-      ...parsed.options,
-      includeCandidate: readStringOption(parsed.options, "includeCandidate") ?? "false",
-    }, false));
-
-    return `${formatEvalHarnessResponse({ task, context })}\n`;
-  }
-
-  throw new Error(`Unknown command: ${parsed.command}\n\n${USAGE}`);
-}
-
-function readContextRequest(
-  options: Record<string, string | boolean | string[]>,
-  includeCandidatesDefault: boolean,
-): ContextRequest {
-  const approvedOnly = readBooleanOption(options, "approvedOnly", false);
-
-  return {
-    preset: readPreset(options),
-    projectName: readStringOption(options, "projectName"),
-    projectId: readStringOption(options, "projectId"),
-    repoName: readStringOption(options, "repoName"),
-    packageName: readStringOption(options, "packageName"),
-    gitRemote: readStringOption(options, "gitRemote"),
-    packageManager: readStringOption(options, "packageManager"),
-    frameworks: readListOption(options, "frameworks"),
-    lockfiles: readListOption(options, "lockfiles"),
-    rootMarkers: readListOption(options, "rootMarkers"),
-    artifactId: readStringOption(options, "artifactId"),
-    includeCandidate: approvedOnly
-      ? false
-      : readBooleanOption(options, "includeCandidate", includeCandidatesDefault),
-    includeSuperseded: readBooleanOption(options, "includeSuperseded", false),
-    includeTemporary: readBooleanOption(options, "includeTemporary", false),
-    maxItemsPerSection: readNumberOption(options, "maxItems"),
-    limit: readNumberOption(options, "limit"),
-  };
-}
-
-async function readWritebackRequest(
-  options: Record<string, string | boolean | string[]>,
-): Promise<WritebackRequest> {
-  const taskSummary = readStringOption(options, "summary") ??
-    await readSummaryFile(readStringOption(options, "summaryFile"));
-
-  if (!taskSummary) {
-    throw new Error("Missing required writeback summary. Use --summary or --summary-file.");
-  }
-
-  return {
-    agentName: readStringOption(options, "agentName") ?? "Sivraj CLI",
-    repo: readStringOption(options, "repo"),
-    branch: readStringOption(options, "branch"),
-    taskSummary,
-    filesTouched: readListOption(options, "filesTouched"),
-    commandsRun: readListOption(options, "commandsRun"),
-    testsRun: readListOption(options, "testsRun"),
-    decisions: readListOption(options, "decisions"),
-    bugsFound: readListOption(options, "bugsFound"),
-    followUps: readListOption(options, "followUps"),
-    userCorrections: readListOption(options, "userCorrections"),
-  };
-}
-
-async function readSummaryFile(path: string | undefined): Promise<string | undefined> {
-  if (!path) {
-    return undefined;
-  }
-
-  return (await readFile(path, "utf8")).trim();
-}
-
-function readPreset(options: Record<string, string | boolean | string[]>): string {
-  const preset = readStringOption(options, "preset");
-
-  if (preset === "claude_code" || preset === "cursor" || preset === "generic_mcp") {
-    return preset;
-  }
-
-  return "codex";
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

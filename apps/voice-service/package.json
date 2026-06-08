@@ -1,0 +1,14 @@
+{
+  "name": "@sivraj/voice-service",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "benchmark:cartesia": "node benchmark-cartesia.mjs",
+    "benchmark:space": "node benchmark-space.mjs",
+    "test": "vitest run benchmark-helpers.test.mjs"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.6",
+    "vitest": "^4.1.6"
+  }
+}

@@ -2,8 +2,14 @@ import { graphEdges, graphNodes, memoryFragments } from "@sivraj/db";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
+import {
+  artifactScopedGraphNodeName,
+  collectArtifactScopedGraphIds,
+} from "../lib/graph/scoped-loader.js";
 import { recordMetadata, sanitizeSafeMetadata } from "../lib/safe-metadata.js";
-import { requireAuth, requireScope, type AuthEnv } from "../middleware/auth.js";
+import { requireAuth, type AuthEnv } from "../middleware/auth.js";
+import { authorizeTwinRoute } from "../lib/http/route-auth.js";
+import { readOptionalQueryUuid, readQueryLimit, selectOrderedGraphNodes } from "../lib/http/route-helpers.js";
 
 const GRAPH_NODE_TYPES = [
   "person",
@@ -24,26 +30,15 @@ export function createGraphRoutes({ db }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
 
   routes.get("/", requireAuth, async (c) => {
-    const scopeError = requireScope(c, "memory:read");
-
-    if (scopeError) {
-      return scopeError;
+    const routeAuth = authorizeTwinRoute(c, "memory:read");
+    if (!routeAuth.ok) {
+      return routeAuth.response;
     }
-
-    const auth = c.get("auth");
-    const twinId = c.req.param("twinId");
-
-    if (!twinId) {
-      return c.json({ error: "missing_twin_id" }, 400);
-    }
-
-    if (auth.type !== "service" && auth.twinId !== twinId) {
-      return c.json({ error: "twin_scope_mismatch" }, 403);
-    }
+    const { twinId } = routeAuth.value;
 
     const nodeType = readNodeType(c.req.query("nodeType"));
-    const artifactId = readOptionalUuid(c.req.query("artifactId"));
-    const limit = readLimit(c.req.query("limit"));
+    const artifactId = readOptionalQueryUuid(c.req.query("artifactId"));
+    const limit = readQueryLimit(c.req.query("limit"), 100, 500);
 
     const graph = artifactId
       ? await loadArtifactScopedGraph({
@@ -79,17 +74,12 @@ async function loadTwinGraph(input: {
   nodeType: GraphNodeType | null;
   limit: number;
 }) {
-  const nodeRows = await input.db
-    .select()
-    .from(graphNodes)
-    .where(
-      and(
-        eq(graphNodes.twinId, input.twinId),
-        ...(input.nodeType ? [eq(graphNodes.nodeType, input.nodeType)] : []),
-      ),
-    )
-    .orderBy(desc(graphNodes.updatedAt))
-    .limit(input.limit);
+  const nodeRows = await selectOrderedGraphNodes({
+    db: input.db,
+    twinId: input.twinId,
+    nodeType: input.nodeType,
+    limit: input.limit,
+  });
 
   const nodeIds = nodeRows.map((node) => node.id);
   const edgeRows = nodeIds.length === 0
@@ -123,8 +113,6 @@ async function loadArtifactScopedGraph(input: {
   limit: number;
 }) {
   const memoryFragment = await findMemoryFragment(input.db, input.twinId, input.artifactId);
-  const scopedNodeIds = new Set<string>();
-  const scopedEdgeIds = new Set<string>();
 
   const artifactNodes = await input.db
     .select({ id: graphNodes.id })
@@ -132,13 +120,9 @@ async function loadArtifactScopedGraph(input: {
     .where(
       and(
         eq(graphNodes.twinId, input.twinId),
-        eq(graphNodes.normalizedName, `source_artifact:${input.artifactId}`),
+        eq(graphNodes.normalizedName, artifactScopedGraphNodeName(input.artifactId)),
       ),
     );
-
-  for (const node of artifactNodes) {
-    scopedNodeIds.add(node.id);
-  }
 
   const propertyLinkedNodes = await input.db
     .select({ id: graphNodes.id })
@@ -153,10 +137,6 @@ async function loadArtifactScopedGraph(input: {
       ),
     );
 
-  for (const node of propertyLinkedNodes) {
-    scopedNodeIds.add(node.id);
-  }
-
   const evidenceEdges = memoryFragment
     ? await input.db
       .select()
@@ -169,16 +149,9 @@ async function loadArtifactScopedGraph(input: {
       )
     : [];
 
-  for (const edge of evidenceEdges) {
-    scopedEdgeIds.add(edge.id);
-    scopedNodeIds.add(edge.fromNodeId);
-    scopedNodeIds.add(edge.toNodeId);
-  }
-
   const artifactNodeIds = artifactNodes.map((node) => node.id);
-
-  if (artifactNodeIds.length > 0) {
-    const connectedEdges = await input.db
+  const connectedEdges = artifactNodeIds.length > 0
+    ? await input.db
       .select()
       .from(graphEdges)
       .where(
@@ -189,14 +162,15 @@ async function loadArtifactScopedGraph(input: {
             inArray(graphEdges.toNodeId, artifactNodeIds),
           ),
         ),
-      );
-
-    for (const edge of connectedEdges) {
-      scopedEdgeIds.add(edge.id);
-      scopedNodeIds.add(edge.fromNodeId);
-      scopedNodeIds.add(edge.toNodeId);
-    }
-  }
+      )
+    : [];
+  const { scopedNodeIds, scopedEdgeIds } = collectArtifactScopedGraphIds({
+    artifactId: input.artifactId,
+    artifactNodeIds,
+    propertyLinkedNodeIds: propertyLinkedNodes.map((node) => node.id),
+    evidenceEdges,
+    connectedEdges,
+  });
 
   const nodeIdArray = Array.from(scopedNodeIds);
 
@@ -207,18 +181,13 @@ async function loadArtifactScopedGraph(input: {
     };
   }
 
-  const nodeRows = await input.db
-    .select()
-    .from(graphNodes)
-    .where(
-      and(
-        eq(graphNodes.twinId, input.twinId),
-        inArray(graphNodes.id, nodeIdArray),
-        ...(input.nodeType ? [eq(graphNodes.nodeType, input.nodeType)] : []),
-      ),
-    )
-    .orderBy(desc(graphNodes.updatedAt))
-    .limit(input.limit);
+  const nodeRows = await selectOrderedGraphNodes({
+    db: input.db,
+    twinId: input.twinId,
+    nodeType: input.nodeType,
+    nodeIds: nodeIdArray,
+    limit: input.limit,
+  });
 
   const visibleNodeIds = nodeRows.map((node) => node.id);
 
@@ -306,23 +275,3 @@ function readNodeType(value: string | undefined): GraphNodeType | null {
     : null;
 }
 
-function readOptionalUuid(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
-    ? trimmed
-    : null;
-}
-
-function readLimit(value: string | undefined): number {
-  const parsed = Number.parseInt(value ?? "100", 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return 100;
-  }
-
-  return Math.min(parsed, 500);
-}

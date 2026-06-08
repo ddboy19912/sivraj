@@ -1,3 +1,4 @@
+import { formatWritebackApiResponseMarkdown } from "@sivraj/core";
 import type { JsonObject } from "./client.js";
 
 export function readContextExportContent(response: JsonObject): string {
@@ -32,14 +33,7 @@ export function formatContextSummary(response: JsonObject): string {
 }
 
 export function formatWritebackResponse(response: JsonObject): string {
-  return [
-    "# Sivraj Agent Writeback",
-    "",
-    `Writeback: ${String(response["writebackId"] ?? "unknown")}`,
-    `Status: ${String(response["status"] ?? "unknown")}`,
-    `Storage: ${String(response["storageMode"] ?? "unknown")}`,
-    `Warning: ${String(response["warning"] ?? "pending_review")}`,
-  ].join("\n");
+  return formatWritebackApiResponseMarkdown(response);
 }
 
 export function formatDemoResponse(input: {

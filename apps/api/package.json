@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "onboarding:reset": "tsx scripts/reset-onboarding.mjs",
     "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -19,10 +20,11 @@
     "@sivraj/db": "workspace:*",
     "@sivraj/ingestion": "workspace:*",
     "@sivraj/intelligence": "workspace:*",
+    "@sivraj/llm": "workspace:*",
+    "@sivraj/private-memory-reader": "workspace:*",
     "@sivraj/queue": "workspace:*",
     "@sivraj/retrieval": "workspace:*",
     "@sivraj/storage-walrus": "workspace:*",
-    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
     "pg": "^8.20.0"

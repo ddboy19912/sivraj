@@ -5,6 +5,7 @@ import type {
   PatternSignal,
 } from "../types.js";
 import { behaviorPatternSubject } from "../behavior-patterns.js";
+import { buildDetectedPatternEvidenceFields, repeatedEvidenceConfidence, unique } from "./detector-utils.js";
 
 export function createRepeatedBehaviorDetector(): PatternDetector {
   return {
@@ -30,10 +31,7 @@ export function createRepeatedBehaviorDetector(): PatternDetector {
         .map(([patternKey, group]) => {
           const subject = behaviorPatternSubject(patternKey);
           const evidenceCount = group.length;
-          const confidence = Math.min(
-            0.95,
-            average(group.map((signal) => signal.confidence)) + Math.min(0.2, (evidenceCount - 2) * 0.05),
-          );
+          const confidence = repeatedEvidenceConfidence(group);
 
           return {
             patternType: "repeated_behavior_theme",
@@ -42,11 +40,7 @@ export function createRepeatedBehaviorDetector(): PatternDetector {
             normalizedSubject: patternKey,
             confidence,
             evidenceCount,
-            sourceArtifactIds: unique(group.map((signal) => signal.sourceArtifactId)),
-            memoryFragmentIds: unique(group.map((signal) => signal.memoryFragmentId)),
-            candidateMemoryIds: unique(group.map((signal) => signal.candidateMemoryId)),
-            memoryTypes: unique(group.map((signal) => signal.memoryType)),
-            sourceTypes: unique(group.map((signal) => signal.sourceType)),
+            ...buildDetectedPatternEvidenceFields(group),
             detector: "repeated_behavior_detector",
           } satisfies DetectedPattern;
         });
@@ -69,16 +63,4 @@ function patternHash(patternKey: string): string {
   return createHash("sha256")
     .update(`repeated_behavior_theme:${patternKey}`)
     .digest("hex");
-}
-
-function average(values: number[]): number {
-  if (values.length === 0) {
-    return 0.5;
-  }
-
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function unique<T>(values: T[]): T[] {
-  return Array.from(new Set(values));
 }

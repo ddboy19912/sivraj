@@ -122,71 +122,72 @@ const SOURCE_CODE_CONFIG_BASENAMES = new Set([
 export function detectEngineeringSourceKind(
   input: EngineeringSourceDetectionInput,
 ): EngineeringSourceDetectionResult {
-  const normalizedPath = normalizePath(
+  const normalizedPath = resolveNormalizedPath(input);
+  const pathMatch = detectSourceKindFromPath(normalizedPath, input.path ? "path" : "fileName");
+
+  if (pathMatch) {
+    return pathMatch;
+  }
+
+  const sourceKindFromMetadata = sourceKindForMetadata(input.metadata);
+
+  if (sourceKindFromMetadata) {
+    return buildSourceDetectionResult(sourceKindFromMetadata, "metadata", normalizedPath);
+  }
+
+  const sourceKindFromSourceType = sourceKindForSourceType(input.sourceType);
+
+  if (sourceKindFromSourceType) {
+    return buildSourceDetectionResult(sourceKindFromSourceType, "sourceType", normalizedPath);
+  }
+
+  return buildSourceDetectionResult("unknown", "none", normalizedPath);
+}
+
+function resolveNormalizedPath(input: EngineeringSourceDetectionInput): string | null {
+  return normalizePath(
     input.path ??
       input.fileName ??
       readStringMetadata(input.metadata, "fileName") ??
       readStringMetadata(input.metadata, "path") ??
       null,
   );
+}
 
-  if (normalizedPath) {
-    if (isAgentInstructionFilePath(normalizedPath)) {
-      return {
-        sourceKind: "agent_instruction_file",
-        matchedBy: input.path ? "path" : "fileName",
-        normalizedPath,
-        isAgentInstructionFile: true,
-      };
-    }
-
-    if (isRepoDocumentationPath(normalizedPath)) {
-      return {
-        sourceKind: "repo_documentation",
-        matchedBy: input.path ? "path" : "fileName",
-        normalizedPath,
-        isAgentInstructionFile: false,
-      };
-    }
-
-    if (isSourceCodeConfigPath(normalizedPath)) {
-      return {
-        sourceKind: "source_code_config",
-        matchedBy: input.path ? "path" : "fileName",
-        normalizedPath,
-        isAgentInstructionFile: false,
-      };
-    }
-  }
-
-  const sourceKindFromMetadata = sourceKindForMetadata(input.metadata);
-
-  if (sourceKindFromMetadata) {
-    return {
-      sourceKind: sourceKindFromMetadata,
-      matchedBy: "metadata",
-      normalizedPath,
-      isAgentInstructionFile: false,
-    };
-  }
-
-  const sourceKindFromSourceType = sourceKindForSourceType(input.sourceType);
-
-  if (sourceKindFromSourceType) {
-    return {
-      sourceKind: sourceKindFromSourceType,
-      matchedBy: "sourceType",
-      normalizedPath,
-      isAgentInstructionFile: false,
-    };
-  }
-
+function buildSourceDetectionResult(
+  sourceKind: EngineeringSourceKind,
+  matchedBy: EngineeringSourceDetectionResult["matchedBy"],
+  normalizedPath: string | null,
+): EngineeringSourceDetectionResult {
   return {
-    sourceKind: "unknown",
-    matchedBy: "none",
+    sourceKind,
+    matchedBy,
     normalizedPath,
-    isAgentInstructionFile: false,
+    isAgentInstructionFile: sourceKind === "agent_instruction_file",
   };
+}
+
+function detectSourceKindFromPath(
+  normalizedPath: string | null,
+  matchedBy: "path" | "fileName",
+): EngineeringSourceDetectionResult | null {
+  if (!normalizedPath) {
+    return null;
+  }
+
+  if (isAgentInstructionFilePath(normalizedPath)) {
+    return buildSourceDetectionResult("agent_instruction_file", matchedBy, normalizedPath);
+  }
+
+  if (isRepoDocumentationPath(normalizedPath)) {
+    return buildSourceDetectionResult("repo_documentation", matchedBy, normalizedPath);
+  }
+
+  if (isSourceCodeConfigPath(normalizedPath)) {
+    return buildSourceDetectionResult("source_code_config", matchedBy, normalizedPath);
+  }
+
+  return null;
 }
 
 export function isAgentInstructionFile(pathOrFileName: string): boolean {
@@ -319,30 +320,21 @@ function isSourceCodeConfigPath(normalizedPath: string): boolean {
   return SOURCE_CODE_CONFIG_BASENAMES.has(pathBasename(normalizedPath));
 }
 
+const SOURCE_KIND_BY_SOURCE_TYPE: Record<string, EngineeringSourceKind> = {
+  github: "github_import",
+  chat_export: "chat_conversation",
+  slack_export: "chat_conversation",
+  whatsapp_export: "chat_conversation",
+  voice_conversation: "voice_conversation",
+  voice_note: "voice_conversation",
+  note: "manual_note",
+  onboarding_self_description: "manual_note",
+};
+
 function sourceKindForSourceType(sourceType: string | null | undefined):
   | EngineeringSourceKind
   | null {
-  if (!sourceType) {
-    return null;
-  }
-
-  if (sourceType === "github") {
-    return "github_import";
-  }
-
-  if (sourceType === "chat_export" || sourceType === "slack_export" || sourceType === "whatsapp_export") {
-    return "chat_conversation";
-  }
-
-  if (sourceType === "voice_conversation" || sourceType === "voice_note") {
-    return "voice_conversation";
-  }
-
-  if (sourceType === "note" || sourceType === "onboarding_self_description") {
-    return "manual_note";
-  }
-
-  return null;
+  return sourceType ? SOURCE_KIND_BY_SOURCE_TYPE[sourceType] ?? null : null;
 }
 
 function sourceKindForMetadata(metadata: Record<string, unknown> | null | undefined):
