@@ -357,7 +357,7 @@ Current writeback path:
 - `sivraj.recordAgentWriteback` submits to `POST /v1/twins/:twinId/agents/writebacks`.
 - Local/dev agents may let the API encrypt the writeback and store a pending review record.
 - Remote MCP agents should set `SIVRAJ_WRITEBACK_ENCRYPTION=client`. In that mode the MCP process formats the full writeback locally, Seal-encrypts it locally, sends only ciphertext plus safe hashes/counts to the API, and the API stores that ciphertext on Walrus.
-- The UI exposes `Testing Console -> Agent Writebacks` for approve/reject review.
+- Writeback approve/reject review should live in the product review surface; the removed diagnostics page no longer exposes this workflow.
 - Approval creates the encrypted private `note` artifact and queues normal processing.
 - The worker then extracts candidate engineering memories for user review.
 
@@ -383,8 +383,8 @@ These endpoints convert completed pull requests and commits into encrypted pendi
 
 Permission control:
 
-- `Testing Console -> Agent Permissions` creates scoped coding-agent tokens.
-- The same page lists active/revoked/expired grants and lets the user revoke a grant.
+- Product permission management creates scoped coding-agent tokens.
+- The permission management surface lists active/revoked/expired grants and lets the user revoke a grant.
 - Agent tokens are time-limited. Agent reads/search/writebacks require an active, unexpired, unrevoked grant before the API serves the request.
 - Agent-scoped context assembly now checks both the JWT scope and the persisted grant scopes. Revoking or narrowing a grant prevents stale tokens from continuing to receive engineering context, project profile data, sources, memory search, or writeback access.
 

@@ -101,5 +101,5 @@ export function runMapsNonOnboardingBusyWorkToThinking() {
 }
 
 export function runReturnsNullOnNonHomeTabs() {
-  expect(getHomeAgentState(homeSignals({ activeTab: "console" }))).toBeNull();
+  expect(getHomeAgentState(homeSignals({ activeTab: "chat" }))).toBeNull();
 }

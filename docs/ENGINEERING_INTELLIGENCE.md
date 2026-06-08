@@ -197,7 +197,7 @@ The first slice should be deterministic and source-faithful:
 3. Extract candidate engineering memories from instruction files.
 4. Classify extracted rules by scope.
 5. Store extracted rules as encrypted candidate memories with safe metadata.
-6. Expose them through the candidate review and graph/testing console.
+6. Expose them through product-owned candidate review and graph surfaces.
 
 The LLM can help classify and extract rules, but deterministic detection decides that the file is an engineering instruction source.
 

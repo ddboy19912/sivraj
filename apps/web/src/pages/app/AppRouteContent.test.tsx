@@ -1,7 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ChatRoute from "@/pages/app/ChatRoute";
-import ConsoleRoute from "@/pages/app/ConsoleRoute";
 import HomeRoute from "@/pages/app/HomeRoute";
 import type { AppRouteContextValue } from "@/providers/app-route-context";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
@@ -11,10 +10,6 @@ const homepageMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/chat/ChatPage", () => ({
   ChatPage: () => <section aria-label="Chat page" />,
-}));
-
-vi.mock("@/console/ConsoleShell", () => ({
-  ConsoleShell: () => <section aria-label="Console shell" />,
 }));
 
 vi.mock("@/pages/Homepage", () => ({
@@ -57,15 +52,6 @@ describe("app route content", () => {
     renderRoute(<ChatRoute />, createRouteContext({ canUseProtectedApp: false }));
 
     expect(screen.queryByLabelText("Chat page")).not.toBeInTheDocument();
-  });
-
-  it("does not mount protected console before verified access", () => {
-    renderRoute(
-      <ConsoleRoute />,
-      createRouteContext({ canUseProtectedApp: false }),
-    );
-
-    expect(screen.queryByLabelText("Console shell")).not.toBeInTheDocument();
   });
 
   it("mounts protected tabs after verified access", () => {

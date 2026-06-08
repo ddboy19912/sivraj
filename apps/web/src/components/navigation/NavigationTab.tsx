@@ -2,7 +2,6 @@ import {
   Home,
   MessageCircle,
   Settings,
-  Terminal,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -10,7 +9,7 @@ import { NavigationTabButton } from "@/components/navigation/NavigationTabButton
 import { liquidGlass } from "@/lib/ui/liquid-glass";
 import { cn } from "@/lib/ui/utils";
 
-export type NavigationTabId = "home" | "chat" | "console" | "settings";
+export type NavigationTabId = "home" | "chat" | "settings";
 
 const TABS: {
   id: NavigationTabId;
@@ -19,7 +18,6 @@ const TABS: {
 }[] = [
   { id: "home", label: "Home", icon: Home },
   { id: "chat", label: "Chat", icon: MessageCircle },
-  { id: "console", label: "Testing Console", icon: Terminal },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

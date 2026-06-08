@@ -3,6 +3,7 @@ import { AppGlobalOverlay } from "@/components/app/AppGlobalOverlay";
 import { ProviderConfigDialog } from "@/components/chat/ProviderConfigDialog";
 import { AOSInit } from "@/components/common/AOSInit";
 import { Navbar } from "@/components/navigation/Navbar";
+import { TerminalOverlay } from "@/components/terminal/TerminalOverlay";
 import {
   NavigationTab,
   type NavigationTabId,
@@ -64,6 +65,12 @@ export function AppLayout() {
         onProviderChanged={app.setProviderState}
       />
       <NavigationTab activeTab={activeTab} onTabChange={selectTab} />
+      <TerminalOverlay
+        key={app.onboarding.canUseProtectedApp ? "terminal-enabled" : "terminal-disabled"}
+        enabled={app.onboarding.canUseProtectedApp}
+        session={app.onboarding.session}
+        onSessionRefreshed={app.onboarding.setSession}
+      />
       <div
         className="ambient-ui-dot-grid pointer-events-none absolute inset-0"
         aria-hidden="true"

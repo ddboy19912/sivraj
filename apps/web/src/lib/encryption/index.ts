@@ -1,11 +1,8 @@
 import {
-  buildEncryptedAgentWritebackRequestBody,
-  buildAgentWritebackEncryptionArtifacts,
   buildEncryptedPayloadBody,
   buildPrivateSourceArtifactAad,
   buildPrivateSourceArtifactPayload,
   encodeBytesBase64,
-  normalizeAgentWritebackFields,
   parseSealKeyServers,
   readSuiNetwork,
 } from '@/lib/encryption/sivraj-core'
@@ -244,51 +241,11 @@ export async function buildClientEncryptedArtifactBody(input: {
   }
 }
 
-export async function buildClientEncryptedAgentWritebackBody(input: {
-  twinId: string
-  agentName: string
-  repo: string
-  branch: string
-  taskSummary: string
-  filesTouched: string[]
-  commandsRun: string[]
-  testsRun: string[]
-  decisions: string[]
-  bugsFound: string[]
-  followUps: string[]
-  userCorrections: string[]
-}): Promise<Record<string, unknown>> {
-  const fields = normalizeAgentWritebackFields(input)
-  const artifacts = buildAgentWritebackEncryptionArtifacts({
-    twinId: input.twinId,
-    importer: 'sivraj_web_test_console',
-    fields,
-  })
-
-  const [taskSummarySha256, encryptedPayload] = await Promise.all([
-    sha256Text(input.taskSummary),
-    buildClientEncryptedPayloadBody({
-      plaintextBytes: artifacts.plaintextBytes,
-      aadBytes: artifacts.aadBytes,
-    }),
-  ])
-
-  return buildEncryptedAgentWritebackRequestBody({
-    fields,
-    taskSummarySha256,
-    encryptedPayload,
-  })
-}
-
 function publicArtifactMetadata(metadata: Record<string, unknown>) {
   const blockedKeys = new Set(['fileName', 'filename', 'file_name', 'file', 'path', 'sourceFile', 'source_file', 'title', 'content', 'text', 'body', 'summary', 'transcript'])
   return Object.fromEntries(
     Object.entries(metadata).filter(([key]) => !blockedKeys.has(key)),
   )
-}
-
-async function sha256Text(value: string) {
-  return sha256Hex(new TextEncoder().encode(value))
 }
 
 export type { SourceType }

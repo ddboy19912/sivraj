@@ -662,21 +662,51 @@ Live upload acceptance is not complete on UI success alone. Confirm:
 
 See [Seal policy smoke test](./SEAL_POLICY.md#live-manual-memory-smoke-test).
 
-### Intelligence Testing Console
+### Terminal Command API
 
-The current web UI can include a temporary testing console before final product redesign. This console is not the canonical consumer UX; it exists so local testing can verify the intelligence track without constantly switching to Beekeeper.
+The web app includes a signed-in liquid terminal overlay opened with `Ctrl+\``. It is not a shell. The browser parses supported commands and the API executes only allowlisted command IDs.
 
-Recommended POC pages:
+```http
+POST /v1/twins/:twinId/terminal/commands
+```
 
-- **Ingestion Test:** manual note, file upload, voice note, and voice conversation submission against `POST /v1/twins/:twinId/artifacts`.
-- **Artifact Status:** live artifact status, processing state, intelligence state, worker timing metadata, and retry action.
-- **Retrieval Test:** query box for `POST /v1/twins/:twinId/memories/search` with citations.
-- **Candidate Review:** list candidate memories by safe metadata, show storage refs/hashes, approve/reject with `POST /v1/twins/:twinId/feedback`.
-- **Graph Inspector:** list graph nodes and edges for projects, goals, decisions, concepts, and patterns.
-- **Weekly Reflection:** call `POST /v1/twins/:twinId/reflections/weekly`, then list runs with `GET /v1/twins/:twinId/reflections`.
-- **Privacy Check:** show storage refs, ciphertext hashes, processing metadata, and a checklist that private content is stored by encrypted refs rather than plaintext DB columns.
+Request body:
 
-API verification remains part of the test plan. The UI proves end-to-end usability; direct API/DB checks prove contracts, privacy boundaries, and failure modes.
+```json
+{
+  "commandId": "onboarding.reset",
+  "args": [],
+  "flags": { "dryRun": true }
+}
+```
+
+Response body:
+
+```json
+{
+  "commandId": "onboarding.reset",
+  "status": "success",
+  "lines": [{ "kind": "info", "text": "Dry run complete." }],
+  "effects": []
+}
+```
+
+Supported API-backed commands:
+
+- `onboarding status`
+- `onboarding reset --dry-run`
+- `onboarding reset --confirm`
+- `connectors list`
+- `connectors sync <accountId>`
+- `audit recent [limit]`
+
+Client-only commands:
+
+- `help`
+- `whoami`
+- `session clear`
+
+Mutating commands require explicit confirmation syntax. `onboarding reset` defaults to a dry run and is scoped to the authenticated user, wallet address, and twin route.
 
 ### Memory Fragment
 

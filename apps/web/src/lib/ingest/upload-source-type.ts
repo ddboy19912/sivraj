@@ -26,35 +26,3 @@ export function inferUploadSourceType(file: File): SourceType {
 
   return 'upload'
 }
-
-export function buildUploadMetadata(file: File, sourceType: SourceType) {
-  return {
-    fileName: file.name,
-    fileType: file.type || inferFileType(file.name),
-    fileSize: file.size,
-    uploadKind: 'file' as const,
-    ...(sourceType === 'browser_history'
-      ? { importer: 'browser_history_export' as const }
-      : sourceType === 'chat_export'
-        ? { importer: 'ai_chat_export' as const }
-      : {}),
-  }
-}
-
-function inferFileType(name: string) {
-  const normalized = name.toLowerCase()
-
-  if (normalized.endsWith('.json')) {
-    return 'application/json'
-  }
-
-  if (normalized.endsWith('.csv')) {
-    return 'text/csv'
-  }
-
-  if (normalized.endsWith('.html') || normalized.endsWith('.htm')) {
-    return 'text/html'
-  }
-
-  return isMarkdownFile({ name, type: '' } as File) ? 'text/markdown' : 'text/plain'
-}

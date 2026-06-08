@@ -324,10 +324,6 @@ async function readAudioResponse(response: Response): Promise<Blob> {
   return response.blob()
 }
 
-export function storeSessionForTests(session: Session) {
-  storeSession(session)
-}
-
 function isNewerSessionForSameWallet(
   staleSession: Session,
   candidateSession: Session,

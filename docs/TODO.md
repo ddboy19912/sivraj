@@ -112,22 +112,16 @@
 - [x] Weekly reflection generation.
 - [x] User feedback capture.
 
-## Testing Console UI
+## Terminal Overlay
 
-Temporary POC UI for verifying the backend and intelligence layer before final product redesign.
+Keyboard-opened command surface for signed-in users. The old temporary diagnostics page has been removed.
 
-- [x] Create test console navigation/pages.
-- [x] Add ingestion test page for manual note, file uploads, voice note, and voice conversation.
-- [x] Add artifact status page with live processing, intelligence status, timings, and retry controls.
-- [x] Add retrieval test page for `POST /v1/twins/:twinId/memories/search`.
-- [x] Add candidate memory review page with approve/reject feedback actions.
-- [x] Add coding agent context export page with raw JSON and copyable markdown packet.
-- [x] Add engineering instruction sources page showing uploaded instruction files and extracted memories.
-- [x] Add graph inspection page for projects, goals, decisions, concepts, patterns, and edges.
-- [x] Add weekly reflection test page with generate/list status controls.
-- [x] Add privacy verification page showing storage refs, hashes, and no-plaintext checklist.
-- [x] Add API testing guide with curl examples for ingestion, retrieval, feedback, and weekly reflections.
-- [x] Add UI tests for the testing console critical flows.
+- [x] Remove diagnostics navigation, route, page tree, fixtures, and types.
+- [x] Add draggable liquid terminal overlay opened with `Ctrl+\``.
+- [x] Add allowlisted terminal command parser and reducer.
+- [x] Add typed backend terminal command endpoint for supported account/twin operations.
+- [x] Add signed-in-user-scoped onboarding reset command with dry-run default and explicit confirmation.
+- [x] Add focused tests for terminal parsing, overlay shortcut/drag behavior, route auth, and onboarding reset.
 
 ## Engineering Intelligence
 

@@ -6,7 +6,6 @@ import { ThemeProvider } from "@/providers/theme-provider";
 
 const HomeRoute = lazy(() => import("@/pages/app/HomeRoute"));
 const ChatRoute = lazy(() => import("@/pages/app/ChatRoute"));
-const ConsoleRoute = lazy(() => import("@/pages/app/ConsoleRoute"));
 
 function App() {
   const [queryClient] = useState(
@@ -35,10 +34,6 @@ function App() {
               <Route
                 path="chat"
                 element={<RoutedPage page={<ChatRoute />} />}
-              />
-              <Route
-                path="console"
-                element={<RoutedPage page={<ConsoleRoute />} />}
               />
               <Route path="home" element={<Navigate to="/" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

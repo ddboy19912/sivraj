@@ -39,6 +39,7 @@ import { createIdentityProfileRoutes } from "./routes/identity-profile.js";
 import { createMemoryRoutes } from "./routes/memories.js";
 import { createReflectionRoutes } from "./routes/reflections.js";
 import { createSecurityRoutes } from "./routes/security.js";
+import { createTerminalRoutes } from "./routes/terminal.js";
 import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
 import { createTwinProfileRoutes } from "./routes/twin-profile.js";
 import { createVoiceRoutes } from "./routes/voice.js";
@@ -192,6 +193,7 @@ function createApp(
   app.route("/v1/twins/:twinId/feedback", createFeedbackRoutes(dependencies));
   app.route("/v1/twins/:twinId/chat", createChatRoutes(dependencies));
   app.route("/v1/twins/:twinId/voice", createVoiceRoutes(dependencies));
+  app.route("/v1/twins/:twinId/terminal", createTerminalRoutes(dependencies));
   app.route(
     "/v1/twins/:twinId/reflections",
     createReflectionRoutes(dependencies),
