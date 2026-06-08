@@ -1,41 +1,61 @@
-/**
- * @license
- *
- * Adapted from LiveKit Agents UI Agent Audio Visualizer Aura.
- * Originally developed for Unicorn Studio.
- * Licensed under the Polyform Non-Resale License 1.0.0.
- */
-
 import type {
   AgentState,
   TrackReferenceOrPlaceholder,
 } from "@livekit/components-react";
+import { cva, type VariantProps } from "class-variance-authority";
 import type { LocalAudioTrack, RemoteAudioTrack } from "livekit-client";
 import type { ComponentProps } from "react";
 import { ReactShaderToy } from "@/components/agents-ui/react-shader-toy";
 import { useAgentAudioVisualizerAura } from "@/hooks/agents-ui/use-agent-audio-visualizer-aura";
+import { cn } from "@/lib/ui/utils";
 import { useTheme } from "@/providers/theme-context";
 
 const DEFAULT_COLOR = "#1FD5F9";
+const DEFAULT_RGB_COLOR: [number, number, number] = [0, 0.7, 1];
+
+function hexToRgb(hexColor: string): [number, number, number] {
+  try {
+    const rgbColor = hexColor.match(
+      /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
+    );
+
+    if (rgbColor) {
+      const [, r, g, b] = rgbColor;
+      const color = [r, g, b].map((c = "00") => parseInt(c, 16) / 255);
+
+      return color as [number, number, number];
+    }
+  } catch {
+    console.error(
+      `Invalid hex color '${hexColor}'.\nFalling back to default color '${DEFAULT_COLOR}'.`,
+    );
+  }
+
+  return hexToRgb(DEFAULT_COLOR);
+}
 
 const shaderSource = `
 const float TAU = 6.283185;
 
+// Noise for dithering
 vec2 randFibo(vec2 p) {
   p = fract(p * vec2(443.897, 441.423));
   p += dot(p, p.yx + 19.19);
   return fract((p.xx + p.yx) * p.xy);
 }
 
+// Tonemap
 vec3 Tonemap(vec3 x) {
   x *= 4.0;
   return x / (1.0 + x);
 }
 
+// Luma for alpha
 float luma(vec3 color) {
   return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
+// RGB to HSV
 vec3 rgb2hsv(vec3 c) {
   vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
   vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
@@ -45,12 +65,14 @@ vec3 rgb2hsv(vec3 c) {
   return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
+// HSV to RGB
 vec3 hsv2rgb(vec3 c) {
   vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
   vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
   return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
+// SDF shapes
 float sdCircle(vec2 st, float r) {
   return length(st) - r;
 }
@@ -68,12 +90,15 @@ float sdLine(vec2 p, float r) {
 float getSdf(vec2 st) {
   if(uShape == 1.0) return sdCircle(st, uScale);
   else if(uShape == 2.0) return sdLine(st, uScale);
-  return sdCircle(st, uScale);
+  return sdCircle(st, uScale); // Default
 }
 
 vec2 turb(vec2 pos, float t, float it) {
+  // Initial rotation matrix for swirl direction
   mat2 rotation = mat2(0.6, -0.25, 0.25, 0.9);
+  // Secondary rotation applied each iteration (approx 53 degree rotation)
   mat2 layerRotation = mat2(0.6, -0.8, 0.8, 0.6);
+
   float frequency = mix(2.0, 15.0, uFrequency);
   float amplitude = uAmplitude;
   float frequencyGrowth = 1.4;
@@ -81,9 +106,14 @@ vec2 turb(vec2 pos, float t, float it) {
 
   const int LAYERS = 4;
   for(int i = 0; i < LAYERS; i++) {
+    // Calculate wave displacement for this layer
     vec2 rotatedPos = pos * rotation;
     vec2 wave = sin(frequency * rotatedPos + float(i) * animTime + it);
+
+    // Apply displacement along rotation direction
     pos += (amplitude / frequency) * rotation[0] * wave;
+
+    // Evolve parameters for next layer
     rotation *= layerRotation;
     amplitude *= mix(1.0, max(wave.x, wave.y), uVariance);
     frequency *= frequencyGrowth;
@@ -96,10 +126,12 @@ const float ITERATIONS = 36.0;
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = fragCoord / iResolution.xy;
+
   vec3 pp = vec3(0.0);
   vec3 bloom = vec3(0.0);
   float t = iTime * 0.5;
   vec2 pos = uv - 0.5;
+
   vec2 prevPos = turb(pos, t, 0.0 - 1.0 / ITERATIONS);
   float spacing = mix(1.0, TAU, uSpacing);
 
@@ -111,10 +143,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     prevPos = st;
     float dynamicBlur = exp2(pd * 2.0 * 1.4426950408889634) - 1.0;
     float ds = smoothstep(0.0, uBlur * 0.05 + max(dynamicBlur * uSmoothing, 0.001), d);
-    vec3 color = uColor;
 
+    // Shift color based on iteration using uColorScale
+    vec3 color = uColor;
     if(uColorShift > 0.01) {
       vec3 hsv = rgb2hsv(color);
+      // Shift hue by iteration
       hsv.x = fract(hsv.x + (1.0 - iter) * uColorShift * 0.3);
       color = hsv2rgb(hsv);
     }
@@ -125,55 +159,175 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   }
 
   pp *= 1.0 / ITERATIONS;
-  bloom = bloom / (bloom + 2e4);
-  vec3 color = (-pp + bloom * 3.0 * uBloom) * 1.2;
-  color += (randFibo(fragCoord).x - 0.5) / 255.0;
-  color = Tonemap(color);
-  float alpha = luma(color) * uMix;
-  fragColor = vec4(color * uMix, alpha);
-}
-`;
 
-type AgentAudioVisualizerAuraProps = {
-  state?: AgentState;
+  vec3 color;
+
+  // Dark mode (default)
+  if(uMode < 0.5) {
+    // use bloom effect
+    bloom = bloom / (bloom + 2e4);
+    color = (-pp + bloom * 3.0 * uBloom) * 1.2;
+    color += (randFibo(fragCoord).x - 0.5) / 255.0;
+    color = Tonemap(color);
+    float alpha = luma(color) * uMix;
+    fragColor = vec4(color * uMix, alpha);
+  }
+
+  // Light mode
+  else {
+    // no bloom effect
+    color = -pp;
+    color += (randFibo(fragCoord).x - 0.5) / 255.0;
+
+    // Preserve hue by tone mapping brightness only
+    float brightness = length(color);
+    vec3 direction = brightness > 0.0 ? color / brightness : color;
+
+    // Reinhard on brightness
+    float factor = 2.0;
+    float mappedBrightness = (brightness * factor) / (1.0 + brightness * factor);
+    color = direction * mappedBrightness;
+
+    // Boost saturation to compensate for white background bleed-through
+    // When alpha < 1.0, white bleeds through making colors look desaturated
+    // So we increase saturation to maintain vibrant appearance
+    float gray = dot(color, vec3(0.2, 0.5, 0.1));
+    float saturationBoost = 3.0;
+    color = mix(vec3(gray), color, saturationBoost);
+
+    // Clamp between 0-1
+    color = clamp(color, 0.0, 1.0);
+
+    float alpha = mappedBrightness * clamp(uMix, 1.0, 2.0);
+    fragColor = vec4(color, alpha);
+  }
+}`;
+
+interface AuraShaderProps {
+  /**
+   * Aurora wave speed
+   * @default 1.0
+   */
+  speed?: number;
+
+  /**
+   * Turbulence amplitude
+   * @default 0.5
+   */
+  amplitude?: number;
+
+  /**
+   * Wave frequency and complexity
+   * @default 0.5
+   */
+  frequency?: number;
+
+  /**
+   * Shape scale
+   * @default 0.3
+   */
+  scale?: number;
+
+  /**
+   * Shape type: 1=circle, 2=line
+   * @default 1
+   */
+  shape?: number;
+
+  /**
+   * Edge blur/softness
+   * @default 1.0
+   */
+  blur?: number;
+
+  /**
+   * Color of the aura in hexidecimal format.
+   * @default '#1FD5F9'
+   */
   color?: `#${string}`;
-  colorShift?: number;
-  audioTrack?: LocalAudioTrack | RemoteAudioTrack | TrackReferenceOrPlaceholder;
-};
 
-export function AgentAudioVisualizerAura({
-  state = "disconnected",
-  color: colorProp,
-  colorShift = 0.05,
-  audioTrack,
+  /**
+   * Color variation across layers (0-1)
+   * Controls how much colors change between iterations
+   * @default 0.5
+   * @example 0.0 - minimal color variation (more uniform)
+   * @example 0.5 - moderate variation (default)
+   * @example 1.0 - maximum variation (rainbow effect)
+   */
+  colorShift?: number;
+
+  /**
+   * Brightness of the aurora (0-1)
+   * @default 1.0
+   */
+  brightness?: number;
+
+  /**
+   * Display mode for different backgrounds
+   * - 'dark': Optimized for dark backgrounds (default)
+   * - 'light': Optimized for light/white backgrounds (inverts colors)
+   * @default 'dark'
+   */
+  themeMode?: "dark" | "light";
+}
+
+function AuraShader({
+  shape = 1.0,
+  speed = 1.0,
+  amplitude = 0.5,
+  frequency = 0.5,
+  scale = 0.2,
+  blur = 1.0,
+  color = DEFAULT_COLOR,
+  colorShift = 1.0,
+  brightness = 1.0,
+  themeMode = "dark",
+  ref,
   className,
   ...props
-}: AgentAudioVisualizerAuraProps & ComponentProps<"div">) {
-  const { color: themeColor } = useTheme();
-  const color = colorProp ?? themeColor;
-  const { speed, scale, amplitude, frequency, brightness } =
-    useAgentAudioVisualizerAura(state, audioTrack);
+}: AuraShaderProps & ComponentProps<"div">) {
   const rgbColor = hexToRgb(color);
 
   return (
-    <div className={className} data-lk-state={state} {...props}>
+    <div ref={ref} className={className} {...props}>
       <ReactShaderToy
         fs={shaderSource}
         devicePixelRatio={globalThis.devicePixelRatio ?? 1}
         uniforms={{
+          // Aurora wave speed
           uSpeed: { type: "1f", value: speed },
-          uBlur: { type: "1f", value: 0.2 },
+          // Edge blur/softness
+          uBlur: { type: "1f", value: blur },
+          // Shape scale
           uScale: { type: "1f", value: scale },
-          uShape: { type: "1f", value: 1 },
+          // Shape type: 1=circle, 2=line
+          uShape: { type: "1f", value: shape },
+          // Wave frequency and complexity
           uFrequency: { type: "1f", value: frequency },
+          // Turbulence amplitude
           uAmplitude: { type: "1f", value: amplitude },
-          uBloom: { type: "1f", value: 0 },
+          // Light intensity (bloom)
+          uBloom: { type: "1f", value: 0.0 },
+          // Brightness of the aurora (0-1)
           uMix: { type: "1f", value: brightness },
+          // Color variation across layers (0-1)
           uSpacing: { type: "1f", value: 0.5 },
+          // Color palette offset - shifts colors along the gradient (0-1)
           uColorShift: { type: "1f", value: colorShift },
+          // Color variation across layers (0-1)
           uVariance: { type: "1f", value: 0.1 },
-          uSmoothing: { type: "1f", value: 1 },
-          uColor: { type: "3fv", value: rgbColor },
+          // Smoothing of the aurora (0-1)
+          uSmoothing: { type: "1f", value: 1.0 },
+          // Display mode: 0=dark background, 1=light background
+          uMode: { type: "1f", value: themeMode === "light" ? 1.0 : 0.0 },
+          // Color
+          uColor: { type: "3fv", value: rgbColor ?? DEFAULT_RGB_COLOR },
+        }}
+        onError={(error) => {
+          console.error("Shader error:", error);
+        }}
+        onWarning={(warning) => {
+          console.warn("Shader warning:", warning);
         }}
         style={{ width: "100%", height: "100%" }}
       />
@@ -181,20 +335,104 @@ export function AgentAudioVisualizerAura({
   );
 }
 
-function hexToRgb(hexColor: string): [number, number, number] {
-  const rgbColor = hexColor.match(
-    /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/,
+AuraShader.displayName = "AuraShader";
+
+const agentAudioVisualizerAuraVariants = cva(["aspect-square"], {
+  variants: {
+    size: {
+      icon: "h-[24px] gap-[2px]",
+      sm: "h-[56px] gap-[4px]",
+      md: "h-[112px] gap-[8px]",
+      lg: "h-[224px] gap-[16px]",
+      xl: "h-[448px] gap-[32px]",
+    },
+  },
+  defaultVariants: {
+    size: "md",
+  },
+});
+
+export interface AgentAudioVisualizerAuraProps {
+  /**
+   * The size of the visualizer.
+   * @defaultValue 'lg'
+   */
+  size?: "icon" | "sm" | "md" | "lg" | "xl";
+  /**
+   * Agent state
+   * @default 'idle'
+   */
+  state?: AgentState;
+  /**
+   * The color of the aura in hexidecimal format.
+   * @defaultValue '#1FD5F9'
+   */
+  color?: `#${string}`;
+  /**
+   * The color shift of the aura.
+   * @defaultValue 0.05
+   */
+  colorShift?: number;
+  /**
+   * The theme mode of the aura.
+   * @defaultValue 'dark'
+   */
+  themeMode?: "dark" | "light";
+  /**
+   * The audio track to visualize. Can be a local/remote audio track or a track reference.
+   */
+  audioTrack?: LocalAudioTrack | RemoteAudioTrack | TrackReferenceOrPlaceholder;
+}
+
+/**
+ * An shader-based audio visualizer that responds to agent state and audio levels.
+ * Displays an animated elliptical aura that reacts to the current agent state (connecting, thinking, speaking, etc.)
+ * and audio volume when speaking.
+ *
+ * @extends ComponentProps<'div'>
+ *
+ * @example
+ * ```tsx
+ * <AgentAudioVisualizerAura
+ *   size="md"
+ *   state="speaking"
+ *   audioTrack={agentAudioTrack}
+ * />
+ * ```
+ */
+export function AgentAudioVisualizerAura({
+  size = "lg",
+  state = "idle",
+  color: colorProp,
+  colorShift = 0.05,
+  audioTrack,
+  themeMode = "dark",
+  className,
+  ref,
+  ...props
+}: AgentAudioVisualizerAuraProps &
+  ComponentProps<"div"> &
+  VariantProps<typeof agentAudioVisualizerAuraVariants>) {
+  const { color: themeColor } = useTheme();
+  const color = colorProp ?? themeColor;
+  const { speed, scale, amplitude, frequency, brightness } =
+    useAgentAudioVisualizerAura(state, audioTrack);
+
+  return (
+    <AuraShader
+      ref={ref}
+      data-lk-state={state}
+      blur={0.2}
+      color={color}
+      colorShift={colorShift}
+      speed={speed}
+      scale={scale}
+      themeMode={themeMode}
+      amplitude={amplitude}
+      frequency={frequency}
+      brightness={brightness}
+      className={cn(agentAudioVisualizerAuraVariants({ size }), className)}
+      {...props}
+    />
   );
-
-  if (!rgbColor) {
-    return hexToRgb(DEFAULT_COLOR);
-  }
-
-  const [, r = "00", g = "00", b = "00"] = rgbColor;
-
-  return [r, g, b].map((channel) => parseInt(channel, 16) / 255) as [
-    number,
-    number,
-    number,
-  ];
 }

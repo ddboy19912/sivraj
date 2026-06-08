@@ -1,7 +1,7 @@
 import type { AgentState } from "@livekit/components-react";
 import { createContext, use } from "react";
-import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { AgentStatusHudState } from "@/components/ai/AgentStatusHud";
+import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { OnboardingFlow } from "@/types/onboarding.types";
 
 export type AppRouteContextValue = {

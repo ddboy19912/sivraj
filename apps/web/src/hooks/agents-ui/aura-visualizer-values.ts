@@ -1,6 +1,6 @@
 import type { AgentState } from "@livekit/components-react";
 
-export const AURA_VISUALIZER_DEFAULTS = {
+const AURA_VISUALIZER_DEFAULTS = {
   speed: 10,
   amplitude: 2,
   frequency: 0.5,

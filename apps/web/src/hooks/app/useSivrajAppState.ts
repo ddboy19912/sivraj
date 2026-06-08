@@ -1,14 +1,12 @@
 import { useState } from "react";
-import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { NavigationTabId } from "@/components/navigation/NavigationTab";
 import { useOnboardingFlow } from "@/hooks/onboarding/useOnboardingFlow";
 import { useTwinRuntime } from "@/hooks/twin-runtime/useTwinRuntime";
 import { getAppOverlay } from "@/lib/app/overlay";
+import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import { getProviderNavStatus } from "@/lib/navigation/provider-status";
-import {
-  getHomeAgentState,
-} from "@/lib/twin/visualizer-state";
 import { getStatusHud } from "@/lib/twin/runtime-selectors";
+import { getHomeAgentState } from "@/lib/twin/visualizer-state";
 import { useSivrajAppStore } from "@/stores/sivraj-app";
 
 export function useSivrajAppState(activeTab: NavigationTabId) {
@@ -29,7 +27,7 @@ export function useSivrajAppState(activeTab: NavigationTabId) {
       activeTab: visualTab,
       onboarding,
       runtimeState: twinRuntime.runtimeState,
-    }) ?? "initializing";
+    }) ?? "idle";
   const homeStatusHud = getStatusHud(twinRuntime.runtimeState);
 
   return {

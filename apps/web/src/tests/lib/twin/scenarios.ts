@@ -92,8 +92,8 @@ export function runMapsIntroSpeechDirectlyToSpeaking() {
   ).toBe("speaking");
 }
 
-export function runMapsCompletedHomeUsageToInitializing() {
-  expect(getHomeAgentState(homeSignals())).toBe("initializing");
+export function runMapsCompletedHomeUsageToIdle() {
+  expect(getHomeAgentState(homeSignals())).toBe("idle");
 }
 
 export function runMapsNonOnboardingBusyWorkToThinking() {

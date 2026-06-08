@@ -27,7 +27,7 @@ export function getHomeAgentState({
   }
 
   const runtimeAgentState = getAgentState(runtimeState);
-  if (runtimeAgentState !== "initializing") {
+  if (runtimeAgentState !== "idle") {
     return runtimeAgentState;
   }
 
@@ -39,5 +39,5 @@ export function getHomeAgentState({
     return "thinking";
   }
 
-  return "initializing";
+  return "idle";
 }

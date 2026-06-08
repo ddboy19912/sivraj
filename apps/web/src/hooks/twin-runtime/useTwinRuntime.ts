@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { postAuthedAudio, postAuthedJson } from "@/lib/api";
 import {
   createInitialTwinRuntimeState,
@@ -21,21 +21,24 @@ export function useTwinRuntime({
     createInitialTwinRuntimeState,
   );
   const requestedSpeechEventIdsRef = useRef<Set<string> | null>(null);
-  const audioUrlsRef = useRef<Set<string> | null>(null);
+  const [audioUrls] = useState(() => new Set<string>());
   const runtimeStateRef = useRef(runtimeState);
-  const requestedSpeechEventIds = getOrCreateSet(requestedSpeechEventIdsRef);
-  const audioUrls = getOrCreateSet(audioUrlsRef);
 
-  const dispatchRuntimeEvent = useCallback(
-    (event: TwinRuntimeInput["events"][number]) => {
-      if (event.type === "speech.failed") {
-        requestedSpeechEventIds.delete(event.eventId);
-      }
+  function getRequestedSpeechEventIds() {
+    if (requestedSpeechEventIdsRef.current === null) {
+      requestedSpeechEventIdsRef.current = new Set();
+    }
 
-      dispatchRuntimeAction(event);
-    },
-    [requestedSpeechEventIds],
-  );
+    return requestedSpeechEventIdsRef.current;
+  }
+
+  function dispatchRuntimeEvent(event: TwinRuntimeInput["events"][number]) {
+    if (event.type === "speech.failed") {
+      getRequestedSpeechEventIds().delete(event.eventId);
+    }
+
+    dispatchRuntimeAction(event);
+  }
 
   useEffect(() => {
     runtimeStateRef.current = runtimeState;
@@ -49,15 +52,20 @@ export function useTwinRuntime({
         continue;
       }
 
-      dispatchRuntimeEvent(event);
+      if (event.type === "speech.failed") {
+        getRequestedSpeechEventIds().delete(event.eventId);
+      }
+
+      dispatchRuntimeAction(event);
     }
-  }, [dispatchRuntimeEvent, events]);
+  }, [events]);
 
   useEffect(() => {
     if (runtimeState.status !== "preparing_speech" || !session) {
       return;
     }
 
+    const requestedSpeechEventIds = getRequestedSpeechEventIds();
     if (requestedSpeechEventIds.has(runtimeState.eventId)) {
       return;
     }
@@ -93,7 +101,8 @@ export function useTwinRuntime({
           return;
         }
 
-        dispatchRuntimeEvent({
+        getRequestedSpeechEventIds().delete(runtimeState.eventId);
+        dispatchRuntimeAction({
           type: "speech.failed",
           eventId: runtimeState.eventId,
           reason: error instanceof Error ? error.message : "Speech failed.",
@@ -105,49 +114,39 @@ export function useTwinRuntime({
     };
   }, [
     audioUrls,
-    dispatchRuntimeEvent,
-    requestedSpeechEventIds,
     runtimeState,
     session,
     setSession,
   ]);
 
   useEffect(() => {
-    return () => {
-      for (const audioUrl of audioUrls) {
-        URL.revokeObjectURL(audioUrl);
-      }
-      audioUrls.clear();
-    };
+    return () => revokeAudioUrls(audioUrls);
   }, [audioUrls]);
 
-  const consumeRuntimeEvent = useCallback(
-    async (eventId: string) => {
-      if (!session) {
-        return;
-      }
+  async function consumeRuntimeEvent(eventId: string) {
+    if (!session) {
+      return;
+    }
 
-      await postAuthedJson(
-        `/v1/twins/${session.twinId}/identity-profile/first-meet-intro/consumed`,
-        {},
-        session,
-        setSession,
-      );
+    await postAuthedJson(
+      `/v1/twins/${session.twinId}/identity-profile/first-meet-intro/consumed`,
+      {},
+      session,
+      setSession,
+    );
 
-      requestedSpeechEventIds.delete(eventId);
-      dispatchRuntimeAction({ type: "speech.completed", eventId });
+    getRequestedSpeechEventIds().delete(eventId);
+    dispatchRuntimeAction({ type: "speech.completed", eventId });
 
-      const currentState = runtimeStateRef.current;
+    const currentState = runtimeStateRef.current;
 
-      if (currentState.status !== "speaking" || currentState.eventId !== eventId) {
-        return;
-      }
+    if (currentState.status !== "speaking" || currentState.eventId !== eventId) {
+      return;
+    }
 
-      URL.revokeObjectURL(currentState.audioUrl);
-      audioUrls.delete(currentState.audioUrl);
-    },
-    [audioUrls, requestedSpeechEventIds, session, setSession],
-  );
+    URL.revokeObjectURL(currentState.audioUrl);
+    audioUrls.delete(currentState.audioUrl);
+  }
 
   return {
     runtimeState,
@@ -163,10 +162,14 @@ function getRuntimeEventId(
   return "eventId" in event && event.eventId ? event.eventId : null;
 }
 
-function getOrCreateSet(ref: { current: Set<string> | null }): Set<string> {
-  if (ref.current === null) {
-    ref.current = new Set();
+function revokeAudioUrls(audioUrls: Set<string> | null): void {
+  if (!audioUrls) {
+    return;
   }
 
-  return ref.current;
+  for (const audioUrl of audioUrls) {
+    URL.revokeObjectURL(audioUrl);
+  }
+
+  audioUrls.clear();
 }

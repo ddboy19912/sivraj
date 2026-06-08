@@ -1,4 +1,3 @@
-import type { AgentState } from "@livekit/components-react";
 import {
   AgentStatusHud,
   type AgentStatusHudState,
@@ -6,14 +5,13 @@ import {
 import { TwinHomeStage } from "@/pages/TwinHomeStage";
 
 type HomepageProps = {
-  agentState: AgentState;
   statusHud?: AgentStatusHudState | null;
 };
 
-export function Homepage({ agentState, statusHud }: HomepageProps) {
+export function Homepage({ statusHud }: HomepageProps) {
   return (
     <>
-      <TwinHomeStage agentState={agentState} />
+      <TwinHomeStage />
       {statusHud ? (
         <AgentStatusHud
           label={statusHud.label}

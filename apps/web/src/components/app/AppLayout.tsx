@@ -1,7 +1,6 @@
 import { Outlet, useLocation, useNavigate } from "react-router";
-import { ProviderConfigDialog } from "@/components/chat/ProviderConfigDialog";
 import { AppGlobalOverlay } from "@/components/app/AppGlobalOverlay";
-import { TwinSpeechPlayer } from "@/components/app/TwinSpeechPlayer";
+import { ProviderConfigDialog } from "@/components/chat/ProviderConfigDialog";
 import { AOSInit } from "@/components/common/AOSInit";
 import { Navbar } from "@/components/navigation/Navbar";
 import {
@@ -14,6 +13,7 @@ import {
   getNavigationTabForPath,
   getPathForNavigationTab,
 } from "@/lib/app/navigation";
+import { AgentAudioProvider } from "@/providers/agent-audio-provider";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
 
 export function AppLayout() {
@@ -68,23 +68,25 @@ export function AppLayout() {
         className="ambient-ui-dot-grid pointer-events-none absolute inset-0"
         aria-hidden="true"
       />
-      <AppRouteContextProvider
-        value={{
-          homeAgentState: app.homeAgentState,
-          homeStatusHud: app.homeStatusHud,
-          onboarding: app.onboarding,
-          providerState: app.providerState,
-          setProviderOpen: app.setProviderOpen,
-          setProviderState: app.setProviderState,
-        }}
-      >
-        <Outlet />
-      </AppRouteContextProvider>
-      <TwinSpeechPlayer
-        command={app.twinRuntime.speechPlaybackCommand}
+      <AgentAudioProvider
+        fallbackState={app.homeAgentState}
+        speechPlaybackCommand={app.twinRuntime.speechPlaybackCommand}
         onRuntimeEvent={app.twinRuntime.dispatchRuntimeEvent}
         onPlaybackCompleted={app.twinRuntime.consumeRuntimeEvent}
-      />
+      >
+        <AppRouteContextProvider
+          value={{
+            homeAgentState: app.homeAgentState,
+            homeStatusHud: app.homeStatusHud,
+            onboarding: app.onboarding,
+            providerState: app.providerState,
+            setProviderOpen: app.setProviderOpen,
+            setProviderState: app.setProviderState,
+          }}
+        >
+          <Outlet />
+        </AppRouteContextProvider>
+      </AgentAudioProvider>
       <AppGlobalOverlay flow={app.onboarding} overlay={app.appOverlay} />
     </main>
   );

@@ -19,6 +19,7 @@ type ReactShaderToyProps = {
   devicePixelRatio?: number;
   style?: CSSProperties;
   onError?: (error: string) => void;
+  onWarning?: (warning: string) => void;
 };
 
 export function ReactShaderToy({
@@ -42,14 +43,16 @@ export function ReactShaderToy({
       return;
     }
 
-    return setupReactShaderToy({
-      canvas,
-      fs,
-      uniforms: uniformsRef.current,
-      getUniforms: () => uniformsRef.current,
-      devicePixelRatio,
-      onError,
-    }) ?? undefined;
+    return (
+      setupReactShaderToy({
+        canvas,
+        fs,
+        uniforms: uniformsRef.current,
+        getUniforms: () => uniformsRef.current,
+        devicePixelRatio,
+        onError,
+      }) ?? undefined
+    );
   }, [devicePixelRatio, fs, onError]);
 
   return (

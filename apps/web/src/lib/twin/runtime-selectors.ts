@@ -15,12 +15,15 @@ export function getAgentState(runtimeState: TwinRuntimeState): AgentState {
     case "listening":
       return "listening";
     case "failed":
+      return "failed";
     case "idle":
-      return "initializing";
+      return "idle";
   }
 }
 
-export function getStatusHud(runtimeState: TwinRuntimeState): AgentStatusHudState {
+export function getStatusHud(
+  runtimeState: TwinRuntimeState,
+): AgentStatusHudState {
   switch (runtimeState.status) {
     case "preparing_speech":
     case "thinking":
@@ -51,7 +54,7 @@ export function getStatusHud(runtimeState: TwinRuntimeState): AgentStatusHudStat
     case "idle":
       return {
         label: "AGENT_STATUS",
-        status: "READY",
+        status: "IDLE",
         active: false,
         progress: 100,
       };

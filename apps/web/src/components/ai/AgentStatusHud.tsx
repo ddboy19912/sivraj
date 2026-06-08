@@ -15,7 +15,7 @@ const BAR_COUNT = 9;
 
 export function AgentStatusHud({
   label = "AGENT_STATUS",
-  status = "READY",
+  status = "IDLE",
   active = false,
   progress,
   className,
@@ -54,13 +54,17 @@ export function AgentStatusHud({
         />
       </div>
       <div className="mt-6 flex h-12 items-end gap-3" aria-hidden="true">
-        {Array.from({ length: BAR_COUNT }, (_, index) => (
-          <span
-            key={index}
-            className="agent-hud-bar block w-2 rounded-full bg-[rgb(var(--theme-color-rgb))]"
-            style={{ animationDelay: `${index * 95}ms` }}
-          />
-        ))}
+        {Array.from({ length: BAR_COUNT }, (_, index) => {
+          const key = `bar-${index}`;
+
+          return (
+            <span
+              key={key}
+              className="agent-hud-bar block w-2 rounded-full bg-[rgb(var(--theme-color-rgb))]"
+              style={{ animationDelay: `${index * 95}ms` }}
+            />
+          );
+        })}
       </div>
     </aside>
   );

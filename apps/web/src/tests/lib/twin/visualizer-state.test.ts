@@ -3,7 +3,7 @@ import {
   runKeepsActiveOnboardingCalmInIdle,
   runKeepsProfileInitializationCalmInIdle,
   runKeepsWalletAuthCalmInIdle,
-  runMapsCompletedHomeUsageToInitializing,
+  runMapsCompletedHomeUsageToIdle,
   runMapsIntroPreparationToThinking,
   runMapsIntroSpeechDirectlyToSpeaking,
   runMapsNonOnboardingBusyWorkToThinking,
@@ -28,7 +28,7 @@ describe("home agent state intro playback", () => {
 });
 
 describe("home agent state completed home", () => {
-  it("maps completed home usage to initializing until voice input is implemented", () => runMapsCompletedHomeUsageToInitializing());
+  it("maps completed home usage to idle until voice input is implemented", () => runMapsCompletedHomeUsageToIdle());
   it("maps non-onboarding busy work to thinking", () => runMapsNonOnboardingBusyWorkToThinking());
 });
 

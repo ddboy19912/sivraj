@@ -1,18 +1,21 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type { SpeechPlaybackCommand, TwinRuntimeEvent } from "@/types/twin.types";
 
 type TwinSpeechPlayerProps = {
   command: SpeechPlaybackCommand;
+  audioRef?: RefObject<HTMLAudioElement | null>;
   onRuntimeEvent: (event: TwinRuntimeEvent) => void;
   onPlaybackCompleted: (eventId: string) => Promise<void>;
 };
 
 export function TwinSpeechPlayer({
   command,
+  audioRef: audioRefProp,
   onRuntimeEvent,
   onPlaybackCompleted,
 }: TwinSpeechPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const localAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = audioRefProp ?? localAudioRef;
   const terminalHandledRef = useRef(false);
 
   useEffect(() => {
@@ -41,7 +44,7 @@ export function TwinSpeechPlayer({
         reason: error instanceof Error ? error.message : "Playback failed.",
       });
     });
-  }, [command, onRuntimeEvent]);
+  }, [audioRef, command, onRuntimeEvent]);
 
   function handleFailure(eventId: string, reason: string) {
     if (terminalHandledRef.current) {

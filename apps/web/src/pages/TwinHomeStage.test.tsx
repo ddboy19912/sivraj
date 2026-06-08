@@ -2,10 +2,15 @@ import "@/tests/mocks/agent-visualizer";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TwinHomeStage } from "@/pages/TwinHomeStage";
+import { AgentAudioTestProvider } from "@/tests/helpers/agent-audio";
 
 describe("TwinHomeStage", () => {
   it("always renders the shader visualizer in a stable stage", () => {
-    render(<TwinHomeStage agentState="idle" />);
+    render(
+      <AgentAudioTestProvider value={{ state: "idle" }}>
+        <TwinHomeStage />
+      </AgentAudioTestProvider>,
+    );
 
     const stage = screen.getByLabelText("Sivraj agent UI");
     const visualizer = screen.getByTestId("agent-visualizer");
@@ -18,7 +23,11 @@ describe("TwinHomeStage", () => {
   });
 
   it("passes the agent state through unchanged", () => {
-    render(<TwinHomeStage agentState="speaking" />);
+    render(
+      <AgentAudioTestProvider value={{ state: "speaking" }}>
+        <TwinHomeStage />
+      </AgentAudioTestProvider>,
+    );
 
     expect(screen.getByTestId("agent-visualizer")).toHaveAttribute(
       "data-state",
@@ -27,7 +36,11 @@ describe("TwinHomeStage", () => {
   });
 
   it("does not render the homepage status HUD inside the visualizer stage", () => {
-    render(<TwinHomeStage agentState="thinking" />);
+    render(
+      <AgentAudioTestProvider value={{ state: "thinking" }}>
+        <TwinHomeStage />
+      </AgentAudioTestProvider>,
+    );
 
     expect(screen.queryByText("AGENT_STATUS")).not.toBeInTheDocument();
     expect(screen.queryByText("THINKING")).not.toBeInTheDocument();
@@ -38,7 +51,11 @@ describe("TwinHomeStage", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      render(<TwinHomeStage agentState="listening" />);
+      render(
+        <AgentAudioTestProvider value={{ state: "listening" }}>
+          <TwinHomeStage />
+        </AgentAudioTestProvider>,
+      );
 
       expect(logSpy).not.toHaveBeenCalled();
     } finally {

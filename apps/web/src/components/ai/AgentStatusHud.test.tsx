@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { AgentStatusHud } from "@/components/ai/AgentStatusHud";
 
 describe("AgentStatusHud", () => {
-  it("renders a ready HUD by default", () => {
+  it("renders an idle HUD by default", () => {
     render(<AgentStatusHud />);
 
     expect(screen.getByText("AGENT_STATUS")).toBeInTheDocument();
-    expect(screen.getByText("READY")).toBeInTheDocument();
+    expect(screen.getByText("IDLE")).toBeInTheDocument();
     expect(document.querySelectorAll(".agent-hud-bar")).toHaveLength(9);
     expect(document.querySelector(".agent-hud-progress")).toBeInTheDocument();
   });
