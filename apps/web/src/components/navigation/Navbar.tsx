@@ -1,7 +1,7 @@
 import { NavbarBrand } from "@/components/navigation/NavbarBrand";
 import { NavbarStatusBar } from "@/components/navigation/NavbarStatusBar";
-import { useTheme } from "@/providers/theme-context";
 import { useLocalTime } from "@/hooks/common/use-local-time";
+import { useTheme } from "@/providers/theme-context";
 
 type NavbarProps = {
   onProviderClick?: () => void;

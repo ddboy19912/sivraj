@@ -11,18 +11,15 @@ export function resolveProviderPresentation(
 ): ProviderPresentation {
   if (providerState?.config) {
     return {
-      label: `${providerState.config.displayName} ${providerState.config.model}`,
-      mode:
-        providerState.config.providerKind === "ollama"
-          ? "Local model"
-          : "User model",
+      label: `${providerState.config.model} via ${providerState.config.displayName}`,
+      mode: "OpenRouter OAuth",
     };
   }
 
   if (providerState?.fallback) {
     return {
-      label: `${providerState.fallback.displayName} ${providerState.fallback.model}`,
-      mode: "Sivraj default",
+      label: providerState.fallback.model,
+      mode: "Gemini (default)",
     };
   }
 

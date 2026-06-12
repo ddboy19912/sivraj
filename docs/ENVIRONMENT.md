@@ -162,6 +162,7 @@ Root `.env.example` is source of truth.
 - `LLM_API_KEY`: Provider API key.
 - `LLM_MODEL`: Main synthesis model.
 - `LLM_REQUEST_TIMEOUT_MS`: Per structured-generation request timeout in milliseconds. Defaults to `45000`; prevents worker jobs from sitting in `processing` indefinitely when an OpenAI-compatible provider hangs.
+- `LLM_CREDENTIAL_ENCRYPTION_KEY`: Required for user-managed LLM providers and OpenRouter OAuth. Use a stable 32-byte base64 or 64-character hex value; changing it makes previously saved provider keys unreadable.
 - `EMBEDDING_MODEL`: Embedding model.
 
 ### Speech To Text

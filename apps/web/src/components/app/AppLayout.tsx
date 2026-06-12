@@ -1,4 +1,5 @@
 import { Outlet, useLocation, useNavigate } from "react-router";
+import { useEffect } from "react";
 import { AppGlobalOverlay } from "@/components/app/AppGlobalOverlay";
 import { ProviderConfigDialog } from "@/components/chat/ProviderConfigDialog";
 import { AOSInit } from "@/components/common/AOSInit";
@@ -16,6 +17,7 @@ import {
 } from "@/lib/app/navigation";
 import { AgentAudioProvider } from "@/providers/agent-audio-provider";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
+import { hasPendingOpenRouterOAuthCallback } from "@/lib/chat/provider-config-handlers";
 
 export function AppLayout() {
   const location = useLocation();
@@ -23,6 +25,14 @@ export function AppLayout() {
   const activeTab = getNavigationTabForPath(location.pathname);
   const app = useSivrajAppState(activeTab);
   const settingsOpen = activeTab === "settings" || app.settingsOpen;
+  const setProviderOpen = app.setProviderOpen;
+  const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();
+
+  useEffect(() => {
+    if (hasOpenRouterOAuthCallback) {
+      setProviderOpen(true);
+    }
+  }, [hasOpenRouterOAuthCallback, setProviderOpen]);
 
   function selectTab(tab: NavigationTabId) {
     if (tab !== "settings") {

@@ -1,21 +1,30 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { createOpenAICompatibleChatGenerator } from "@sivraj/llm";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+} from "node:crypto";
 import { auditEvents, llmProviderConfigs } from "@sivraj/db";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppDependencies } from "../app.js";
 import type { AuthEnv } from "../middleware/auth.js";
 import { authorizeTwinRoute, type AuthorizedTwin } from "../lib/http/route-auth.js";
 import { optionalString } from "../lib/http/route-helpers.js";
 import {
-  errorMessage,
-  normalizeBaseUrl,
-  PROVIDER_DEFAULTS,
-  type ProviderKind,
-  type ProviderRuntimeConfig,
   defaultBaseUrl,
+  PROVIDER_DEFAULTS,
   providerLabel,
+  type ProviderRuntimeConfig,
 } from "../lib/chat/helpers.js";
+
+const OPENROUTER_AUTH_URL = "https://openrouter.ai/auth";
+const OPENROUTER_KEY_EXCHANGE_URL = "https://openrouter.ai/api/v1/auth/keys";
+const MAX_OPENROUTER_MODEL_CONFIGS = 3;
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const LLM_CREDENTIAL_ENCRYPTION_MESSAGE =
+  "LLM_CREDENTIAL_ENCRYPTION_KEY is required before connecting OAuth or saving provider credentials.";
 
 export async function handleGetProviderConfig(
   c: Context<AuthEnv>,
@@ -25,37 +34,66 @@ export async function handleGetProviderConfig(
   if (!routeAuth.ok) {
     return routeAuth.response;
   }
+
   const { twinId } = routeAuth.value;
-  const config = await loadProviderConfig(db, twinId);
+  const configs = await loadProviderConfigs(db, twinId);
+  const activeConfig = configs.find((config) => config.isActive) ?? null;
   const envConfig = readEnvProviderConfig(process.env);
 
-  return c.json({
-    config: config ? toSafeProviderConfig(config) : null,
-    fallback: envConfig
-      ? {
-          providerKind: envConfig.providerKind,
-          displayName: envConfig.displayName,
-          baseUrl: envConfig.baseUrl,
-          model: envConfig.model,
-          source: "env",
-        }
-      : null,
-  });
+  return c.json(providerConfigResponse({
+    activeConfig,
+    configs,
+    envConfig,
+  }));
 }
 
-export async function handlePutProviderConfig(
+export async function handleStartOpenRouterOAuth(
   c: Context<AuthEnv>,
-  db: AppDependencies["db"],
 ) {
   const routeAuth = authorizeTwinRoute(c, "memory:read");
   if (!routeAuth.ok) {
     return routeAuth.response;
   }
 
-  return saveProviderConfig(c, db, routeAuth.value);
+  const body = await c.req.json().catch(() => null);
+  const callbackUrl = optionalString(
+    body && typeof body === "object"
+      ? (body as Record<string, unknown>)["callbackUrl"]
+      : null,
+  );
+
+  if (!callbackUrl || !/^https?:\/\//i.test(callbackUrl)) {
+    return c.json({ error: "invalid_openrouter_callback_url" }, 400);
+  }
+
+  const codeVerifier = base64Url(randomBytes(48));
+  const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest());
+  const state = safeSignOAuthState({
+    twinId: routeAuth.value.twinId,
+    nonce: base64Url(randomBytes(18)),
+    exp: Date.now() + OAUTH_STATE_TTL_MS,
+  }, process.env);
+
+  if (!state) {
+    return c.json({
+      error: "llm_credential_encryption_not_configured",
+      message: LLM_CREDENTIAL_ENCRYPTION_MESSAGE,
+    }, 503);
+  }
+  const authUrl = new URL(OPENROUTER_AUTH_URL);
+  authUrl.searchParams.set("callback_url", callbackUrl);
+  authUrl.searchParams.set("code_challenge", codeChallenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+  authUrl.searchParams.set("state", state);
+
+  return c.json({
+    authUrl: authUrl.toString(),
+    codeVerifier,
+    state,
+  });
 }
 
-export async function handleTestProviderConfig(
+export async function handleCompleteOpenRouterOAuth(
   c: Context<AuthEnv>,
   db: AppDependencies["db"],
   llmFetch: AppDependencies["llmFetch"],
@@ -64,47 +102,234 @@ export async function handleTestProviderConfig(
   if (!routeAuth.ok) {
     return routeAuth.response;
   }
-  const { twinId } = routeAuth.value;
+
   const body = await c.req.json().catch(() => null);
-  const parsed = body && typeof body === "object"
-    ? readProviderConfigInput(body)
-    : null;
-  const runtimeConfig = parsed
-    ? runtimeConfigFromInput(parsed, optionalString((body as Record<string, unknown>)["apiKey"]))
-    : await resolveRuntimeProviderConfig(db, twinId, process.env);
+  const record = body && typeof body === "object"
+    ? body as Record<string, unknown>
+    : {};
+  const code = optionalString(record["code"]);
+  const state = optionalString(record["state"]);
+  const codeVerifier = optionalString(record["codeVerifier"]);
 
-  if (!runtimeConfig) {
-    return c.json({ error: "llm_provider_not_configured" }, 503);
+  if (!code || !state || !codeVerifier) {
+    return c.json({ error: "invalid_openrouter_oauth_callback" }, 400);
   }
 
-  try {
-    const output = await createOpenAICompatibleChatGenerator({
-      provider: runtimeConfig.providerKind,
-      apiKey: runtimeConfig.apiKey,
-      model: runtimeConfig.model,
-      baseUrl: runtimeConfig.baseUrl,
-      fetch: llmFetch,
-      maxRetries: 0,
-      timeoutMs: 15_000,
-    }).generateChat({
-      messages: [
-        { role: "system", content: "Reply with a short connection confirmation for Sivraj." },
-        { role: "user", content: "Connection test." },
-      ],
-      temperature: 0,
-    });
+  const verifiedState = verifyOAuthState(state, process.env);
+  if (!verifiedState || verifiedState.twinId !== routeAuth.value.twinId) {
+    return c.json({ error: "invalid_openrouter_oauth_state" }, 400);
+  }
 
-    await markProviderTested(db, twinId);
+  const exchanged = await exchangeOpenRouterOAuthCode({
+    code,
+    codeVerifier,
+    fetchImpl: llmFetch ?? fetch,
+  });
 
+  if (!exchanged.ok) {
+    return c.json({ error: "openrouter_oauth_exchange_failed", message: exchanged.error }, 502);
+  }
+
+  const parsed = {
+    providerKind: "openrouter" as const,
+    displayName: PROVIDER_DEFAULTS.openrouter.displayName,
+    baseUrl: PROVIDER_DEFAULTS.openrouter.baseUrl,
+    model: PROVIDER_DEFAULTS.openrouter.model,
+  };
+  const encrypted = encryptOptionalApiKey(exchanged.key, process.env);
+
+  if (encrypted === "encryption_failed" || !encrypted) {
     return c.json({
-      ok: true,
-      providerKind: runtimeConfig.providerKind,
-      model: runtimeConfig.model,
-      sample: output.content.slice(0, 240),
-    });
-  } catch (error) {
-    return c.json({ error: "llm_provider_test_failed", message: errorMessage(error) }, 502);
+      error: "llm_credential_encryption_not_configured",
+      message: LLM_CREDENTIAL_ENCRYPTION_MESSAGE,
+    }, 503);
   }
+
+  const config = await createProviderConfig(db, {
+    twinId: routeAuth.value.twinId,
+    parsed,
+    encrypted,
+    isActive: true,
+    metadata: {
+      supportsOpenAICompatibleChat: true,
+      apiKeySource: "openrouter_oauth",
+      authMethod: "openrouter_pkce",
+    },
+  });
+
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.openrouter_oauth_connected",
+    resourceId: config?.id ?? routeAuth.value.twinId,
+    metadata: { providerKind: "openrouter", model: parsed.model },
+  });
+
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+
+  return c.json(providerConfigResponse({
+    activeConfig: config ?? configs.find((item) => item.isActive) ?? null,
+    configs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
+}
+
+export async function handleSelectProviderConfig(
+  c: Context<AuthEnv>,
+  db: AppDependencies["db"],
+) {
+  const routeAuth = authorizeTwinRoute(c, "memory:read");
+  if (!routeAuth.ok) {
+    return routeAuth.response;
+  }
+
+  const providerConfigId = readUuid(c.req.param("providerConfigId"));
+  if (!providerConfigId) {
+    return c.json({ error: "invalid_llm_provider_config_id" }, 400);
+  }
+
+  const config = await selectProviderConfig(db, routeAuth.value.twinId, providerConfigId);
+  if (!config) {
+    return c.json({ error: "llm_provider_config_not_found" }, 404);
+  }
+
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.selected",
+    resourceId: config.id,
+    metadata: { providerKind: config.providerKind, model: config.model },
+  });
+
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+
+  return c.json(providerConfigResponse({
+    activeConfig: config,
+    configs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
+}
+
+export async function handleSelectFallbackProviderConfig(
+  c: Context<AuthEnv>,
+  db: AppDependencies["db"],
+) {
+  const routeAuth = authorizeTwinRoute(c, "memory:read");
+  if (!routeAuth.ok) {
+    return routeAuth.response;
+  }
+
+  await clearActiveProviderConfigs(db, routeAuth.value.twinId);
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.default_selected",
+    resourceId: routeAuth.value.twinId,
+    metadata: { source: "env" },
+  });
+
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+
+  return c.json(providerConfigResponse({
+    activeConfig: null,
+    configs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
+}
+
+export async function handleCreateOpenRouterModelConfig(
+  c: Context<AuthEnv>,
+  db: AppDependencies["db"],
+) {
+  const routeAuth = authorizeTwinRoute(c, "memory:read");
+  if (!routeAuth.ok) {
+    return routeAuth.response;
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const model = readProviderModel(body);
+  if (!model) {
+    return c.json({ error: "invalid_llm_provider_model" }, 400);
+  }
+  const displayName = readProviderDisplayName(body) ?? model;
+
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+  const sourceConfig = configs.find((config) => Boolean(config.apiKeyCiphertext));
+  if (!sourceConfig) {
+    return c.json({ error: "openrouter_oauth_provider_required" }, 409);
+  }
+  if (configs.length >= MAX_OPENROUTER_MODEL_CONFIGS) {
+    return c.json({
+      error: "openrouter_model_limit_reached",
+      maxModels: MAX_OPENROUTER_MODEL_CONFIGS,
+    }, 409);
+  }
+
+  const config = await createOpenRouterModelConfig(db, {
+    twinId: routeAuth.value.twinId,
+    sourceConfig,
+    displayName,
+    model,
+  });
+
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.openrouter_model_created",
+    resourceId: config?.id ?? routeAuth.value.twinId,
+    metadata: { providerKind: "openrouter", model },
+  });
+
+  const nextConfigs = await loadProviderConfigs(db, routeAuth.value.twinId);
+  const activeConfig = nextConfigs.find((item) => item.isActive) ?? config ?? null;
+
+  return c.json(providerConfigResponse({
+    activeConfig,
+    configs: nextConfigs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
+}
+
+export async function handleUpdateProviderModel(
+  c: Context<AuthEnv>,
+  db: AppDependencies["db"],
+) {
+  const routeAuth = authorizeTwinRoute(c, "memory:read");
+  if (!routeAuth.ok) {
+    return routeAuth.response;
+  }
+
+  const providerConfigId = readUuid(c.req.param("providerConfigId"));
+  if (!providerConfigId) {
+    return c.json({ error: "invalid_llm_provider_config_id" }, 400);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const model = readProviderModel(body);
+  if (!model) {
+    return c.json({ error: "invalid_llm_provider_model" }, 400);
+  }
+  const displayName = readProviderDisplayName(body) ?? model;
+
+  const existing = await loadProviderConfigById(
+    db,
+    routeAuth.value.twinId,
+    providerConfigId,
+  );
+  if (!existing || !isOpenRouterOAuthProviderConfig(existing)) {
+    return c.json({ error: "llm_provider_config_not_found" }, 404);
+  }
+
+  await updateProviderConfigModel(db, routeAuth.value.twinId, providerConfigId, {
+    displayName,
+    model,
+  });
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.updated",
+    resourceId: providerConfigId,
+    metadata: { providerKind: existing.providerKind, displayName, model },
+  });
+
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+  const activeConfig = configs.find((item) => item.isActive) ?? null;
+
+  return c.json(providerConfigResponse({
+    activeConfig,
+    configs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
 }
 
 export async function handleDeleteProviderConfig(
@@ -115,116 +340,41 @@ export async function handleDeleteProviderConfig(
   if (!routeAuth.ok) {
     return routeAuth.response;
   }
-  const { auth, twinId } = routeAuth.value;
-  const [config] = await db
-    .update(llmProviderConfigs)
-    .set({
-      status: "disconnected",
-      apiKeyCiphertext: null,
-      apiKeyIv: null,
-      apiKeyTag: null,
-      apiKeySha256: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(llmProviderConfigs.twinId, twinId))
-    .returning();
 
-  await db.insert(auditEvents).values({
-    twinId,
-    actorType: auth.type,
-    actorId: auth.sub,
-    eventType: "chat.llm_provider_config.disconnected",
-    resourceType: "llm_provider_config",
-    resourceId: config?.id ?? twinId,
-    metadata: {},
+  const providerConfigId = readUuid(c.req.param("providerConfigId"));
+  if (!providerConfigId) {
+    return c.json({ error: "invalid_llm_provider_config_id" }, 400);
+  }
+
+  const config = await disconnectProviderConfig(db, routeAuth.value.twinId, providerConfigId);
+  if (!config) {
+    return c.json({ error: "llm_provider_config_not_found" }, 404);
+  }
+
+  await recordProviderAudit(db, routeAuth.value, {
+    eventType: "chat.llm_provider_config.deleted",
+    resourceId: config.id,
+    metadata: { providerKind: config.providerKind },
   });
 
-  return c.json({ ok: true });
-}
+  const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
+  const activeConfig = configs.find((item) => item.isActive) ?? null;
 
-async function saveProviderConfig(
-  c: Context<AuthEnv>,
-  db: AppDependencies["db"],
-  { auth, twinId }: AuthorizedTwin,
-) {
-  const prepared = await prepareProviderConfigSave(c, db, twinId);
-  if ("response" in prepared) {
-    return prepared.response;
-  }
-
-  const config = await upsertProviderConfig(
-    db,
-    twinId,
-    prepared.existing,
-    prepared.values,
-    prepared.encrypted,
-  );
-
-  await db.insert(auditEvents).values({
-    twinId,
-    actorType: auth.type,
-    actorId: auth.sub,
-    eventType: "chat.llm_provider_config.saved",
-    resourceType: "llm_provider_config",
-    resourceId: config?.id ?? prepared.existing?.id ?? twinId,
-    metadata: {
-      providerKind: prepared.parsed.providerKind,
-      model: prepared.parsed.model,
-      hasApiKey: Boolean(prepared.encrypted || prepared.existing?.apiKeyCiphertext),
-    },
-  });
-
-  return c.json({
-    config: toSafeProviderConfig(config ?? { ...prepared.existing, ...prepared.values }),
-  });
-}
-
-async function prepareProviderConfigSave(
-  c: Context<AuthEnv>,
-  db: AppDependencies["db"],
-  twinId: string,
-) {
-  const body = await c.req.json().catch(() => null);
-  const parsed = readProviderConfigInput(body);
-
-  if (!parsed) {
-    return { response: c.json({ error: "invalid_llm_provider_config" }, 400) };
-  }
-
-  const existing = await loadProviderConfig(db, twinId);
-  const encrypted = encryptOptionalApiKey(
-    optionalString((body as Record<string, unknown>)["apiKey"]),
-    process.env,
-  );
-
-  if (encrypted === "encryption_failed") {
-    return { response: c.json({ error: "llm_credential_encryption_not_configured" }, 503) };
-  }
-
-  const apiKeyError = validateProviderApiKeyRequirement(
-    parsed.providerKind,
-    encrypted,
-    Boolean(existing?.apiKeyCiphertext),
-  );
-
-  if (apiKeyError) {
-    return { response: c.json({ error: apiKeyError }, 400) };
-  }
-
-  return {
-    parsed,
-    existing,
-    encrypted,
-    values: buildProviderConfigValues({
-      twinId,
-      parsed,
-      encrypted,
-      hasExistingApiKey: Boolean(existing?.apiKeyCiphertext),
-    }),
-  };
+  return c.json(providerConfigResponse({
+    activeConfig,
+    configs,
+    envConfig: readEnvProviderConfig(process.env),
+  }));
 }
 
 type EncryptedApiKey = ReturnType<typeof encryptApiKey>;
+type ProviderConfigRow = typeof llmProviderConfigs.$inferSelect;
+type OAuthProviderConfigInput = {
+  providerKind: "openrouter";
+  displayName: string;
+  baseUrl: string;
+  model: string;
+};
 
 function encryptOptionalApiKey(
   apiKey: string | null,
@@ -242,102 +392,255 @@ function encryptOptionalApiKey(
   }
 }
 
-function validateProviderApiKeyRequirement(
-  providerKind: ProviderKind,
-  encrypted: EncryptedApiKey | null | "encryption_failed",
-  hasExistingApiKey: boolean,
-): string | null {
-  const requiresApiKey = PROVIDER_DEFAULTS[providerKind].requiresApiKey;
-
-  if (requiresApiKey && !encrypted && !hasExistingApiKey) {
-    return "llm_api_key_required";
+async function createProviderConfig(db: AppDependencies["db"], input: {
+  twinId: string;
+  parsed: OAuthProviderConfigInput;
+  encrypted: EncryptedApiKey | null;
+  isActive: boolean;
+  metadata: Record<string, unknown>;
+}) {
+  if (input.isActive) {
+    await clearActiveProviderConfigs(db, input.twinId);
   }
 
-  return null;
-}
-
-function buildProviderConfigValues(input: {
-  twinId: string;
-  parsed: NonNullable<ReturnType<typeof readProviderConfigInput>>;
-  encrypted: EncryptedApiKey | null | "encryption_failed";
-  hasExistingApiKey: boolean;
-}) {
-  const encrypted = input.encrypted === "encryption_failed" ? null : input.encrypted;
-
-  return {
-    twinId: input.twinId,
-    providerKind: input.parsed.providerKind,
-    displayName: input.parsed.displayName,
-    baseUrl: input.parsed.baseUrl,
-    model: input.parsed.model,
-    status: "connected" as const,
-    metadata: {
-      supportsOpenAICompatibleChat: true,
-      apiKeySource: encrypted ? "user" : input.hasExistingApiKey ? "existing" : "none",
-    },
-    updatedAt: new Date(),
-    ...(encrypted
-      ? {
-          apiKeyCiphertext: encrypted.ciphertext,
-          apiKeyIv: encrypted.iv,
-          apiKeyTag: encrypted.tag,
-          apiKeySha256: encrypted.sha256,
-        }
-      : {}),
-  };
-}
-
-async function upsertProviderConfig(
-  db: AppDependencies["db"],
-  twinId: string,
-  existing: Awaited<ReturnType<typeof loadProviderConfig>>,
-  values: ReturnType<typeof buildProviderConfigValues>,
-  encrypted: EncryptedApiKey | null | "encryption_failed",
-) {
-  const clearedEncrypted = encrypted === "encryption_failed" ? null : encrypted;
-
-  const [config] = existing
-    ? await db
-        .update(llmProviderConfigs)
-        .set(values)
-        .where(and(
-          eq(llmProviderConfigs.id, existing.id),
-          eq(llmProviderConfigs.twinId, twinId),
-        ))
-        .returning()
-    : await db
-        .insert(llmProviderConfigs)
-        .values({
-          ...values,
-          ...(clearedEncrypted
-            ? {}
-            : {
-                apiKeyCiphertext: null,
-                apiKeyIv: null,
-                apiKeyTag: null,
-                apiKeySha256: null,
-              }),
-        })
-        .returning();
+  const [config] = await db
+    .insert(llmProviderConfigs)
+    .values({
+      twinId: input.twinId,
+      providerKind: input.parsed.providerKind,
+      displayName: input.parsed.displayName,
+      baseUrl: input.parsed.baseUrl,
+      model: input.parsed.model,
+      status: "connected",
+      isActive: input.isActive,
+      metadata: input.metadata,
+      ...(input.encrypted
+        ? {
+            apiKeyCiphertext: input.encrypted.ciphertext,
+            apiKeyIv: input.encrypted.iv,
+            apiKeyTag: input.encrypted.tag,
+            apiKeySha256: input.encrypted.sha256,
+          }
+        : {
+            apiKeyCiphertext: null,
+            apiKeyIv: null,
+            apiKeyTag: null,
+            apiKeySha256: null,
+          }),
+    })
+    .returning();
 
   return config;
 }
 
+async function createOpenRouterModelConfig(db: AppDependencies["db"], input: {
+  twinId: string;
+  sourceConfig: ProviderConfigRow;
+  displayName: string;
+  model: string;
+}) {
+  await clearActiveProviderConfigs(db, input.twinId);
+
+  const [config] = await db
+    .insert(llmProviderConfigs)
+    .values({
+      twinId: input.twinId,
+      providerKind: "openrouter",
+      displayName: input.displayName,
+      baseUrl: PROVIDER_DEFAULTS.openrouter.baseUrl,
+      model: input.model,
+      status: "connected",
+      isActive: true,
+      metadata: {
+        supportsOpenAICompatibleChat: true,
+        apiKeySource: "openrouter_oauth",
+        authMethod: "openrouter_pkce",
+        credentialSourceProviderConfigId: input.sourceConfig.id,
+      },
+      apiKeyCiphertext: input.sourceConfig.apiKeyCiphertext,
+      apiKeyIv: input.sourceConfig.apiKeyIv,
+      apiKeyTag: input.sourceConfig.apiKeyTag,
+      apiKeySha256: input.sourceConfig.apiKeySha256,
+    })
+    .returning();
+
+  return config;
+}
+
+async function clearActiveProviderConfigs(
+  db: AppDependencies["db"],
+  twinId: string,
+  exceptProviderConfigId?: string,
+) {
+  await db
+    .update(llmProviderConfigs)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(exceptProviderConfigId
+      ? and(
+          eq(llmProviderConfigs.twinId, twinId),
+          ne(llmProviderConfigs.id, exceptProviderConfigId),
+        )
+      : eq(llmProviderConfigs.twinId, twinId));
+}
+
+async function selectProviderConfig(
+  db: AppDependencies["db"],
+  twinId: string,
+  providerConfigId: string,
+) {
+  const existing = await loadProviderConfigById(db, twinId, providerConfigId);
+  if (
+    !existing ||
+    existing.status !== "connected" ||
+    !isOpenRouterOAuthProviderConfig(existing)
+  ) {
+    return null;
+  }
+
+  await clearActiveProviderConfigs(db, twinId, providerConfigId);
+
+  const [config] = await db
+    .update(llmProviderConfigs)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(and(
+      eq(llmProviderConfigs.id, providerConfigId),
+      eq(llmProviderConfigs.twinId, twinId),
+    ))
+    .returning();
+
+  return config ?? existing;
+}
+
+async function disconnectProviderConfig(
+  db: AppDependencies["db"],
+  twinId: string,
+  providerConfigId: string,
+) {
+  const [config] = await db
+    .update(llmProviderConfigs)
+    .set({
+      status: "disconnected",
+      isActive: false,
+      apiKeyCiphertext: null,
+      apiKeyIv: null,
+      apiKeyTag: null,
+      apiKeySha256: null,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(llmProviderConfigs.id, providerConfigId),
+      eq(llmProviderConfigs.twinId, twinId),
+    ))
+    .returning();
+
+  return config;
+}
+
+async function updateProviderConfigModel(
+  db: AppDependencies["db"],
+  twinId: string,
+  providerConfigId: string,
+  input: {
+    displayName: string;
+    model: string;
+  },
+) {
+  const [config] = await db
+    .update(llmProviderConfigs)
+    .set({
+      displayName: input.displayName,
+      model: input.model,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(llmProviderConfigs.id, providerConfigId),
+      eq(llmProviderConfigs.twinId, twinId),
+    ))
+    .returning();
+
+  return config ?? null;
+}
+
 export async function loadProviderConfig(db: AppDependencies["db"], twinId: string) {
+  return loadActiveProviderConfig(db, twinId);
+}
+
+export async function loadActiveProviderConfig(db: AppDependencies["db"], twinId: string) {
   const [config] = await db
     .select()
     .from(llmProviderConfigs)
-    .where(eq(llmProviderConfigs.twinId, twinId))
+    .where(and(
+      eq(llmProviderConfigs.twinId, twinId),
+      eq(llmProviderConfigs.isActive, true),
+      eq(llmProviderConfigs.status, "connected"),
+    ))
+    .limit(1);
+
+  return config && isOpenRouterOAuthProviderConfig(config) ? config : null;
+}
+
+async function loadProviderConfigs(db: AppDependencies["db"], twinId: string) {
+  const configs = await db
+    .select()
+    .from(llmProviderConfigs)
+    .where(and(
+      eq(llmProviderConfigs.twinId, twinId),
+      ne(llmProviderConfigs.status, "disconnected"),
+    ))
+    .orderBy(desc(llmProviderConfigs.isActive), desc(llmProviderConfigs.updatedAt));
+
+  return configs.filter(isOpenRouterOAuthProviderConfig);
+}
+
+async function loadProviderConfigById(
+  db: AppDependencies["db"],
+  twinId: string,
+  providerConfigId: string,
+) {
+  const [config] = await db
+    .select()
+    .from(llmProviderConfigs)
+    .where(and(
+      eq(llmProviderConfigs.id, providerConfigId),
+      eq(llmProviderConfigs.twinId, twinId),
+    ))
     .limit(1);
 
   return config ?? null;
 }
 
-function toSafeProviderConfig(config: Partial<typeof llmProviderConfigs.$inferSelect>) {
+function providerConfigResponse(input: {
+  activeConfig: ProviderConfigRow | null;
+  configs: ProviderConfigRow[];
+  envConfig: ProviderRuntimeConfig | null;
+}) {
+  const safeActiveConfig = input.activeConfig
+    ? toSafeProviderConfig(input.activeConfig)
+    : null;
+
+  return {
+    config: safeActiveConfig,
+    activeConfig: safeActiveConfig,
+    configs: input.configs.map(toSafeProviderConfig),
+    fallback: input.envConfig
+      ? {
+          providerKind: input.envConfig.providerKind,
+          displayName: input.envConfig.displayName,
+          baseUrl: input.envConfig.baseUrl,
+          model: input.envConfig.model,
+          source: "env",
+        }
+      : null,
+  };
+}
+
+function toSafeProviderConfig(config: Partial<ProviderConfigRow>) {
   return {
     id: config.id ?? null,
     providerKind: config.providerKind,
     status: config.status,
+    isActive: Boolean(config.isActive),
+    authMethod: readProviderAuthMethod(config.metadata),
     displayName: config.displayName,
     baseUrl: config.baseUrl,
     model: config.model,
@@ -347,57 +650,72 @@ function toSafeProviderConfig(config: Partial<typeof llmProviderConfigs.$inferSe
   };
 }
 
-function readProviderConfigInput(value: unknown) {
-  if (!value || typeof value !== "object") {
-    return null;
+function readProviderAuthMethod(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return "none";
   }
 
-  const record = value as Record<string, unknown>;
-  const providerKind = readProviderKind(record["providerKind"]);
-
-  if (!providerKind) {
-    return null;
-  }
-
-  const defaults = PROVIDER_DEFAULTS[providerKind];
-  const displayName = optionalString(record["displayName"]) ?? defaults.displayName;
-  const baseUrl = normalizeBaseUrl(optionalString(record["baseUrl"]) ?? defaults.baseUrl);
-  const model = optionalString(record["model"]) ?? defaults.model;
-
-  if (!baseUrl || !model) {
-    return null;
-  }
-
-  return {
-    providerKind,
-    displayName,
-    baseUrl,
-    model,
-  };
+  const authMethod = (metadata as Record<string, unknown>)["authMethod"];
+  return authMethod === "openrouter_pkce" ? authMethod : "none";
 }
 
-function readProviderKind(value: unknown): ProviderKind | null {
-  return typeof value === "string" && value in PROVIDER_DEFAULTS
-    ? value as ProviderKind
+function readProviderModel(body: unknown) {
+  const value = body && typeof body === "object"
+    ? optionalString((body as Record<string, unknown>)["model"])
     : null;
+  const model = value?.trim();
+
+  if (!model || model.length > 180 || /\s/.test(model)) {
+    return null;
+  }
+
+  return model;
 }
 
-function runtimeConfigFromInput(
-  input: NonNullable<ReturnType<typeof readProviderConfigInput>>,
-  apiKey: string | null,
+function readProviderDisplayName(body: unknown) {
+  const value = body && typeof body === "object"
+    ? optionalString((body as Record<string, unknown>)["displayName"])
+    : null;
+  const displayName = value?.trim();
+
+  if (!displayName) {
+    return null;
+  }
+
+  return displayName.length <= 80 ? displayName : displayName.slice(0, 80);
+}
+
+function runtimeConfigFromSavedConfig(
+  config: ProviderConfigRow,
+  env: Record<string, string | undefined>,
 ): ProviderRuntimeConfig | null {
-  const defaults = PROVIDER_DEFAULTS[input.providerKind];
-  if (defaults.requiresApiKey && !apiKey) {
+  if (config.status !== "connected") {
+    return null;
+  }
+
+  if (!isOpenRouterOAuthProviderConfig(config)) {
+    return null;
+  }
+
+  const apiKey = config.apiKeyCiphertext
+    ? decryptApiKey({
+        ciphertext: config.apiKeyCiphertext,
+        iv: config.apiKeyIv,
+        tag: config.apiKeyTag,
+      }, env)
+    : "";
+
+  if (PROVIDER_DEFAULTS[config.providerKind].requiresApiKey && !apiKey) {
     return null;
   }
 
   return {
-    id: null,
-    providerKind: input.providerKind,
-    displayName: input.displayName,
-    baseUrl: input.baseUrl,
-    model: input.model,
-    apiKey: apiKey ?? "",
+    id: config.id,
+    providerKind: config.providerKind,
+    displayName: config.displayName,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    apiKey,
     source: "user",
   };
 }
@@ -407,26 +725,10 @@ export async function resolveRuntimeProviderConfig(
   twinId: string,
   env: Record<string, string | undefined>,
 ): Promise<ProviderRuntimeConfig | null> {
-  const config = await loadProviderConfig(db, twinId);
+  const config = await loadActiveProviderConfig(db, twinId);
 
-  if (config?.status === "connected") {
-    const apiKey = config.apiKeyCiphertext
-      ? decryptApiKey({
-          ciphertext: config.apiKeyCiphertext,
-          iv: config.apiKeyIv,
-          tag: config.apiKeyTag,
-        }, env)
-      : "";
-
-    return {
-      id: config.id,
-      providerKind: config.providerKind,
-      displayName: config.displayName,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      apiKey,
-      source: "user",
-    };
+  if (config) {
+    return runtimeConfigFromSavedConfig(config, env);
   }
 
   return readEnvProviderConfig(env);
@@ -453,12 +755,124 @@ function readEnvProviderConfig(env: Record<string, string | undefined>): Provide
   };
 }
 
-async function markProviderTested(db: AppDependencies["db"], twinId: string) {
-  await db
-    .update(llmProviderConfigs)
-    .set({ lastTestedAt: new Date(), status: "connected", updatedAt: new Date() })
-    .where(eq(llmProviderConfigs.twinId, twinId))
-    .catch(() => undefined);
+function isOpenRouterOAuthProviderConfig(config: ProviderConfigRow) {
+  return config.providerKind === "openrouter" &&
+    readProviderAuthMethod(config.metadata) === "openrouter_pkce";
+}
+
+async function exchangeOpenRouterOAuthCode(input: {
+  code: string;
+  codeVerifier: string;
+  fetchImpl: typeof fetch;
+}): Promise<{ ok: true; key: string } | { ok: false; error: string }> {
+  const response = await input.fetchImpl(OPENROUTER_KEY_EXCHANGE_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code: input.code,
+      code_verifier: input.codeVerifier,
+      code_challenge_method: "S256",
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  const key = payload && typeof payload === "object"
+    ? optionalString((payload as Record<string, unknown>)["key"])
+    : null;
+
+  if (response.ok && key) {
+    return { ok: true, key };
+  }
+
+  return {
+    ok: false,
+    error: response.ok
+      ? "OpenRouter did not return a key."
+      : `${response.status}: ${JSON.stringify(payload).slice(0, 240)}`,
+  };
+}
+
+async function recordProviderAudit(
+  db: AppDependencies["db"],
+  { auth, twinId }: AuthorizedTwin,
+  input: {
+    eventType: string;
+    resourceId: string;
+    metadata: Record<string, unknown>;
+  },
+) {
+  await db.insert(auditEvents).values({
+    twinId,
+    actorType: auth.type,
+    actorId: auth.sub,
+    eventType: input.eventType,
+    resourceType: "llm_provider_config",
+    resourceId: input.resourceId,
+    metadata: input.metadata,
+  });
+}
+
+function signOAuthState(
+  payload: { twinId: string; nonce: string; exp: number },
+  env: Record<string, string | undefined>,
+) {
+  const encoded = base64Url(Buffer.from(JSON.stringify(payload), "utf8"));
+  const signature = createHmac("sha256", credentialEncryptionKey(env))
+    .update(encoded)
+    .digest();
+
+  return `${encoded}.${base64Url(signature)}`;
+}
+
+function safeSignOAuthState(
+  payload: { twinId: string; nonce: string; exp: number },
+  env: Record<string, string | undefined>,
+) {
+  try {
+    return signOAuthState(payload, env);
+  } catch {
+    return null;
+  }
+}
+
+function verifyOAuthState(
+  state: string,
+  env: Record<string, string | undefined>,
+): { twinId: string; nonce: string; exp: number } | null {
+  const [encoded, signature] = state.split(".");
+  if (!encoded || !signature) {
+    return null;
+  }
+
+  const expected = base64Url(
+    createHmac("sha256", credentialEncryptionKey(env)).update(encoded).digest(),
+  );
+  if (signature !== expected) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as { twinId?: unknown; nonce?: unknown; exp?: unknown };
+
+    if (
+      typeof payload.twinId !== "string" ||
+      typeof payload.nonce !== "string" ||
+      typeof payload.exp !== "number" ||
+      payload.exp < Date.now()
+    ) {
+      return null;
+    }
+
+    return {
+      twinId: payload.twinId,
+      nonce: payload.nonce,
+      exp: payload.exp,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function encryptApiKey(apiKey: string, env: Record<string, string | undefined>) {
@@ -512,4 +926,14 @@ function credentialEncryptionKey(env: Record<string, string | undefined>): Buffe
   }
 
   return createHash("sha256").update(raw).digest();
+}
+
+function base64Url(value: Buffer) {
+  return value.toString("base64url");
+}
+
+function readUuid(value: string | undefined): string | null {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
 }

@@ -15,7 +15,7 @@ export const PROVIDER_DEFAULTS = {
   openrouter: {
     displayName: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    model: "meta-llama/llama-3.1-8b-instruct:free",
+    model: "google/gemini-3.1-flash-lite",
     requiresApiKey: true,
   },
   ollama: {

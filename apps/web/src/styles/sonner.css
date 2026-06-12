@@ -1,0 +1,128 @@
+[data-sonner-toaster].sivraj-sonner {
+  --width: min(390px, calc(100vw - 2rem));
+  font-family: var(--font-sans);
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast) {
+  --sivraj-toast-rgb: var(--theme-color-rgb);
+  --sivraj-toast-text: #f6feff;
+  --sivraj-toast-muted: rgba(246, 254, 255, 0.66);
+  overflow: hidden;
+  gap: 0.75rem !important;
+  min-height: 4.25rem;
+  padding: 1rem 2.75rem 1rem 1.1rem !important;
+  border: 1px solid rgba(var(--sivraj-toast-rgb), 0.38) !important;
+  border-radius: 20px !important;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(var(--sivraj-toast-rgb), 0.24),
+      rgba(255, 255, 255, 0.075) 38%,
+      rgba(0, 0, 0, 0.2)
+    ),
+    radial-gradient(
+      circle at 14% 0%,
+      rgba(var(--sivraj-toast-rgb), 0.26),
+      transparent 34%
+    ),
+    rgba(4, 13, 15, 0.72) !important;
+  color: var(--sivraj-toast-text) !important;
+  box-shadow:
+    0 26px 80px rgba(0, 0, 0, 0.52),
+    0 0 48px rgba(var(--sivraj-toast-rgb), 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(180%);
+  backdrop-filter: blur(34px) saturate(180%);
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="success"] {
+  --sivraj-toast-rgb: 43, 214, 127;
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="error"] {
+  --sivraj-toast-rgb: 255, 91, 105;
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="warning"] {
+  --sivraj-toast-rgb: 255, 198, 87;
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="info"] {
+  --sivraj-toast-rgb: 56, 189, 248;
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)::before {
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 1.15rem;
+  top: 0;
+  height: 1px;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.48),
+    transparent
+  );
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)::after {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    rgba(var(--sivraj-toast-rgb), 0.8) 0,
+    rgba(var(--sivraj-toast-rgb), 0.38) 2px,
+    transparent 2px
+  );
+  z-index: 0;
+}
+
+:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)
+  > :where([data-icon], [data-content], [data-close-button]) {
+  position: relative;
+  z-index: 1;
+}
+
+[data-sonner-toaster].sivraj-sonner [data-icon] {
+  color: rgb(var(--sivraj-toast-rgb)) !important;
+  filter: drop-shadow(0 0 12px rgba(var(--sivraj-toast-rgb), 0.52));
+}
+
+[data-sonner-toaster].sivraj-sonner [data-content] {
+  gap: 0.2rem !important;
+}
+
+[data-sonner-toaster].sivraj-sonner [data-title] {
+  color: var(--sivraj-toast-text) !important;
+  font-size: 0.92rem !important;
+  font-weight: 750 !important;
+  letter-spacing: 0 !important;
+}
+
+[data-sonner-toaster].sivraj-sonner [data-description] {
+  color: var(--sivraj-toast-muted) !important;
+  font-size: 0.79rem !important;
+  line-height: 1.45 !important;
+}
+
+[data-sonner-toaster].sivraj-sonner [data-close-button] {
+  top: 0.72rem !important;
+  right: 0.72rem !important;
+  left: auto !important;
+  width: 1.35rem !important;
+  height: 1.35rem !important;
+  transform: none !important;
+  border-color: rgba(var(--sivraj-toast-rgb), 0.28) !important;
+  background: rgba(0, 0, 0, 0.42) !important;
+  color: rgba(246, 254, 255, 0.74) !important;
+  box-shadow: 0 0 18px rgba(var(--sivraj-toast-rgb), 0.16);
+}
+
+[data-sonner-toaster].sivraj-sonner [data-close-button]:hover {
+  background: rgba(var(--sivraj-toast-rgb), 0.16) !important;
+  color: #f6feff !important;
+}

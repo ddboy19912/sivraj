@@ -10,6 +10,8 @@ describe('getProviderNavStatus', () => {
     expect(
       getProviderNavStatus({
         fallback: null,
+        activeConfig: null,
+        configs: [],
         config: {
           id: 'config-id',
           providerKind: 'openrouter',
@@ -17,6 +19,8 @@ describe('getProviderNavStatus', () => {
           baseUrl: 'https://openrouter.ai/api/v1',
           model: 'model',
           status: 'connected',
+          isActive: true,
+          authMethod: 'openrouter_pkce',
           hasApiKey: true,
           lastTestedAt: null,
           updatedAt: null,
@@ -25,22 +29,20 @@ describe('getProviderNavStatus', () => {
     ).toBe('connected')
   })
 
-  it('maps local provider config', () => {
+  it('maps fallback provider config', () => {
     expect(
       getProviderNavStatus({
-        fallback: null,
-        config: {
-          id: 'config-id',
-          providerKind: 'ollama',
-          displayName: 'Ollama',
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          model: 'model',
-          status: 'connected',
-          hasApiKey: false,
-          lastTestedAt: null,
-          updatedAt: null,
+        config: null,
+        activeConfig: null,
+        configs: [],
+        fallback: {
+          providerKind: 'openai',
+          displayName: 'Gemini',
+          baseUrl: 'https://api.openai.com',
+          model: 'google/gemini-3.1-flash-lite',
+          source: 'env',
         },
       }),
-    ).toBe('local')
+    ).toBe('default')
   })
 })

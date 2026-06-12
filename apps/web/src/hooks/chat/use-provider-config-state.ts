@@ -23,13 +23,10 @@ export function useProviderConfigState({
     onProviderChanged,
     setStatus: fields.setStatus,
     setters: {
-      setProviderKind: fields.setProviderKind,
-      setDisplayName: fields.setDisplayName,
-      setBaseUrl: fields.setBaseUrl,
-      setModel: fields.setModel,
       setHasSavedApiKey: fields.setHasSavedApiKey,
-      setApiKey: fields.setApiKey,
       setFallbackLabel: fields.setFallbackLabel,
+      setSavedConfigs: fields.setSavedConfigs,
+      setActiveProviderConfigId: fields.setActiveProviderConfigId,
     },
   });
 

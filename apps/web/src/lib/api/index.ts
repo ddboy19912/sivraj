@@ -22,6 +22,12 @@ export function apiErrorMessage(status: number, payload: unknown) {
 
   if (payload && typeof payload === 'object') {
     const errorPayload = payload as { error?: unknown; message?: unknown; storageWallet?: unknown }
+    if (errorPayload.error === 'llm_credential_encryption_not_configured') {
+      return typeof errorPayload.message === 'string'
+        ? errorPayload.message
+        : 'Provider credential encryption is not configured on the API.'
+    }
+
     const message = typeof errorPayload.message === 'string'
       ? errorPayload.message
       : null

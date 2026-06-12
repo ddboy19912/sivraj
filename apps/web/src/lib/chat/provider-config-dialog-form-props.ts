@@ -1,40 +1,41 @@
 import type { ProviderConfigFormProps } from "@/components/chat/ProviderConfigForm";
-import type { ProviderKind } from "@/lib/chat/chat-api";
+import type { SafeProviderConfig } from "@/lib/chat/chat-api";
 
 type ProviderConfigDialogState = {
-  providerKind: ProviderKind;
-  displayName: string;
-  baseUrl: string;
-  model: string;
-  apiKey: string;
-  hasSavedApiKey: boolean;
-  keyHint: string;
+  activeProviderConfigId: string | null;
+  savedConfigs: SafeProviderConfig[];
   fallbackLabel: string | null;
-  status: string | null;
-  selectProvider: (kind: ProviderKind) => void;
-  setDisplayName: (value: string) => void;
-  setBaseUrl: (value: string) => void;
-  setModel: (value: string) => void;
-  setApiKey: (value: string) => void;
+  isBusy: boolean;
+  handleConnectOpenRouter: () => void;
+  handleCreateOpenRouterModel: (input: {
+    displayName: string;
+    model: string;
+  }) => Promise<void> | void;
+  handleSelectProvider: (providerConfigId: string) => void;
+  handleDeleteProvider: (providerConfigId: string) => void;
+  handleSelectDefaultProvider: () => void;
+  handleUpdateProviderModel: (
+    providerConfigId: string,
+    input: {
+      displayName: string;
+      model: string;
+    },
+  ) => Promise<void> | void;
 };
 
 export function buildProviderConfigDialogFormProps(
   config: ProviderConfigDialogState,
 ): ProviderConfigFormProps {
   return {
-    providerKind: config.providerKind,
-    displayName: config.displayName,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    apiKey: config.apiKey,
-    hasSavedApiKey: config.hasSavedApiKey,
-    keyHint: config.keyHint,
+    activeProviderConfigId: config.activeProviderConfigId,
+    savedConfigs: config.savedConfigs,
     fallbackLabel: config.fallbackLabel,
-    status: config.status,
-    onSelectProvider: config.selectProvider,
-    onDisplayNameChange: config.setDisplayName,
-    onBaseUrlChange: config.setBaseUrl,
-    onModelChange: config.setModel,
-    onApiKeyChange: config.setApiKey,
+    isBusy: config.isBusy,
+    onConnectOpenRouter: config.handleConnectOpenRouter,
+    onCreateOpenRouterModel: config.handleCreateOpenRouterModel,
+    onSelectSavedProvider: config.handleSelectProvider,
+    onSelectDefaultProvider: config.handleSelectDefaultProvider,
+    onDeleteSavedProvider: config.handleDeleteProvider,
+    onUpdateProviderModel: config.handleUpdateProviderModel,
   };
 }

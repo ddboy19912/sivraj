@@ -1,18 +1,17 @@
 import { Cpu } from "lucide-react";
 import { ProviderConfigDialogBody } from "@/components/chat/ProviderConfigDialogBody";
-import { ProviderConfigDialogFooter } from "@/components/chat/ProviderConfigDialogFooter";
-import { buildProviderConfigDialogFormProps } from "@/lib/chat/provider-config-dialog-form-props";
-import { useProviderConfigDialog } from "@/hooks/chat/use-provider-config-dialog";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import type { Session } from "@/lib/session";
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { useProviderConfigDialog } from "@/hooks/chat/use-provider-config-dialog";
+import { useMediaQuery } from "@/hooks/common/use-media-query";
 import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
+import { buildProviderConfigDialogFormProps } from "@/lib/chat/provider-config-dialog-form-props";
+import type { Session } from "@/lib/session";
+import { cn } from "@/lib/ui/utils";
 
 type ProviderConfigDialogProps = {
   open: boolean;
@@ -29,6 +28,8 @@ export function ProviderConfigDialog({
   onSessionRefreshed,
   onProviderChanged,
 }: ProviderConfigDialogProps) {
+  const isLargeScreen = useMediaQuery("(min-width: 768px)");
+  const direction = isLargeScreen ? "right" : "bottom";
   const config = useProviderConfigDialog({
     open,
     session,
@@ -37,34 +38,35 @@ export function ProviderConfigDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent variant="ambient" className="max-w-[520px]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-[#f7fdff]">
-            <Cpu className="size-5 text-[rgb(var(--theme-color-rgb))]" />
+    <Drawer
+      key={direction}
+      open={open}
+      onOpenChange={onOpenChange}
+      direction={direction}
+      modal
+    >
+      <DrawerContent
+        className={cn(
+          "overflow-hidden",
+          direction === "right" && "max-w-[min(680px,calc(100vw-28px))] pt-5",
+          direction === "bottom" &&
+            "max-h-[min(86svh,760px)] pb-[max(18px,env(safe-area-inset-bottom))]",
+        )}
+      >
+        <DrawerHeader className="border-b border-white/6 pb-4 text-left pt-0!">
+          <DrawerTitle className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-white/90">
+            <Cpu className="size-4.5 text-[rgba(var(--theme-color-rgb),0.7)]" />
             LLM provider
-          </DialogTitle>
-          <DialogDescription className="text-[rgba(231,252,255,0.62)]">
-            Model: OpenAI-compatible. Memory: Sivraj.
-          </DialogDescription>
-        </DialogHeader>
+          </DrawerTitle>
+        </DrawerHeader>
 
-        <ProviderConfigDialogBody
-          session={session}
-          formProps={buildProviderConfigDialogFormProps(config)}
-        />
-
-        <DialogFooter className="sm:justify-between">
-          <ProviderConfigDialogFooter
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 pb-8">
+          <ProviderConfigDialogBody
             session={session}
-            canSubmit={config.canSubmit}
-            isBusy={config.isBusy}
-            onDisconnect={config.handleDisconnect}
-            onTest={config.handleTest}
-            onSave={config.handleSave}
+            formProps={buildProviderConfigDialogFormProps(config)}
           />
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </DrawerContent>
+    </Drawer>
   );
 }

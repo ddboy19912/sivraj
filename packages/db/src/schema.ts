@@ -318,6 +318,7 @@ export const llmProviderConfigs = pgTable(
     twinId: twinIdColumn(() => twins),
     providerKind: llmProviderKindEnum("provider_kind").notNull(),
     status: llmProviderStatusEnum("status").notNull().default("connected"),
+    isActive: boolean("is_active").notNull().default(false),
     displayName: text("display_name").notNull(),
     baseUrl: text("base_url").notNull(),
     model: text("model").notNull(),
@@ -330,7 +331,10 @@ export const llmProviderConfigs = pgTable(
     ...rowTimestamps(),
   },
   (t) => [
-    uniqueIndex("llm_provider_configs_twin_id_idx").on(t.twinId),
+    index("llm_provider_configs_twin_id_idx").on(t.twinId),
+    uniqueIndex("llm_provider_configs_active_twin_idx")
+      .on(t.twinId)
+      .where(sql`${t.isActive} = true`),
     index("llm_provider_configs_provider_kind_idx").on(t.providerKind),
     index("llm_provider_configs_status_idx").on(t.status),
   ],

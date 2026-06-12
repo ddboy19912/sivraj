@@ -13,11 +13,14 @@ export type ProviderKind =
   | "custom_openai_compatible";
 
 export type ProviderStatus = "connected" | "disconnected" | "error";
+export type ProviderAuthMethod = "openrouter_pkce" | "none";
 
 export type SafeProviderConfig = {
   id: string | null;
   providerKind: ProviderKind;
   status: ProviderStatus;
+  isActive: boolean;
+  authMethod: ProviderAuthMethod;
   displayName: string;
   baseUrl: string;
   model: string;
@@ -28,6 +31,8 @@ export type SafeProviderConfig = {
 
 export type ProviderConfigResponse = {
   config: SafeProviderConfig | null;
+  activeConfig: SafeProviderConfig | null;
+  configs: SafeProviderConfig[];
   fallback: {
     providerKind: string;
     displayName: string;
@@ -35,14 +40,6 @@ export type ProviderConfigResponse = {
     model: string;
     source: "env";
   } | null;
-};
-
-export type ProviderConfigInput = {
-  providerKind: ProviderKind;
-  displayName?: string;
-  baseUrl?: string;
-  model?: string;
-  apiKey?: string;
 };
 
 export type ChatThread = {
@@ -101,31 +98,89 @@ export function loadProviderConfig(
   );
 }
 
-export function saveProviderConfig(
-  input: ProviderConfigInput,
+export function startOpenRouterOAuth(
+  callbackUrl: string,
   session: Session,
   onSessionRefreshed: SessionHandler,
 ) {
-  return putAuthedJson<{ config: SafeProviderConfig }>(
-    `/v1/twins/${session.twinId}/chat/provider-config`,
+  return postAuthedJson<{
+    authUrl: string;
+    codeVerifier: string;
+    state: string;
+  }>(
+    `/v1/twins/${session.twinId}/chat/provider-config/openrouter/oauth/start`,
+    { callbackUrl },
+    session,
+    onSessionRefreshed,
+  );
+}
+
+export function completeOpenRouterOAuth(
+  input: {
+    code: string;
+    state: string;
+    codeVerifier: string;
+  },
+  session: Session,
+  onSessionRefreshed: SessionHandler,
+) {
+  return postAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/openrouter/oauth/callback`,
     input,
     session,
     onSessionRefreshed,
   );
 }
 
-export function testProviderConfig(
-  input: ProviderConfigInput,
+export function createOpenRouterModelConfig(
+  input: { displayName: string; model: string },
   session: Session,
   onSessionRefreshed: SessionHandler,
 ) {
-  return postAuthedJson<{
-    ok: boolean;
-    providerKind: string;
+  return postAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/openrouter/models`,
+    input,
+    session,
+    onSessionRefreshed,
+  );
+}
+
+export function selectProviderConfig(
+  providerConfigId: string,
+  session: Session,
+  onSessionRefreshed: SessionHandler,
+) {
+  return putAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/${providerConfigId}/select`,
+    {},
+    session,
+    onSessionRefreshed,
+  );
+}
+
+export function selectFallbackProviderConfig(
+  session: Session,
+  onSessionRefreshed: SessionHandler,
+) {
+  return putAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/default/select`,
+    {},
+    session,
+    onSessionRefreshed,
+  );
+}
+
+export function updateProviderConfigModel(
+  providerConfigId: string,
+  input: {
+    displayName: string;
     model: string;
-    sample: string;
-  }>(
-    `/v1/twins/${session.twinId}/chat/provider-config/test`,
+  },
+  session: Session,
+  onSessionRefreshed: SessionHandler,
+) {
+  return putAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/${providerConfigId}/model`,
     input,
     session,
     onSessionRefreshed,
@@ -133,11 +188,12 @@ export function testProviderConfig(
 }
 
 export function disconnectProviderConfig(
+  providerConfigId: string,
   session: Session,
   onSessionRefreshed: SessionHandler,
 ) {
-  return deleteAuthedJson<{ ok: boolean }>(
-    `/v1/twins/${session.twinId}/chat/provider-config`,
+  return deleteAuthedJson<ProviderConfigResponse>(
+    `/v1/twins/${session.twinId}/chat/provider-config/${providerConfigId}`,
     session,
     onSessionRefreshed,
   );
