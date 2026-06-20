@@ -1,4 +1,5 @@
 export const ENGINEERING_MEMORY_TYPES = [
+  "user_skill",
   "coding_preference",
   "architecture_decision",
   "project_convention",
@@ -327,6 +328,7 @@ const SOURCE_KIND_BY_SOURCE_TYPE: Record<string, EngineeringSourceKind> = {
   whatsapp_export: "chat_conversation",
   voice_conversation: "voice_conversation",
   voice_note: "voice_conversation",
+  markdown: "manual_note",
   note: "manual_note",
   onboarding_self_description: "manual_note",
 };

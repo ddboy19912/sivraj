@@ -10,6 +10,8 @@ import {
 import { toast } from "sonner";
 import type {
   ProviderConfigResponse,
+  RuntimeCapability,
+  RuntimeCapabilityConfig,
   SafeProviderConfig,
 } from "@/lib/chat/chat-api";
 import type { Session } from "@/lib/session";
@@ -19,9 +21,11 @@ type ProviderDialogState = {
   isBusy: boolean;
   savedConfigs: SafeProviderConfig[];
   fallbackLabel: string | null;
+  runtimeDefaults: Record<string, RuntimeCapabilityConfig> | null;
   setIsBusy: (value: boolean) => void;
   setStatus: (value: string | null) => void;
   setHasSavedApiKey: (value: boolean) => void;
+  setRuntimeDefaults: (value: Record<string, RuntimeCapabilityConfig> | null) => void;
   setSavedConfigs: (value: SafeProviderConfig[]) => void;
   setActiveProviderConfigId: (value: string | null) => void;
 };
@@ -58,6 +62,7 @@ function applyProviderResponse(
   state.setSavedConfigs(response.configs ?? []);
   state.setActiveProviderConfigId(activeConfig?.id ?? null);
   state.setHasSavedApiKey(Boolean(activeConfig?.hasApiKey));
+  state.setRuntimeDefaults(response.runtimeDefaults ?? null);
   onProviderChanged(response);
 }
 
@@ -120,7 +125,7 @@ export function createProviderConfigDialogHandlers({
     });
   }
 
-  async function handleSelectDefaultProvider() {
+  async function handleSelectDefaultProvider(capability: RuntimeCapability) {
     if (!session || state.isBusy) {
       return;
     }
@@ -128,11 +133,15 @@ export function createProviderConfigDialogHandlers({
     await runProviderDialogAction(state, async () => {
       const response = await selectDefaultProviderDialogConfig({
         session,
+        capability,
         onSessionRefreshed,
       });
       applyProviderResponse(state, response, onProviderChanged);
       toast.success("Default provider selected", {
-        description: state.fallbackLabel ?? "Sivraj will use the default model.",
+        description:
+          state.runtimeDefaults?.[capability]?.model ??
+          state.fallbackLabel ??
+          "Sivraj will use the default model.",
       });
     });
   }
@@ -158,6 +167,7 @@ export function createProviderConfigDialogHandlers({
   async function handleCreateOpenRouterModel(input: {
     displayName: string;
     model: string;
+    capability: RuntimeCapability;
   }) {
     if (!session || state.isBusy) {
       return;
@@ -168,6 +178,7 @@ export function createProviderConfigDialogHandlers({
         session,
         displayName: input.displayName,
         model: input.model,
+        capability: input.capability,
         onSessionRefreshed,
       });
       applyProviderResponse(state, response, onProviderChanged);
@@ -182,6 +193,7 @@ export function createProviderConfigDialogHandlers({
     input: {
       displayName: string;
       model: string;
+      capability: RuntimeCapability;
     },
   ) {
     if (!session || state.isBusy) {
@@ -194,6 +206,7 @@ export function createProviderConfigDialogHandlers({
         providerConfigId,
         displayName: input.displayName,
         model: input.model,
+        capability: input.capability,
         onSessionRefreshed,
       });
       applyProviderResponse(state, response, onProviderChanged);

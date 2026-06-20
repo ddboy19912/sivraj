@@ -17,6 +17,8 @@
     "dev:worker": "pnpm --filter @sivraj/worker dev",
     "dev:mcp": "pnpm --filter @sivraj/mcp-server dev",
     "dev:cli": "pnpm --filter @sivraj/cli dev",
+    "memory:diagnose": "pnpm --filter @sivraj/api memory:diagnose",
+    "memory:renew": "pnpm --filter @sivraj/worker memory:renew",
     "onboarding:reset": "pnpm --filter @sivraj/api onboarding:reset",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",

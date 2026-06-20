@@ -2,13 +2,15 @@ import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
-import { auditEvents, candidateMemories, sourceArtifacts } from "@sivraj/db";
-import { and, count, eq } from "drizzle-orm";
+import { auditEvents, candidateMemories, chatThreads, sourceArtifacts } from "@sivraj/db";
+import { and, count, desc, eq, ne } from "drizzle-orm";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppDependencies } from "../app.js";
 import {
+  recordMetadata,
   readIntelligenceStatus,
+  readProcessingMetadata,
   readProcessingReason,
   sanitizeSafeMetadata,
 } from "../lib/safe-metadata.js";
@@ -64,6 +66,16 @@ export async function handleArtifactUpload(
     return duplicateResponse;
   }
 
+  const duplicateArtifactResponse = await findDuplicateManualArtifact(c, deps, {
+    auth,
+    twinId,
+    parsedInput,
+  });
+
+  if (duplicateArtifactResponse) {
+    return duplicateArtifactResponse;
+  }
+
   const stored = await storeArtifactUpload(privateMemoryStorage, {
     twinId,
     sourceType: parsedInput.sourceType,
@@ -78,6 +90,71 @@ export async function handleArtifactUpload(
   }
 
   return completeArtifactUpload(c, deps, { auth, twinId, parsedInput, stored: stored.value });
+}
+
+async function findDuplicateManualArtifact(
+  c: Context<AuthEnv>,
+  deps: AppDependencies,
+  input: {
+    auth: AuthorizedTwin["auth"];
+    twinId: string;
+    parsedInput: ParsedArtifactUploadInput;
+  },
+) {
+  const fingerprint = input.parsedInput.contentFingerprint;
+
+  if (!fingerprint) {
+    return null;
+  }
+
+  const [duplicateArtifact] = await deps.db
+    .select()
+    .from(sourceArtifacts)
+    .where(and(
+      eq(sourceArtifacts.twinId, input.twinId),
+      eq(sourceArtifacts.sourceType, input.parsedInput.sourceType),
+      eq(sourceArtifacts.hash, fingerprint.hash),
+      ne(sourceArtifacts.ingestionStatus, "failed"),
+    ))
+    .orderBy(desc(sourceArtifacts.createdAt))
+    .limit(1);
+
+  if (!duplicateArtifact) {
+    return null;
+  }
+
+  await updateUploadedArtifactThreadFocus(deps, {
+    twinId: input.twinId,
+    artifact: duplicateArtifact,
+    metadata: input.parsedInput.storageMetadata,
+  });
+
+  await deps.db.insert(auditEvents).values({
+    twinId: input.twinId,
+    actorType: input.auth.type,
+    actorId: input.auth.sub,
+    eventType: "artifact.skipped_duplicate",
+    resourceType: "source_artifact",
+    resourceId: duplicateArtifact.id,
+    metadata: {
+      reason: "duplicate_artifact_upload",
+      sourceType: input.parsedInput.sourceType,
+      contentFingerprintVersion: fingerprint.version,
+      walletAddress: input.auth.walletAddress,
+    },
+  });
+
+  return c.json({
+    artifactId: duplicateArtifact.id,
+    duplicateOfArtifactId: duplicateArtifact.id,
+    memoryFragmentId: null,
+    status: duplicateArtifact.ingestionStatus,
+    storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
+    sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
+    rawStorageRef: duplicateArtifact.rawStorageRef,
+    skipped: true,
+    reason: "duplicate_artifact_upload",
+  });
 }
 
 export async function handleArtifactRetry(
@@ -145,6 +222,61 @@ export async function handleArtifactGet(
       scope: "memory:read",
     },
     artifact: formatArtifactDetail(artifact, memoryFragment, candidateCountRow?.count ?? 0),
+  });
+}
+
+export async function handleArtifactPreview(
+  c: Context<AuthEnv>,
+  deps: AppDependencies,
+  { twinId, artifact }: { twinId: string; artifact: typeof sourceArtifacts.$inferSelect },
+) {
+  if (!deps.privateMemoryReader) {
+    return c.json({ error: "encrypted_storage_reader_not_configured" }, 503);
+  }
+
+  if (!artifact.rawStorageRef) {
+    return c.json({ error: "artifact_content_unavailable" }, 404);
+  }
+
+  const metadata = recordMetadata(artifact.metadata);
+  const payload = await deps.privateMemoryReader.readPrivateMemory({
+    rawStorageRef: artifact.rawStorageRef,
+    artifactId: artifact.id,
+    twinId,
+    expectedCiphertextSha256: optionalString(metadata["ciphertextSha256"]),
+  }).then(readPrivateSourcePayload).catch((error: unknown) => {
+    console.warn("artifact preview decrypt failed", {
+      artifactId: artifact.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+
+  if (!payload) {
+    return c.json({ error: "artifact_preview_unavailable" }, 503);
+  }
+
+  const preview = decodePreviewContent(payload.content, artifact.sourceType);
+  if (!preview) {
+    return c.json({ error: "artifact_preview_unsupported" }, 415);
+  }
+
+  const fileName = safePreviewFileName(
+    optionalString(payload.metadata["fileName"]) ??
+      payload.title ??
+      optionalString(metadata["fileName"]) ??
+      artifact.sourceType,
+  );
+
+  const body = new ArrayBuffer(preview.bytes.byteLength);
+  new Uint8Array(body).set(preview.bytes);
+
+  return new Response(body, {
+    headers: {
+      "content-type": preview.contentType,
+      "content-disposition": `inline; filename="${fileName}"`,
+      "cache-control": "private, max-age=60",
+    },
   });
 }
 
@@ -221,6 +353,7 @@ export async function handleArtifactEvents(
     status: artifact.ingestionStatus,
     intelligenceStatus: readIntelligenceStatus(artifact.metadata),
     reason: readProcessingReason(artifact.metadata),
+    processing: readProcessingMetadata(artifact.metadata),
     occurredAt: new Date().toISOString(),
   };
 
@@ -280,6 +413,11 @@ async function completeArtifactUpload(
   },
 ) {
   const artifact = await insertCreatedArtifact(deps, input);
+  await updateUploadedArtifactThreadFocus(deps, {
+    twinId: input.twinId,
+    artifact,
+    metadata: input.parsedInput.storageMetadata,
+  });
   const { processingJobId, warning } = await enqueueCreatedArtifactProcessing(deps, {
     twinId: input.twinId,
     artifactId: artifact.id,
@@ -318,7 +456,8 @@ async function insertCreatedArtifact(
     sourceType: input.parsedInput.sourceType,
     storageMetadata: input.parsedInput.storageMetadata,
     stored: input.stored,
-    hash: input.parsedInput.aiChatImportFingerprint?.hash,
+    hash: input.parsedInput.aiChatImportFingerprint?.hash ??
+      input.parsedInput.contentFingerprint?.hash,
   });
 
   await db.insert(auditEvents).values({
@@ -338,6 +477,137 @@ async function insertCreatedArtifact(
   });
 
   return artifact;
+}
+
+async function updateUploadedArtifactThreadFocus(
+  deps: AppDependencies,
+  input: {
+    twinId: string;
+    artifact: typeof sourceArtifacts.$inferSelect;
+    metadata: Record<string, unknown>;
+  },
+) {
+  if (!isDocumentSourceType(input.artifact.sourceType)) {
+    return;
+  }
+
+  const threadId = optionalString(input.metadata["threadId"]);
+  if (!threadId) {
+    return;
+  }
+
+  const [thread] = await deps.db
+    .select()
+    .from(chatThreads)
+    .where(and(
+      eq(chatThreads.id, threadId),
+      eq(chatThreads.twinId, input.twinId),
+    ))
+    .limit(1);
+
+  if (!thread) {
+    return;
+  }
+
+  await deps.db
+    .update(chatThreads)
+    .set({
+      metadata: {
+        ...recordMetadata(thread.metadata),
+        documentFocus: {
+          sourceArtifactId: input.artifact.id,
+          sourceType: input.artifact.sourceType,
+          reason: "chat_upload",
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(chatThreads.id, thread.id),
+      eq(chatThreads.twinId, input.twinId),
+    ));
+}
+
+function isDocumentSourceType(sourceType: string) {
+  return sourceType === "pdf" ||
+    sourceType === "ocr_pdf" ||
+    sourceType === "docx" ||
+    sourceType === "markdown" ||
+    sourceType === "upload";
+}
+
+function readPrivateSourcePayload(value: string): {
+  title: string | null;
+  content: string;
+  metadata: Record<string, unknown>;
+} | null {
+  const parsed = JSON.parse(value) as unknown;
+  const record = recordMetadata(parsed);
+
+  if (
+    record["kind"] !== "source_artifact" ||
+    typeof record["content"] !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    title: optionalString(record["title"]),
+    content: record["content"],
+    metadata: recordMetadata(record["metadata"]),
+  };
+}
+
+function decodePreviewContent(
+  content: string,
+  sourceType: string,
+): { bytes: Uint8Array; contentType: string } | null {
+  const dataUrl = parseDataUrl(content);
+  if (dataUrl) {
+    return dataUrl;
+  }
+
+  if (sourceType === "markdown") {
+    return {
+      bytes: new TextEncoder().encode(content),
+      contentType: "text/markdown; charset=utf-8",
+    };
+  }
+
+  if (sourceType === "upload") {
+    return {
+      bytes: new TextEncoder().encode(content),
+      contentType: "text/plain; charset=utf-8",
+    };
+  }
+
+  return null;
+}
+
+function parseDataUrl(value: string): { bytes: Uint8Array; contentType: string } | null {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/su.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const contentType = match[1] || "application/octet-stream";
+  const isBase64 = Boolean(match[2]);
+  const encoded = match[3] ?? "";
+  const bytes = isBase64
+    ? Uint8Array.from(Buffer.from(encoded, "base64"))
+    : new TextEncoder().encode(decodeURIComponent(encoded));
+
+  return { bytes, contentType };
+}
+
+function safePreviewFileName(value: string): string {
+  const cleaned = value
+    .replace(/["\r\n]/gu, "")
+    .replace(/[\/\\]/gu, "_")
+    .trim();
+
+  return cleaned || "artifact";
 }
 
 async function enqueueCreatedArtifactProcessing(

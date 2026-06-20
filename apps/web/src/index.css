@@ -12,3 +12,33 @@
 @import "./styles/drawer.css";
 @import "./styles/theme-color-picker.css";
 @import "./styles/wallet-connect.css";
+
+@keyframes chat-dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.36;
+    transform: translateY(0) scale(0.92);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
+}
+
+.chat-typing-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  animation: chat-dot-pulse 1.15s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  will-change: opacity, transform;
+}
+
+.chat-typing-dot-delayed {
+  animation-delay: 120ms;
+}
+
+.chat-typing-dot-late {
+  animation-delay: 240ms;
+}

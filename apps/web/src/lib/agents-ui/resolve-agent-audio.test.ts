@@ -7,7 +7,12 @@ describe("resolveAgentAudio", () => {
       resolveAgentAudio({
         fallbackState: "initializing",
         liveKit: { state: "listening", audioTrack: { kind: "audio" } as never },
-        speechCommand: { eventId: "event-1", audioUrl: "blob:audio" },
+        speechCommand: {
+          eventId: "event-1",
+          clipId: "event-1#0",
+          audioUrl: "blob:audio",
+          isFinalClip: true,
+        },
         twinSpeechTrack: { kind: "audio" } as never,
       }),
     ).toEqual({
@@ -22,7 +27,12 @@ describe("resolveAgentAudio", () => {
       resolveAgentAudio({
         fallbackState: "initializing",
         liveKit: null,
-        speechCommand: { eventId: "event-1", audioUrl: "blob:audio" },
+        speechCommand: {
+          eventId: "event-1",
+          clipId: "event-1#0",
+          audioUrl: "blob:audio",
+          isFinalClip: true,
+        },
         twinSpeechTrack: { kind: "audio" } as never,
       }),
     ).toEqual({

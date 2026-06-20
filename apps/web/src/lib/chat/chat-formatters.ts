@@ -1,4 +1,4 @@
-import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
+import type { ChatMemoryIntent, ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { ChatMessage } from "@/lib/chat/chat-api";
 
 export type ProviderPresentation = {
@@ -19,7 +19,7 @@ export function resolveProviderPresentation(
   if (providerState?.fallback) {
     return {
       label: providerState.fallback.model,
-      mode: "Gemini (default)",
+      mode: `${providerState.fallback.displayName} default`,
     };
   }
 
@@ -29,18 +29,25 @@ export function resolveProviderPresentation(
 export function createOptimisticUserMessage(
   activeThreadId: string | null,
   content: string,
+  memoryIntent: ChatMemoryIntent = "auto",
 ): ChatMessage {
   return {
     id: `local-${Date.now()}`,
     threadId: activeThreadId ?? "pending",
+    turnId: null,
     role: "user",
+    status: "completed",
     content,
     providerKind: null,
     model: null,
     memoryFragmentIds: [],
     citations: null,
     usage: null,
-    metadata: { contextSaved: true, optimistic: true },
+    metadata: {
+      contextSaved: memoryIntent !== "private",
+      memoryIntent,
+      optimistic: true,
+    },
     createdAt: new Date().toISOString(),
   };
 }
@@ -49,19 +56,10 @@ export function titleFromMessage(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 64) || "New chat";
 }
 
-const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
 const messageDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
 });
-
-export function formatTime(value: string): string {
-  return messageTimeFormatter.format(new Date(value));
-}
 
 export function formatRelativeTime(value: string): string {
   const date = new Date(value);

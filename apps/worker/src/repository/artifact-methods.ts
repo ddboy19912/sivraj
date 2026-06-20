@@ -74,6 +74,14 @@ async function markArtifactPending(
   await markArtifact(db, id, "pending", metadata);
 }
 
+async function markArtifactProcessing(
+  db: Db,
+  id: string,
+  metadata: Record<string, unknown>,
+) {
+  await markArtifact(db, id, "processing", metadata);
+}
+
 async function markArtifactCompleted(
   db: Db,
   id: string,
@@ -96,6 +104,8 @@ export function createArtifactMethods(db: Db) {
     findQueuedArtifacts: (limit: number) => findQueuedArtifacts(db, limit),
     claimArtifact: (id: string) => claimArtifact(db, id),
     claimRecoverableArtifact: (id: string) => claimRecoverableArtifact(db, id),
+    markArtifactProcessing: (id: string, metadata: Record<string, unknown>) =>
+      markArtifactProcessing(db, id, metadata),
     markArtifactPending: (id: string, metadata: Record<string, unknown>) =>
       markArtifactPending(db, id, metadata),
     markArtifactCompleted: (id: string, metadata: Record<string, unknown>) =>

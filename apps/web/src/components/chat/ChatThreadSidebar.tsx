@@ -9,6 +9,7 @@ type ChatThreadSidebarProps = {
   activeThreadId: string | null;
   onSelectThread: (threadId: string) => void;
   onCreateThread: () => void;
+  onDeleteThread: (threadId: string) => void;
 };
 
 export function ChatThreadSidebar({
@@ -16,6 +17,7 @@ export function ChatThreadSidebar({
   activeThreadId,
   onSelectThread,
   onCreateThread,
+  onDeleteThread,
 }: ChatThreadSidebarProps) {
   return (
     <aside className={cn(liquidGlass, "hidden w-[260px] shrink-0 overflow-hidden rounded-[28px] p-3 md:block")}>
@@ -30,6 +32,7 @@ export function ChatThreadSidebar({
             thread={thread}
             isActive={activeThreadId === thread.id}
             onSelect={() => onSelectThread(thread.id)}
+            onDelete={() => onDeleteThread(thread.id)}
           />
         ))}
       </div>

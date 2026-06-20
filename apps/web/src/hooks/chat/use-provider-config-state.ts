@@ -25,6 +25,7 @@ export function useProviderConfigState({
     setters: {
       setHasSavedApiKey: fields.setHasSavedApiKey,
       setFallbackLabel: fields.setFallbackLabel,
+      setRuntimeDefaults: fields.setRuntimeDefaults,
       setSavedConfigs: fields.setSavedConfigs,
       setActiveProviderConfigId: fields.setActiveProviderConfigId,
     },

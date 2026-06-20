@@ -40,10 +40,42 @@ export function twinRuntimeReducer(
         eventId: state.eventId,
         dedupeKey: state.dedupeKey,
         text: state.text,
-        audioUrl: action.audioUrl,
+        clips: [action.audioUrl],
+        clipCursor: 0,
+        streamClosed: true,
         sourceEventId: state.sourceEventId,
         processedEventIds: state.processedEventIds,
       };
+    case "speech.audio_chunk":
+      return applySpeechChunk(state, action);
+    case "speech.stream_closed":
+      if (state.status !== "speaking" || state.eventId !== action.eventId) {
+        return state;
+      }
+
+      if (state.clipCursor >= state.clips.length) {
+        return {
+          status: "idle",
+          processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+        };
+      }
+
+      return { ...state, streamClosed: true };
+    case "speech.clip_advanced": {
+      if (state.status !== "speaking" || state.eventId !== action.eventId) {
+        return state;
+      }
+
+      const nextCursor = state.clipCursor + 1;
+      if (nextCursor >= state.clips.length && state.streamClosed) {
+        return {
+          status: "idle",
+          processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+        };
+      }
+
+      return { ...state, clipCursor: nextCursor };
+    }
     case "speech.started":
       return state;
     case "speech.completed":
@@ -161,6 +193,31 @@ function applySpeechRequest(
     dedupeKey: event.dedupeKey,
     text: event.text,
     voiceStyle: event.voiceStyle,
+    sourceEventId: event.sourceEventId,
+    processedEventIds: state.processedEventIds,
+  };
+}
+
+function applySpeechChunk(
+  state: TwinRuntimeState,
+  event: Extract<TwinRuntimeEvent, { type: "speech.audio_chunk" }>,
+): TwinRuntimeState {
+  if (hasProcessedEvent(state, event.eventId)) {
+    return state;
+  }
+
+  if (state.status === "speaking" && state.eventId === event.eventId) {
+    return { ...state, clips: [...state.clips, event.audioUrl] };
+  }
+
+  return {
+    status: "speaking",
+    eventId: event.eventId,
+    dedupeKey: event.dedupeKey,
+    text: "",
+    clips: [event.audioUrl],
+    clipCursor: 0,
+    streamClosed: false,
     sourceEventId: event.sourceEventId,
     processedEventIds: state.processedEventIds,
   };

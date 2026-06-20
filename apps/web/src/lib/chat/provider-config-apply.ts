@@ -1,11 +1,13 @@
 import type {
   ProviderConfigResponse,
+  RuntimeCapabilityConfig,
   SafeProviderConfig,
 } from "@/lib/chat/chat-api";
 
 export type ProviderConfigSetters = {
   setHasSavedApiKey: (value: boolean) => void;
   setFallbackLabel: (value: string | null) => void;
+  setRuntimeDefaults: (value: Record<string, RuntimeCapabilityConfig> | null) => void;
   setSavedConfigs: (value: SafeProviderConfig[]) => void;
   setActiveProviderConfigId: (value: string | null) => void;
 };
@@ -29,4 +31,5 @@ export function applyLoadedProviderConfig(
       ? response.fallback.model
       : null,
   );
+  setters.setRuntimeDefaults(response.runtimeDefaults ?? null);
 }

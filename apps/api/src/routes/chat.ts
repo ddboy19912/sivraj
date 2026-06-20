@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { loadMemorySearchConfig } from "@sivraj/config";
 import type { AppDependencies } from "../app.js";
 import { requireAuth, type AuthEnv } from "../middleware/auth.js";
 import { twinScopedHandler } from "../lib/http/route-auth.js";
@@ -14,15 +15,21 @@ import {
 } from "./chat-provider-config.js";
 import {
   handleCreateThread,
+  handleDeleteThread,
   handleGetThreadMessages,
+  handlePostThreadAttachment,
   handleListThreads,
   handlePostThreadMessage,
+  handlePostThreadTurn,
 } from "./chat-message-handler.js";
 
 export function createChatRoutes({
   db,
   privateMemoryReader,
+  privateMemoryStorage,
+  artifactProcessingQueue,
   llmFetch,
+  memorySearchConfig = loadMemorySearchConfig(process.env),
 }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
 
@@ -57,9 +64,30 @@ export function createChatRoutes({
     handleCreateThread(c, db, twinId),
   ));
 
+  routes.delete("/threads/:threadId", requireAuth, (c) => handleDeleteThread(c, db));
   routes.get("/threads/:threadId/messages", requireAuth, (c) => handleGetThreadMessages(c, db));
+  routes.post("/threads/:threadId/attachments", requireAuth, (c) =>
+    handlePostThreadAttachment(c, db),
+  );
   routes.post("/threads/:threadId/messages", requireAuth, (c) =>
-    handlePostThreadMessage(c, db, privateMemoryReader, llmFetch),
+    handlePostThreadMessage(c, {
+      db,
+      privateMemoryReader,
+      privateMemoryStorage,
+      artifactProcessingQueue,
+      llmFetch,
+      memorySearchConfig,
+    }),
+  );
+  routes.post("/threads/:threadId/turns", requireAuth, (c) =>
+    handlePostThreadTurn(c, {
+      db,
+      privateMemoryReader,
+      privateMemoryStorage,
+      artifactProcessingQueue,
+      llmFetch,
+      memorySearchConfig,
+    }),
   );
 
   return routes;

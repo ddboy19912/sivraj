@@ -412,6 +412,7 @@ async function linkExtractedMemoryGraph(
 
 async function queueMemoryArchiveIfNeeded(
   input: {
+    repository: ArtifactRepository;
     artifact: QueuedArtifact;
     memoryFragmentId: string;
     candidateMemoryIds: string[];
@@ -423,7 +424,19 @@ async function queueMemoryArchiveIfNeeded(
     return false;
   }
 
-  await input.candidateMemoryArchiveQueue.enqueueCandidateMemoryArchive({
+  const archive = await input.repository.createCandidateMemoryArchive({
+    twinId: input.artifact.twinId,
+    sourceArtifactId: input.artifact.id,
+    memoryFragmentId: input.memoryFragmentId,
+    sourceType: "candidate_memory_batch",
+    candidateMemoryIds: input.candidateMemoryIds,
+    encryptedBytesBase64: input.encrypted.encryptedBytesBase64,
+    contentSha256: input.encrypted.contentSha256,
+    metadata: input.encrypted.metadata,
+  });
+
+  const queued = await input.candidateMemoryArchiveQueue.enqueueCandidateMemoryArchive({
+    archiveId: archive.id,
     artifactId: input.artifact.id,
     twinId: input.artifact.twinId,
     memoryFragmentId: input.memoryFragmentId,
@@ -432,6 +445,11 @@ async function queueMemoryArchiveIfNeeded(
     encryptedBytesBase64: input.encrypted.encryptedBytesBase64,
     contentSha256: input.encrypted.contentSha256,
     metadata: input.encrypted.metadata,
+  });
+  await input.repository.markCandidateMemoryArchiveQueued({
+    archiveId: archive.id,
+    candidateMemoryIds: input.candidateMemoryIds,
+    jobId: queued.jobId,
   });
 
   return true;
@@ -505,6 +523,7 @@ export async function processMemoryExtraction(
     });
     const candidateMemoryDbWriteMs = Date.now() - dbWriteStartedAt;
     const archiveQueued = await queueMemoryArchiveIfNeeded({
+      repository,
       artifact: input.artifact,
       memoryFragmentId: input.memoryFragmentId,
       candidateMemoryIds: persisted.candidateMemoryIds,

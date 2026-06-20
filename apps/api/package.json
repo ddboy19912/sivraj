@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "memory:diagnose": "node scripts/diagnose-memory.mjs",
     "onboarding:reset": "tsx scripts/reset-onboarding.mjs",
     "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"

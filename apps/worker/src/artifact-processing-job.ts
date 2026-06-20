@@ -8,7 +8,11 @@ type ArtifactProcessingJob = {
 import type { createDrizzleArtifactRepository } from "./repository.js";
 import type { createConfiguredPrivateMemoryReader } from "@sivraj/private-memory-reader";
 import type { createConfiguredPrivateFragmentStorage } from "./private-fragment-storage.js";
-import type { createConfiguredSpeechToTextTranscriber } from "@sivraj/llm";
+import type {
+  createConfiguredSpeechToTextTranscriber,
+  createConfiguredStructuredGenerator,
+  createConfiguredTextEmbedder,
+} from "@sivraj/llm";
 import type { createIntelligenceProcessingQueue, createTransientCiphertextCache } from "@sivraj/queue";
 import { ENCRYPTED_DECRYPTION_FAILED } from "./ingestion-processor.js";
 import type {
@@ -32,6 +36,8 @@ type ArtifactRepository = ReturnType<typeof createDrizzleArtifactRepository>;
 type PrivateMemoryReader = ReturnType<typeof createConfiguredPrivateMemoryReader>;
 type PrivateFragmentStorage = ReturnType<typeof createConfiguredPrivateFragmentStorage>;
 type SpeechToTextTranscriber = ReturnType<typeof createConfiguredSpeechToTextTranscriber>;
+type TextEmbedder = ReturnType<typeof createConfiguredTextEmbedder>;
+type StructuredGenerator = ReturnType<typeof createConfiguredStructuredGenerator>;
 type IntelligenceQueue = ReturnType<typeof createIntelligenceProcessingQueue>;
 type TransientCiphertextCache = ReturnType<typeof createTransientCiphertextCache>;
 
@@ -42,6 +48,8 @@ export type ArtifactProcessingJobDeps = {
   privateMemoryReader: PrivateMemoryReader;
   privateFragmentStorage: PrivateFragmentStorage;
   speechToTextTranscriber: SpeechToTextTranscriber | null;
+  textEmbedder: TextEmbedder | null;
+  structuredGenerator: StructuredGenerator | null;
   intelligenceQueue: IntelligenceQueue;
   transientCiphertextCache: TransientCiphertextCache;
   artifactRetryQueue: ArtifactProcessingQueue;
@@ -104,7 +112,56 @@ async function readArtifactStatus(db: Db, artifactId: string) {
     ingestionStatus: artifact.ingestionStatus,
     reason: readProcessingReason(artifact.metadata),
     intelligenceStatus: readIntelligenceStatus(artifact.metadata),
+    processing: artifactMetadata(artifactMetadata(artifact.metadata)["processing"]),
   };
+}
+
+async function markNonRetryableArtifactFailure(
+  deps: ArtifactProcessingJobDeps,
+  data: ArtifactProcessingJobData,
+  error: unknown,
+) {
+  const artifact = await deps.repository.findArtifactById(data.artifactId);
+  const metadata = artifactMetadata(artifact?.metadata);
+  const reason = "artifact_processing_failed";
+  const detail = errorMessage(error);
+  const nextMetadata = {
+    ...metadata,
+    processing: {
+      ...artifactMetadata(metadata["processing"]),
+      status: "failed",
+      reason,
+      detail,
+      processedAt: new Date().toISOString(),
+    },
+  };
+
+  await deps.repository.markArtifactFailed(data.artifactId, nextMetadata);
+  await deps.repository.createAuditEvent({
+    twinId: data.twinId,
+    eventType: "artifact.processing_failed",
+    resourceId: data.artifactId,
+    metadata: {
+      reason,
+      detail,
+      sourceType: data.sourceType,
+    },
+  });
+  await deps.artifactStatusPublisher.publishArtifactStatus({
+    artifactId: data.artifactId,
+    twinId: data.twinId,
+    sourceType: data.sourceType,
+    status: "failed",
+    reason,
+    processing: nextMetadata.processing,
+    occurredAt: new Date().toISOString(),
+  });
+
+  console.error(`${deps.serviceName} non-retryable artifact processing failure`, {
+    artifactId: data.artifactId,
+    reason,
+    detail,
+  });
 }
 
 async function resolveTransientCiphertext(
@@ -289,6 +346,7 @@ async function publishArtifactCompletionStatus(
     status: status?.ingestionStatus ?? result,
     intelligenceStatus: status?.intelligenceStatus,
     reason: status?.reason,
+    processing: status?.processing,
     occurredAt: new Date().toISOString(),
   });
 }
@@ -319,7 +377,8 @@ async function runArtifactProcessingJob(
     });
   } catch (error) {
     if (!isRetryableArtifactJobError(error)) {
-      throw error;
+      await markNonRetryableArtifactFailure(deps, data, error);
+      return;
     }
 
     const outcome = await handleRetryableArtifactError(deps, data, job, error);

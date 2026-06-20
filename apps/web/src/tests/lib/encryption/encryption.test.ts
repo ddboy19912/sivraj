@@ -50,7 +50,11 @@ describe("client encryption", () => {
       encryptedObject: new Uint8Array([1, 2, 3]),
     });
 
-    await buildClientEncryptedArtifactBody(encryptionInput("first"));
+    await expect(
+      buildClientEncryptedArtifactBody(encryptionInput("first")),
+    ).resolves.toMatchObject({
+      contentSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
     await buildClientEncryptedArtifactBody(encryptionInput("second"));
 
     expect(sealMocks.suiConstructor).toHaveBeenCalledTimes(1);

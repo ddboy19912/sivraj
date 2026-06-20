@@ -20,7 +20,7 @@ export function TwinSpeechPlayer({
 
   useEffect(() => {
     terminalHandledRef.current = false;
-  }, [command?.eventId]);
+  }, [command?.clipId]);
 
   useEffect(() => {
     if (!command) {
@@ -55,16 +55,27 @@ export function TwinSpeechPlayer({
     onRuntimeEvent({ type: "speech.failed", eventId, reason });
   }
 
-  function handleCompleted(eventId: string) {
+  function handleEnded(currentCommand: NonNullable<SpeechPlaybackCommand>) {
     if (terminalHandledRef.current) {
       return;
     }
 
     terminalHandledRef.current = true;
-    void onPlaybackCompleted(eventId).catch((error: unknown) => {
+
+    if (!currentCommand.isFinalClip) {
+      // More speech is queued for this turn: advance to the next clip without
+      // tearing down the turn so playback stays gapless.
+      onRuntimeEvent({
+        type: "speech.clip_advanced",
+        eventId: currentCommand.eventId,
+      });
+      return;
+    }
+
+    void onPlaybackCompleted(currentCommand.eventId).catch((error: unknown) => {
       onRuntimeEvent({
         type: "speech.failed",
-        eventId,
+        eventId: currentCommand.eventId,
         reason: error instanceof Error ? error.message : "Speech consumption failed.",
       });
     });
@@ -85,7 +96,7 @@ export function TwinSpeechPlayer({
       onPlaying={() =>
         onRuntimeEvent({ type: "speech.started", eventId: command.eventId })
       }
-      onEnded={() => handleCompleted(command.eventId)}
+      onEnded={() => handleEnded(command)}
       onError={() => handleFailure(command.eventId, "Playback failed.")}
     >
       <track kind="captions" src="data:text/vtt,WEBVTT%0A" />

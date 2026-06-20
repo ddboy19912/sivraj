@@ -8,7 +8,6 @@ import {
   pgEnum,
   pgTable,
   text,
-  timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -121,14 +120,10 @@ export const speakerRoleEnum = pgEnum("speaker_role", [
   "unknown",
 ]);
 
-export const accessPolicySubjectTypeEnum = pgEnum("access_policy_subject_type", [
-  "user",
-  "client",
-  "agent",
-  "system",
-  "group",
-  "other",
-]);
+export const accessPolicySubjectTypeEnum = pgEnum(
+  "access_policy_subject_type",
+  ["user", "client", "agent", "system", "group", "other"],
+);
 
 export const agentWritebackStatusEnum = pgEnum("agent_writeback_status", [
   "pending",
@@ -185,6 +180,51 @@ export const chatMessageRoleEnum = pgEnum("chat_message_role", [
   "assistant",
 ]);
 
+export const chatTurnStatusEnum = pgEnum("chat_turn_status", [
+  "queued",
+  "retrieving_context",
+  "generating",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const chatMessageStatusEnum = pgEnum("chat_message_status", [
+  "pending",
+  "streaming",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+export const memoryStorageStatusEnum = pgEnum("memory_storage_status", [
+  "pending_upload",
+  "uploaded",
+  "verifying",
+  "verified_available",
+  "expiring_soon",
+  "renewing",
+  "renewed",
+  "read_failed",
+  "expired",
+  "repairing",
+  "unavailable",
+]);
+
+export const candidateMemoryArchiveStatusEnum = pgEnum(
+  "candidate_memory_archive_status",
+  [
+    "not_required",
+    "pending",
+    "queued",
+    "archiving",
+    "archived",
+    "failed_retryable",
+    "failed_blocked",
+    "cancelled",
+  ],
+);
+
 export const connectorProviderEnum = pgEnum("connector_provider", [
   "github",
   "notion",
@@ -222,12 +262,10 @@ export const connectorSyncModeEnum = pgEnum("connector_sync_mode", [
   "manual",
 ]);
 
-export const connectorSyncItemActionEnum = pgEnum("connector_sync_item_action", [
-  "added",
-  "updated",
-  "skipped",
-  "failed",
-]);
+export const connectorSyncItemActionEnum = pgEnum(
+  "connector_sync_item_action",
+  ["added", "updated", "skipped", "failed"],
+);
 
 export const users = pgTable("users", {
   id: primaryId(),
@@ -285,12 +323,13 @@ export const twinIdentityProfiles = pgTable(
     emails: textArrayColumn("emails"),
     phones: textArrayColumn("phones"),
     handles: jsonb("handles").$type<unknown>(),
-    selfDescriptionArtifactId: optionalUuidRef("self_description_artifact_id", () => sourceArtifacts),
+    selfDescriptionArtifactId: optionalUuidRef(
+      "self_description_artifact_id",
+      () => sourceArtifacts,
+    ),
     ...rowTimestamps(),
   },
-  (t) => [
-    uniqueIndex("twin_identity_profiles_twin_id_idx").on(t.twinId),
-  ],
+  (t) => [uniqueIndex("twin_identity_profiles_twin_id_idx").on(t.twinId)],
 );
 
 export const twinVoiceProfiles = pgTable(
@@ -301,14 +340,29 @@ export const twinVoiceProfiles = pgTable(
     mode: text("mode").notNull().default("preset"),
     presetVoiceId: text("preset_voice_id").notNull().default("warm_operator"),
     provider: text("provider").notNull().default("chatterbox_turbo"),
-    referenceArtifactId: optionalUuidRef("reference_artifact_id", () => sourceArtifacts),
+    referenceArtifactId: optionalUuidRef(
+      "reference_artifact_id",
+      () => sourceArtifacts,
+    ),
     consentAt: tzTimestamp("consent_at"),
     metadata: metadataColumn(),
     ...rowTimestamps(),
   },
-  (t) => [
-    uniqueIndex("twin_voice_profiles_twin_id_idx").on(t.twinId),
-  ],
+  (t) => [uniqueIndex("twin_voice_profiles_twin_id_idx").on(t.twinId)],
+);
+
+export const twinVoiceSettings = pgTable(
+  "twin_voice_settings",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    wakeEnabled: boolean("wake_enabled").notNull().default(false),
+    wakePhrase: text("wake_phrase"),
+    pushToTalkMode: text("push_to_talk_mode").notNull().default("toggle"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [uniqueIndex("twin_voice_settings_twin_id_idx").on(t.twinId)],
 );
 
 export const llmProviderConfigs = pgTable(
@@ -368,7 +422,10 @@ export const chatThreads = pgTable(
     id: primaryId(),
     twinId: twinIdColumn(() => twins),
     title: text("title").notNull().default("New chat"),
-    llmProviderConfigId: optionalUuidRef("llm_provider_config_id", () => llmProviderConfigs),
+    llmProviderConfigId: optionalUuidRef(
+      "llm_provider_config_id",
+      () => llmProviderConfigs,
+    ),
     metadata: metadataColumn(),
     ...rowTimestamps(),
   },
@@ -387,7 +444,9 @@ export const chatMessages = pgTable(
     threadId: uuid("thread_id")
       .notNull()
       .references(() => chatThreads.id, { onDelete: "cascade" }),
+    turnId: uuid("turn_id"),
     role: chatMessageRoleEnum("role").notNull(),
+    status: chatMessageStatusEnum("status").notNull().default("completed"),
     content: text("content").notNull(),
     providerKind: llmProviderKindEnum("provider_kind"),
     model: text("model"),
@@ -400,7 +459,41 @@ export const chatMessages = pgTable(
   (t) => [
     index("chat_messages_twin_id_idx").on(t.twinId),
     index("chat_messages_thread_id_idx").on(t.threadId),
+    index("chat_messages_turn_id_idx").on(t.turnId),
+    index("chat_messages_status_idx").on(t.status),
     index("chat_messages_created_at_idx").on(t.createdAt),
+  ],
+);
+
+export const chatTurns = pgTable(
+  "chat_turns",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    userMessageId: optionalUuidRef("user_message_id", () => chatMessages),
+    assistantMessageId: optionalUuidRef(
+      "assistant_message_id",
+      () => chatMessages,
+    ),
+    status: chatTurnStatusEnum("status").notNull().default("queued"),
+    providerKind: llmProviderKindEnum("provider_kind"),
+    model: text("model"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    startedAt: tzTimestamp("started_at"),
+    completedAt: tzTimestamp("completed_at"),
+    cancelledAt: tzTimestamp("cancelled_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("chat_turns_twin_id_idx").on(t.twinId),
+    index("chat_turns_thread_id_idx").on(t.threadId),
+    index("chat_turns_status_idx").on(t.status),
+    index("chat_turns_created_at_idx").on(t.createdAt),
   ],
 );
 
@@ -459,9 +552,18 @@ export const sourceArtifacts = pgTable(
     uri: text("uri"),
     rawStorageRef: text("raw_storage_ref"),
     hash: text("hash"),
-    connectorAccountId: optionalUuidRef("connector_account_id", () => connectorAccounts),
-    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
-    connectorSyncRunId: optionalUuidRef("connector_sync_run_id", () => connectorSyncRuns),
+    connectorAccountId: optionalUuidRef(
+      "connector_account_id",
+      () => connectorAccounts,
+    ),
+    connectorSourceId: optionalUuidRef(
+      "connector_source_id",
+      () => connectorSources,
+    ),
+    connectorSyncRunId: optionalUuidRef(
+      "connector_sync_run_id",
+      () => connectorSyncRuns,
+    ),
     metadata: metadataColumn(),
     ingestionStatus: ingestionStatusEnum("ingestion_status").notNull(),
     ...rowTimestamps(),
@@ -471,7 +573,9 @@ export const sourceArtifacts = pgTable(
     index("source_artifacts_ingestion_status_idx").on(t.ingestionStatus),
     index("source_artifacts_connector_account_id_idx").on(t.connectorAccountId),
     index("source_artifacts_connector_source_id_idx").on(t.connectorSourceId),
-    index("source_artifacts_connector_sync_run_id_idx").on(t.connectorSyncRunId),
+    index("source_artifacts_connector_sync_run_id_idx").on(
+      t.connectorSyncRunId,
+    ),
   ],
 );
 
@@ -537,7 +641,10 @@ export const connectorSyncRuns = pgTable(
     connectorAccountId: uuid("connector_account_id")
       .notNull()
       .references(() => connectorAccounts.id, { onDelete: "cascade" }),
-    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
+    connectorSourceId: optionalUuidRef(
+      "connector_source_id",
+      () => connectorSources,
+    ),
     provider: connectorProviderEnum("provider").notNull(),
     mode: connectorSyncModeEnum("mode").notNull(),
     status: connectorSyncRunStatusEnum("status").notNull(),
@@ -574,8 +681,14 @@ export const connectorSyncItems = pgTable(
     connectorAccountId: uuid("connector_account_id")
       .notNull()
       .references(() => connectorAccounts.id, { onDelete: "cascade" }),
-    connectorSourceId: optionalUuidRef("connector_source_id", () => connectorSources),
-    sourceArtifactId: optionalUuidRef("source_artifact_id", () => sourceArtifacts),
+    connectorSourceId: optionalUuidRef(
+      "connector_source_id",
+      () => connectorSources,
+    ),
+    sourceArtifactId: optionalUuidRef(
+      "source_artifact_id",
+      () => sourceArtifacts,
+    ),
     externalItemId: text("external_item_id").notNull(),
     action: connectorSyncItemActionEnum("action").notNull(),
     reason: text("reason"),
@@ -606,6 +719,22 @@ export const memoryFragments = pgTable(
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
     contentStorageRef: text("content_storage_ref"),
     contentSha256: text("content_sha256"),
+    storageStatus: memoryStorageStatusEnum("storage_status")
+      .notNull()
+      .default("verified_available"),
+    storageProvider: text("storage_provider").notNull().default("walrus"),
+    walrusNetwork: text("walrus_network"),
+    walrusBlobId: text("walrus_blob_id"),
+    walrusBlobObjectId: text("walrus_blob_object_id"),
+    walrusStartEpoch: integer("walrus_start_epoch"),
+    walrusEndEpoch: integer("walrus_end_epoch"),
+    storageVerifiedAt: tzTimestamp("storage_verified_at"),
+    storageLastReadAt: tzTimestamp("storage_last_read_at"),
+    storageLastReadErrorCode: text("storage_last_read_error_code"),
+    storageLastReadErrorMessage: text("storage_last_read_error_message"),
+    storageRenewalDueEpoch: integer("storage_renewal_due_epoch"),
+    storageRenewalAttemptedAt: tzTimestamp("storage_renewal_attempted_at"),
+    storageRepairAttemptedAt: tzTimestamp("storage_repair_attempted_at"),
     embeddingRef: text("embedding_ref"),
     metadata: metadataColumn(),
     importanceScore: doublePrecision("importance_score"),
@@ -615,8 +744,153 @@ export const memoryFragments = pgTable(
   },
   (t) => [
     index("memory_fragments_twin_id_idx").on(t.twinId),
-    uniqueIndex("memory_fragments_source_artifact_id_idx").on(t.sourceArtifactId),
+    uniqueIndex("memory_fragments_source_artifact_id_idx").on(
+      t.sourceArtifactId,
+    ),
     index("memory_fragments_occurred_at_idx").on(t.occurredAt),
+    index("memory_fragments_storage_status_idx").on(t.storageStatus),
+    index("memory_fragments_storage_renewal_due_epoch_idx").on(
+      t.storageRenewalDueEpoch,
+    ),
+  ],
+);
+
+export const documentChunks = pgTable(
+  "document_chunks",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    memoryFragmentId: uuid("memory_fragment_id")
+      .notNull()
+      .references(() => memoryFragments.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    contentStorageRef: text("content_storage_ref").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    tokenCount: integer("token_count").notNull(),
+    charStart: integer("char_start").notNull(),
+    charEnd: integer("char_end").notNull(),
+    pageStart: integer("page_start"),
+    pageEnd: integer("page_end"),
+    storageStatus: memoryStorageStatusEnum("storage_status")
+      .notNull()
+      .default("verified_available"),
+    storageProvider: text("storage_provider").notNull().default("walrus"),
+    walrusNetwork: text("walrus_network"),
+    walrusBlobId: text("walrus_blob_id"),
+    walrusBlobObjectId: text("walrus_blob_object_id"),
+    walrusStartEpoch: integer("walrus_start_epoch"),
+    walrusEndEpoch: integer("walrus_end_epoch"),
+    storageVerifiedAt: tzTimestamp("storage_verified_at"),
+    embeddingRef: text("embedding_ref"),
+    embedding: jsonb("embedding").$type<number[]>(),
+    embeddingModel: text("embedding_model"),
+    embeddingProvider: text("embedding_provider"),
+    embeddingGeneratedAt: tzTimestamp("embedding_generated_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("document_chunks_twin_id_idx").on(t.twinId),
+    index("document_chunks_source_artifact_id_idx").on(t.sourceArtifactId),
+    index("document_chunks_memory_fragment_id_idx").on(t.memoryFragmentId),
+    index("document_chunks_page_range_idx").on(
+      t.sourceArtifactId,
+      t.pageStart,
+      t.pageEnd,
+    ),
+    index("document_chunks_storage_status_idx").on(t.storageStatus),
+    uniqueIndex("document_chunks_artifact_index_idx").on(
+      t.sourceArtifactId,
+      t.chunkIndex,
+    ),
+  ],
+);
+
+export const documentPages = pgTable(
+  "document_pages",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    memoryFragmentId: uuid("memory_fragment_id")
+      .notNull()
+      .references(() => memoryFragments.id, { onDelete: "cascade" }),
+    pageNumber: integer("page_number").notNull(),
+    contentStorageRef: text("content_storage_ref").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    tokenCount: integer("token_count").notNull(),
+    charStart: integer("char_start").notNull(),
+    charEnd: integer("char_end").notNull(),
+    storageStatus: memoryStorageStatusEnum("storage_status")
+      .notNull()
+      .default("verified_available"),
+    storageProvider: text("storage_provider").notNull().default("walrus"),
+    walrusNetwork: text("walrus_network"),
+    walrusBlobId: text("walrus_blob_id"),
+    walrusBlobObjectId: text("walrus_blob_object_id"),
+    walrusStartEpoch: integer("walrus_start_epoch"),
+    walrusEndEpoch: integer("walrus_end_epoch"),
+    storageVerifiedAt: tzTimestamp("storage_verified_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("document_pages_twin_id_idx").on(t.twinId),
+    index("document_pages_source_artifact_id_idx").on(t.sourceArtifactId),
+    index("document_pages_memory_fragment_id_idx").on(t.memoryFragmentId),
+    index("document_pages_storage_status_idx").on(t.storageStatus),
+    uniqueIndex("document_pages_artifact_page_idx").on(
+      t.sourceArtifactId,
+      t.pageNumber,
+    ),
+  ],
+);
+
+export const documentStructureItems = pgTable(
+  "document_structure_items",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    memoryFragmentId: uuid("memory_fragment_id")
+      .notNull()
+      .references(() => memoryFragments.id, { onDelete: "cascade" }),
+    itemType: text("item_type").notNull(),
+    label: text("label").notNull(),
+    normalizedLabel: text("normalized_label").notNull(),
+    ordinal: integer("ordinal"),
+    pageStart: integer("page_start"),
+    pageEnd: integer("page_end"),
+    charStart: integer("char_start"),
+    charEnd: integer("char_end"),
+    confidenceScore: doublePrecision("confidence_score"),
+    extractionMethod: text("extraction_method").notNull(),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("document_structure_items_twin_id_idx").on(t.twinId),
+    index("document_structure_items_source_artifact_id_idx").on(t.sourceArtifactId),
+    index("document_structure_items_fragment_id_idx").on(t.memoryFragmentId),
+    index("document_structure_items_type_idx").on(t.itemType),
+    index("document_structure_items_page_range_idx").on(
+      t.sourceArtifactId,
+      t.pageStart,
+      t.pageEnd,
+    ),
+    uniqueIndex("document_structure_items_artifact_type_label_idx").on(
+      t.sourceArtifactId,
+      t.itemType,
+      t.normalizedLabel,
+      t.pageStart,
+    ),
   ],
 );
 
@@ -637,7 +911,9 @@ export const sourceSpeakerMappings = pgTable(
   },
   (t) => [
     index("source_speaker_mappings_twin_id_idx").on(t.twinId),
-    index("source_speaker_mappings_source_artifact_id_idx").on(t.sourceArtifactId),
+    index("source_speaker_mappings_source_artifact_id_idx").on(
+      t.sourceArtifactId,
+    ),
     uniqueIndex("source_speaker_mappings_artifact_speaker_idx").on(
       t.sourceArtifactId,
       t.sourceSpeaker,
@@ -737,12 +1013,60 @@ export const canonicalMemories = pgTable(
   ],
 );
 
+export const candidateMemoryArchives = pgTable(
+  "candidate_memory_archives",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    sourceArtifactId: uuid("source_artifact_id")
+      .notNull()
+      .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
+    memoryFragmentId: uuid("memory_fragment_id")
+      .notNull()
+      .references(() => memoryFragments.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    candidateMemoryIds: uuid("candidate_memory_ids").array().notNull(),
+    encryptedBytesBase64: text("encrypted_bytes_base64").notNull(),
+    contentSha256: text("content_sha256").notNull(),
+    status: candidateMemoryArchiveStatusEnum("status")
+      .notNull()
+      .default("pending"),
+    storageRef: text("storage_ref"),
+    storageSha256: text("storage_sha256"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastAttemptedAt: tzTimestamp("last_attempted_at"),
+    nextRetryAt: tzTimestamp("next_retry_at"),
+    completedAt: tzTimestamp("completed_at"),
+    jobId: text("job_id"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("candidate_memory_archives_twin_id_idx").on(t.twinId),
+    index("candidate_memory_archives_status_retry_idx").on(
+      t.status,
+      t.nextRetryAt,
+    ),
+    index("candidate_memory_archives_artifact_idx").on(t.sourceArtifactId),
+    uniqueIndex("candidate_memory_archives_batch_sha_idx").on(
+      t.memoryFragmentId,
+      t.contentSha256,
+    ),
+  ],
+);
+
 export const candidateMemories = pgTable(
   "candidate_memories",
   {
     id: primaryId(),
     twinId: twinIdColumn(() => twins),
-    canonicalMemoryId: optionalUuidRef("canonical_memory_id", () => canonicalMemories),
+    canonicalMemoryId: optionalUuidRef(
+      "canonical_memory_id",
+      () => canonicalMemories,
+    ),
+    archiveId: optionalUuidRef("archive_id", () => candidateMemoryArchives),
     sourceArtifactId: uuid("source_artifact_id")
       .notNull()
       .references(() => sourceArtifacts.id, { onDelete: "cascade" }),
@@ -756,15 +1080,29 @@ export const candidateMemories = pgTable(
     evidenceHash: text("evidence_hash").notNull(),
     evidenceLength: doublePrecision("evidence_length"),
     confidenceScore: doublePrecision("confidence_score"),
+    archiveStatus: candidateMemoryArchiveStatusEnum("archive_status")
+      .notNull()
+      .default("not_required"),
+    archiveErrorCode: text("archive_error_code"),
+    archiveErrorMessage: text("archive_error_message"),
+    archiveAttemptCount: integer("archive_attempt_count").notNull().default(0),
+    archiveLastAttemptedAt: tzTimestamp("archive_last_attempted_at"),
+    archiveNextRetryAt: tzTimestamp("archive_next_retry_at"),
+    archiveCompletedAt: tzTimestamp("archive_completed_at"),
     metadata: metadataColumn(),
     ...rowTimestamps(),
   },
   (t) => [
     index("candidate_memories_twin_id_idx").on(t.twinId),
     index("candidate_memories_canonical_memory_id_idx").on(t.canonicalMemoryId),
+    index("candidate_memories_archive_id_idx").on(t.archiveId),
     index("candidate_memories_source_artifact_id_idx").on(t.sourceArtifactId),
     index("candidate_memories_memory_fragment_id_idx").on(t.memoryFragmentId),
     index("candidate_memories_status_idx").on(t.status),
+    index("candidate_memories_archive_status_idx").on(
+      t.archiveStatus,
+      t.archiveNextRetryAt,
+    ),
     uniqueIndex("candidate_memories_fragment_type_evidence_idx").on(
       t.memoryFragmentId,
       t.memoryType,
@@ -884,5 +1222,8 @@ export const auditEvents = pgTable(
     metadata: metadataColumn(),
     createdAt: createdAtColumn(),
   },
-  (t) => [index("audit_events_twin_id_idx").on(t.twinId), index("audit_events_created_at_idx").on(t.createdAt)],
+  (t) => [
+    index("audit_events_twin_id_idx").on(t.twinId),
+    index("audit_events_created_at_idx").on(t.createdAt),
+  ],
 );

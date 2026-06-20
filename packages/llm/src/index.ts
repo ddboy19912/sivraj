@@ -1,3 +1,5 @@
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { streamText } from "ai";
 import { fetchWithTimeout, truncateText } from "@sivraj/core";
 
 export type SpeechToTextInput = {
@@ -54,12 +56,41 @@ export type ChatGenerationOutput = {
   metadata?: Record<string, unknown>;
 };
 
+export type ChatStreamChunk = {
+  type: "text";
+  text: string;
+};
+
+export type ChatStreamOutput = {
+  provider: string;
+  model: string;
+  textStream: AsyncIterable<string>;
+  result: Promise<ChatGenerationOutput>;
+};
+
 export type ChatGenerator = {
   generateChat(input: ChatGenerationInput): Promise<ChatGenerationOutput>;
+  streamChat(input: ChatGenerationInput & { signal?: AbortSignal }): ChatStreamOutput;
+};
+
+export type TextEmbeddingInput = {
+  texts: string[];
+  timeoutMs?: number;
+};
+
+export type TextEmbeddingOutput = {
+  embeddings: number[][];
+  provider: string;
+  model: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type TextEmbedder = {
+  embedTexts(input: TextEmbeddingInput): Promise<TextEmbeddingOutput>;
 };
 
 export type SpeechToTextConfig = {
-  provider: "openai";
+  provider: string;
   apiKey: string;
   model?: string;
   baseUrl?: string;
@@ -67,8 +98,11 @@ export type SpeechToTextConfig = {
 };
 
 export const DEFAULT_SPEECH_TO_TEXT_MODEL = "gpt-4o-mini-transcribe";
-export const DEFAULT_STRUCTURED_GENERATION_MODEL = "gpt-4o-mini";
-export const DEFAULT_CHAT_GENERATION_MODEL = "gpt-4o-mini";
+export const DEFAULT_CARTESIA_SPEECH_TO_TEXT_MODEL = "ink-whisper";
+const DEFAULT_CARTESIA_API_VERSION = "2026-03-01";
+export const DEFAULT_CHAT_GENERATION_MODEL = "google/gemini-2.5-flash-lite";
+export const DEFAULT_STRUCTURED_GENERATION_MODEL = DEFAULT_CHAT_GENERATION_MODEL;
+export const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 
 export function createOpenAISpeechToTextTranscriber(
   config: SpeechToTextConfig,
@@ -79,6 +113,17 @@ export function createOpenAISpeechToTextTranscriber(
 
   return {
     async transcribe(input) {
+      if (config.provider === "openrouter") {
+        return transcribeWithOpenRouter({
+          apiKey: config.apiKey,
+          baseUrl,
+          fetchImpl,
+          input,
+          model,
+          provider: config.provider,
+        });
+      }
+
       const audio = decodeBase64(input.audioBase64);
       const audioBuffer = audio.buffer.slice(
         audio.byteOffset,
@@ -126,35 +171,88 @@ export function createOpenAISpeechToTextTranscriber(
   };
 }
 
+export function createCartesiaSpeechToTextTranscriber(config: {
+  apiKey: string;
+  model?: string;
+  baseUrl?: string;
+  apiVersion?: string;
+  fetch?: typeof fetch;
+}): SpeechToTextTranscriber {
+  const fetchImpl = config.fetch ?? fetch;
+  const model = config.model || DEFAULT_CARTESIA_SPEECH_TO_TEXT_MODEL;
+  const baseUrl = normalizeBaseUrl(config.baseUrl || "https://api.cartesia.ai");
+
+  return {
+    async transcribe(input) {
+      const audio = decodeBase64(input.audioBase64);
+      const audioBuffer = audio.buffer.slice(
+        audio.byteOffset,
+        audio.byteOffset + audio.byteLength,
+      ) as ArrayBuffer;
+      const fileName = input.fileName || defaultAudioFileName(input.mimeType);
+      const mimeType = input.mimeType || inferMimeType(fileName);
+      const body = new FormData();
+
+      body.append("file", new Blob([audioBuffer], { type: mimeType }), fileName);
+      body.append("model", model);
+
+      const response = await fetchImpl(`${baseUrl}/stt`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "cartesia-version": config.apiVersion || DEFAULT_CARTESIA_API_VERSION,
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `speech_to_text_failed:${response.status}:${truncateText(await response.text(), 500)}`,
+        );
+      }
+
+      const payload = await response.json() as {
+        text?: unknown;
+        language?: unknown;
+        duration?: unknown;
+        request_id?: unknown;
+        words?: unknown;
+      };
+      const text = typeof payload.text === "string" ? payload.text.trim() : "";
+
+      return {
+        text,
+        provider: "cartesia",
+        model,
+        metadata: {
+          ...(typeof payload.language === "string" ? { language: payload.language } : {}),
+          ...(typeof payload.duration === "number" ? { duration: payload.duration } : {}),
+          ...(typeof payload.request_id === "string" ? { requestId: payload.request_id } : {}),
+          ...(Array.isArray(payload.words) ? { words: payload.words } : {}),
+        },
+      };
+    },
+  };
+}
+
 export function createConfiguredSpeechToTextTranscriber(
   env: Record<string, string | undefined>,
 ): SpeechToTextTranscriber | null {
-  const provider = env["SPEECH_TO_TEXT_PROVIDER"] || env["LLM_PROVIDER"] || "openai";
-
-  if (provider === "none") {
-    return null;
-  }
-
-  if (provider !== "openai") {
-    throw new Error(`Unsupported speech-to-text provider: ${provider}`);
-  }
-
-  const apiKey = env["SPEECH_TO_TEXT_API_KEY"] || env["LLM_API_KEY"];
-
+  const apiKey = env["CARTESIA_API_KEY"];
   if (!apiKey) {
     return null;
   }
 
-  return createOpenAISpeechToTextTranscriber({
-    provider: "openai",
+  return createCartesiaSpeechToTextTranscriber({
     apiKey,
-    model: env["SPEECH_TO_TEXT_MODEL"] || DEFAULT_SPEECH_TO_TEXT_MODEL,
-    baseUrl: env["SPEECH_TO_TEXT_BASE_URL"] || env["OPENAI_BASE_URL"],
+    model: env["SPEECH_TO_TEXT_MODEL"] || DEFAULT_CARTESIA_SPEECH_TO_TEXT_MODEL,
+    baseUrl: env["SPEECH_TO_TEXT_BASE_URL"] || env["CARTESIA_BASE_URL"],
+    apiVersion: env["CARTESIA_VERSION"],
   });
 }
 
 export function createOpenAIStructuredGenerator(config: {
-  provider: "openai";
+  provider: string;
   apiKey: string;
   model?: string;
   baseUrl?: string;
@@ -203,27 +301,24 @@ export function createOpenAIStructuredGenerator(config: {
 export function createConfiguredStructuredGenerator(
   env: Record<string, string | undefined>,
 ): StructuredGenerator | null {
-  const provider = env["LLM_PROVIDER"] || "openai";
+  const provider = env["LLM_PROVIDER"] || "openrouter";
 
   if (provider === "none") {
     return null;
   }
 
-  if (provider !== "openai") {
-    throw new Error(`Unsupported structured generation provider: ${provider}`);
-  }
-
   const apiKey = env["LLM_API_KEY"];
+  const baseUrl = defaultChatBaseUrl(provider, env["OPENAI_BASE_URL"]);
 
-  if (!apiKey) {
+  if (provider !== "ollama" && !apiKey) {
     return null;
   }
 
   return createOpenAIStructuredGenerator({
-    provider: "openai",
-    apiKey,
+    provider,
+    apiKey: apiKey ?? "",
     model: env["LLM_MODEL"] || DEFAULT_STRUCTURED_GENERATION_MODEL,
-    baseUrl: env["OPENAI_BASE_URL"],
+    baseUrl,
     timeoutMs: readPositiveInteger(env["LLM_REQUEST_TIMEOUT_MS"], 45_000),
   });
 }
@@ -274,13 +369,25 @@ export function createOpenAICompatibleChatGenerator(config: {
 
       throw lastError ?? new Error("chat_generation_failed");
     },
+    streamChat(input) {
+      return streamOpenAICompatibleChat({
+        apiKey: config.apiKey ?? "",
+        baseUrl,
+        extraHeaders: config.extraHeaders,
+        input,
+        model,
+        provider: config.provider,
+        fetchImpl,
+        timeoutMs: input.timeoutMs ?? timeoutMs,
+      });
+    },
   };
 }
 
 export function createConfiguredChatGenerator(
   env: Record<string, string | undefined>,
 ): ChatGenerator | null {
-  const provider = env["LLM_PROVIDER"] || "openai";
+  const provider = env["LLM_PROVIDER"] || "openrouter";
 
   if (provider === "none") {
     return null;
@@ -302,6 +409,105 @@ export function createConfiguredChatGenerator(
   });
 }
 
+export function createOpenAICompatibleTextEmbedder(config: {
+  provider: string;
+  apiKey?: string | null;
+  model?: string;
+  baseUrl?: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): TextEmbedder {
+  const fetchImpl = config.fetch ?? fetch;
+  const model = config.model || DEFAULT_EMBEDDING_MODEL;
+  const baseUrl = normalizeOpenAICompatibleBaseUrl(config.baseUrl || "https://api.openai.com");
+  const timeoutMs = config.timeoutMs ?? 30_000;
+
+  return {
+    async embedTexts(input) {
+      const texts = input.texts
+        .map((text) => text.trim())
+        .filter((text) => text.length > 0);
+
+      if (texts.length === 0) {
+        return {
+          embeddings: [],
+          provider: config.provider,
+          model,
+        };
+      }
+
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
+
+      if (config.apiKey) {
+        headers.authorization = `Bearer ${config.apiKey}`;
+      }
+
+      const response = await fetchWithTimeout(fetchImpl, `${baseUrl}/v1/embeddings`, {
+        method: "POST",
+        timeoutMs: input.timeoutMs ?? timeoutMs,
+        headers,
+        body: JSON.stringify({
+          model,
+          input: texts,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`embedding_failed:${response.status}:${truncateText(await response.text())}`);
+      }
+
+      const payload = await response.json() as {
+        data?: Array<{ embedding?: unknown; index?: unknown }>;
+        usage?: unknown;
+      };
+      const embeddings = (payload.data ?? [])
+        .slice()
+        .sort((a, b) => readEmbeddingIndex(a.index) - readEmbeddingIndex(b.index))
+        .map((item) => readEmbeddingVector(item.embedding));
+
+      if (embeddings.length !== texts.length || embeddings.some((embedding) => embedding.length === 0)) {
+        throw new Error("embedding_failed:invalid_response");
+      }
+
+      return {
+        embeddings,
+        provider: config.provider,
+        model,
+        metadata: { usage: payload.usage },
+      };
+    },
+  };
+}
+
+export function createConfiguredTextEmbedder(
+  env: Record<string, string | undefined>,
+): TextEmbedder | null {
+  const provider = env["EMBEDDING_PROVIDER"] || env["LLM_PROVIDER"] || "openai";
+
+  if (provider === "none") {
+    return null;
+  }
+
+  const apiKey = env["EMBEDDING_API_KEY"] || env["LLM_API_KEY"];
+  const baseUrl = env["EMBEDDING_BASE_URL"] || defaultChatBaseUrl(provider, env["OPENAI_BASE_URL"]);
+
+  if (provider !== "ollama" && !apiKey) {
+    return null;
+  }
+
+  return createOpenAICompatibleTextEmbedder({
+    provider,
+    apiKey,
+    model: env["EMBEDDING_MODEL"] || (
+      provider === "openrouter" ? "openai/text-embedding-3-small" : DEFAULT_EMBEDDING_MODEL
+    ),
+    baseUrl,
+    timeoutMs: readPositiveInteger(env["EMBEDDING_REQUEST_TIMEOUT_MS"], 30_000),
+  });
+}
+
 function decodeBase64(value: string): Uint8Array {
   const audio = Buffer.from(value, "base64");
 
@@ -310,6 +516,90 @@ function decodeBase64(value: string): Uint8Array {
   }
 
   return audio;
+}
+
+async function transcribeWithOpenRouter(input: {
+  apiKey: string;
+  baseUrl: string;
+  fetchImpl: typeof fetch;
+  input: SpeechToTextInput;
+  model: string;
+  provider: string;
+}): Promise<SpeechToTextOutput> {
+  const response = await input.fetchImpl(`${input.baseUrl}/v1/audio/transcriptions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      input_audio: {
+        data: stripDataUrlPrefix(input.input.audioBase64),
+        format: inferAudioFormat(input.input.fileName, input.input.mimeType),
+      },
+      model: input.model,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `speech_to_text_failed:${response.status}:${truncateText(await response.text(), 500)}`,
+    );
+  }
+
+  const payload = await response.json() as { text?: unknown; usage?: unknown };
+  const text = typeof payload.text === "string" ? payload.text.trim() : "";
+
+  return {
+    text,
+    provider: input.provider,
+    model: input.model,
+    metadata: {
+      usage: payload.usage,
+    },
+  };
+}
+
+function stripDataUrlPrefix(value: string): string {
+  const commaIndex = value.indexOf(",");
+
+  return value.startsWith("data:") && commaIndex >= 0 ? value.slice(commaIndex + 1) : value;
+}
+
+function inferAudioFormat(fileName?: string | null, mimeType?: string | null): string {
+  const normalizedMimeType = mimeType?.toLowerCase();
+
+  if (normalizedMimeType?.includes("wav")) {
+    return "wav";
+  }
+
+  if (normalizedMimeType?.includes("webm")) {
+    return "webm";
+  }
+
+  if (normalizedMimeType?.includes("mp4") || normalizedMimeType?.includes("m4a")) {
+    return "mp4";
+  }
+
+  if (normalizedMimeType?.includes("mpeg") || normalizedMimeType?.includes("mp3")) {
+    return "mp3";
+  }
+
+  const normalizedFileName = fileName?.toLowerCase() ?? "";
+
+  if (normalizedFileName.endsWith(".wav")) {
+    return "wav";
+  }
+
+  if (normalizedFileName.endsWith(".webm")) {
+    return "webm";
+  }
+
+  if (normalizedFileName.endsWith(".mp4") || normalizedFileName.endsWith(".m4a")) {
+    return "mp4";
+  }
+
+  return "mp3";
 }
 
 function defaultAudioFileName(mimeType?: string | null): string {
@@ -356,7 +646,7 @@ async function generateOpenAICompatibleJson(input: {
   fetchImpl: typeof fetch;
   input: StructuredGenerationInput;
   model: string;
-  provider: "openai";
+  provider: string;
   attempt: number;
   timeoutMs: number;
 }): Promise<StructuredGenerationOutput> {
@@ -502,6 +792,78 @@ async function generateOpenAICompatibleChat(input: {
   };
 }
 
+function streamOpenAICompatibleChat(input: {
+  apiKey: string;
+  baseUrl: string;
+  extraHeaders?: Record<string, string>;
+  fetchImpl: typeof fetch;
+  input: ChatGenerationInput & { signal?: AbortSignal };
+  model: string;
+  provider: string;
+  timeoutMs: number;
+}): ChatStreamOutput {
+  const provider = createOpenAICompatible({
+    name: input.provider,
+    apiKey: input.apiKey || undefined,
+    baseURL: `${input.baseUrl}/v1`,
+    headers: input.extraHeaders,
+    fetch: input.fetchImpl,
+    includeUsage: true,
+  });
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new Error("chat_stream_timeout"));
+  }, input.timeoutMs);
+  const clearStreamTimeout = () => clearTimeout(timeout);
+  const signal = anySignal([input.input.signal, timeoutController.signal]);
+  const prompt = splitSystemMessages(input.input.messages);
+  const result = streamText({
+    model: provider(input.model),
+    system: prompt.system,
+    messages: prompt.messages,
+    temperature: input.input.temperature ?? 0.2,
+    abortSignal: signal,
+    onError({ error }) {
+      clearStreamTimeout();
+      console.warn("chat stream failed", {
+        provider: input.provider,
+        model: input.model,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+    onFinish() {
+      clearStreamTimeout();
+    },
+  });
+
+  return {
+    provider: input.provider,
+    model: input.model,
+    textStream: result.textStream,
+    result: Promise.resolve(result.text).then(async (content) => ({
+      content: content.trim(),
+      provider: input.provider,
+      model: input.model,
+      metadata: {
+        usage: await Promise.resolve(result.usage).catch(() => null),
+        finishReason: await Promise.resolve(result.finishReason).catch(() => null),
+      },
+    })),
+  };
+}
+
+function splitSystemMessages(messages: ChatMessage[]) {
+  const systemMessages = messages.filter((message) => message.role === "system");
+  const nonSystemMessages = messages.filter((message) => message.role !== "system");
+
+  return {
+    system: systemMessages.length > 0
+      ? systemMessages.map((message) => message.content).join("\n\n")
+      : undefined,
+    messages: nonSystemMessages,
+  };
+}
+
 async function postOpenAICompatibleCompletion(input: {
   apiKey: string;
   baseUrl: string;
@@ -592,6 +954,16 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readEmbeddingIndex(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readEmbeddingVector(value: unknown): number[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item))
+    : [];
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -600,4 +972,38 @@ function normalizeOpenAICompatibleBaseUrl(value: string): string {
   const trimmed = value.replace(/\/+$/, "");
 
   return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed;
+}
+
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function anySignal(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+
+  if (activeSignals.length === 1) {
+    return activeSignals[0];
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason);
+    }
+  };
+
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abort(signal);
+      break;
+    }
+
+    signal.addEventListener("abort", () => abort(signal), { once: true });
+  }
+
+  return controller.signal;
 }

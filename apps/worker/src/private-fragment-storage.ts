@@ -44,6 +44,7 @@ export type PrivateFragmentStorage = {
 
 function createPrivateFragmentStorage(params: {
   runtime: ReturnType<typeof createPrivateEncryptedStorageRuntime>;
+  walrusNetwork?: string;
   logger?: Pick<Console, "info">;
 }): PrivateFragmentStorage {
   const logger = params.logger ?? console;
@@ -73,7 +74,16 @@ function createPrivateFragmentStorage(params: {
         rawStorageRef: stored.contentStorageRef,
       });
 
-      return stored;
+      await verifyStoredPrivateFragment({
+        rawStorageRef: stored.contentStorageRef,
+        expectedSha256: stored.contentSha256,
+        runtime: params.runtime,
+        logger,
+        sourceArtifactId: input.sourceArtifactId,
+        contentKind,
+      });
+
+      return withWalrusNetwork(stored, params.walrusNetwork);
     },
     async encryptPrivateFragment(input) {
       const encrypted = await encryptPrivateFragmentContent({
@@ -105,9 +115,41 @@ function createPrivateFragmentStorage(params: {
         rawStorageRef: stored.contentStorageRef,
       });
 
-      return stored;
+      await verifyStoredPrivateFragment({
+        rawStorageRef: stored.contentStorageRef,
+        expectedSha256: stored.contentSha256,
+        runtime: params.runtime,
+        logger,
+        sourceArtifactId: input.sourceArtifactId,
+        contentKind,
+      });
+
+      return withWalrusNetwork(stored, params.walrusNetwork);
     },
   };
+}
+
+async function verifyStoredPrivateFragment(params: {
+  rawStorageRef: string;
+  expectedSha256: string;
+  runtime: ReturnType<typeof createPrivateEncryptedStorageRuntime>;
+  logger: Pick<Console, "info">;
+  sourceArtifactId: string;
+  contentKind: string;
+}) {
+  const startedAt = Date.now();
+  const bytes = await params.runtime.walrusReader.read({
+    rawStorageRef: params.rawStorageRef,
+    expectedSha256: params.expectedSha256,
+  });
+
+  params.logger.info("private fragment walrus verification completed", {
+    sourceArtifactId: params.sourceArtifactId,
+    contentKind: params.contentKind,
+    rawStorageRef: params.rawStorageRef,
+    encryptedBytes: bytes.length,
+    durationMs: Date.now() - startedAt,
+  });
 }
 
 export function createConfiguredPrivateFragmentStorage(
@@ -121,7 +163,31 @@ export function createConfiguredPrivateFragmentStorage(
 
   return createPrivateFragmentStorage({
     runtime: createPrivateEncryptedStorageRuntime(config),
+    walrusNetwork: config.walrusNetwork,
   });
+}
+
+function withWalrusNetwork<T extends PrivateFragmentStorageOutput>(
+  stored: T,
+  walrusNetwork: string | undefined,
+): T {
+  if (!walrusNetwork) {
+    return stored;
+  }
+
+  return {
+    ...stored,
+    metadata: {
+      ...stored.metadata,
+      walrusNetwork,
+      walrus: {
+        ...(typeof stored.metadata.walrus === "object" && stored.metadata.walrus
+          ? stored.metadata.walrus
+          : {}),
+        network: walrusNetwork,
+      },
+    },
+  };
 }
 
 function approximateBase64Bytes(value: string): number {

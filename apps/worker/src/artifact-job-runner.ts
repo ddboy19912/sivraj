@@ -1,4 +1,4 @@
-import type { ArtifactProcessingJobData } from "@sivraj/queue";
+import type { ArtifactProcessingJobData, ArtifactStatusPublisher } from "@sivraj/queue";
 import {
   processArtifact,
   RetryableArtifactProcessingError,
@@ -6,7 +6,11 @@ import {
 import type { createDrizzleArtifactRepository } from "./repository.js";
 import type { createConfiguredPrivateMemoryReader } from "@sivraj/private-memory-reader";
 import type { createConfiguredPrivateFragmentStorage } from "./private-fragment-storage.js";
-import type { createConfiguredSpeechToTextTranscriber } from "@sivraj/llm";
+import type {
+  createConfiguredSpeechToTextTranscriber,
+  createConfiguredStructuredGenerator,
+  createConfiguredTextEmbedder,
+} from "@sivraj/llm";
 import type { createIntelligenceProcessingQueue } from "@sivraj/queue";
 
 type ArtifactProcessingJobDeps = {
@@ -14,7 +18,10 @@ type ArtifactProcessingJobDeps = {
   privateMemoryReader: ReturnType<typeof createConfiguredPrivateMemoryReader>;
   privateFragmentStorage: ReturnType<typeof createConfiguredPrivateFragmentStorage>;
   speechToTextTranscriber: ReturnType<typeof createConfiguredSpeechToTextTranscriber> | null;
+  textEmbedder: ReturnType<typeof createConfiguredTextEmbedder> | null;
+  structuredGenerator: ReturnType<typeof createConfiguredStructuredGenerator> | null;
   intelligenceQueue: ReturnType<typeof createIntelligenceProcessingQueue>;
+  artifactStatusPublisher?: ArtifactStatusPublisher;
 };
 
 type ArtifactProcessingJob = {
@@ -32,9 +39,12 @@ export async function executeArtifactProcessingAttempt(
     privateMemoryReader: deps.privateMemoryReader,
     privateFragmentStorage: deps.privateFragmentStorage,
     speechToTextTranscriber: deps.speechToTextTranscriber ?? undefined,
+    textEmbedder: deps.textEmbedder ?? undefined,
+    structuredGenerator: deps.structuredGenerator ?? undefined,
     intelligenceQueue: deps.intelligenceQueue,
     transientCiphertextBase64: data.transientCiphertextBase64 ?? transientCiphertext?.ciphertextBase64,
     transientCiphertextSha256: data.transientCiphertextSha256 ?? transientCiphertext?.ciphertextSha256,
+    publishArtifactStatus: deps.artifactStatusPublisher?.publishArtifactStatus.bind(deps.artifactStatusPublisher),
   });
 }
 

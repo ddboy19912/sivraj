@@ -6,6 +6,7 @@ import {
   selectProviderConfig,
   startOpenRouterOAuth,
   updateProviderConfigModel,
+  type RuntimeCapability,
   type ProviderConfigResponse,
 } from "@/lib/chat/chat-api";
 import type { Session } from "@/lib/session";
@@ -75,7 +76,7 @@ export function selectSavedProviderConfig(
 }
 
 export function createSavedOpenRouterModelConfig(
-  input: { displayName: string; model: string },
+  input: { displayName: string; model: string; capability: RuntimeCapability },
   session: Session,
   onSessionRefreshed: (session: Session) => void,
 ) {
@@ -83,10 +84,11 @@ export function createSavedOpenRouterModelConfig(
 }
 
 export function selectDefaultProviderConfig(
+  capability: RuntimeCapability,
   session: Session,
   onSessionRefreshed: (session: Session) => void,
 ) {
-  return selectFallbackProviderConfig(session, onSessionRefreshed);
+  return selectFallbackProviderConfig(capability, session, onSessionRefreshed);
 }
 
 export function deleteSavedProviderConfig(
@@ -102,6 +104,7 @@ export function updateSavedProviderModel(
   input: {
     displayName: string;
     model: string;
+    capability: RuntimeCapability;
   },
   session: Session,
   onSessionRefreshed: (session: Session) => void,

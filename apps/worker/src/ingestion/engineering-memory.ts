@@ -11,6 +11,7 @@ import type { EngineeringMemoryExtractor, QueuedArtifact } from "../types/ingest
 import { asRecord, readMetadataString } from "./metadata-utils.js";
 
 const ENGINEERING_MEMORY_TYPE_MAP: Record<EngineeringMemoryType, ExtractedMemory["memoryType"]> = {
+  user_skill: "fact",
   coding_preference: "preference",
   tool_preference: "preference",
   style_rule: "preference",
@@ -45,7 +46,7 @@ export function emptyMemoryExtractionResult(originalLength: number): MemoryExtra
 }
 
 function looksLikeEngineeringContent(value: string): boolean {
-  return /\b(code|repo|github|pull request|pr|commit|branch|test|lint|build|deploy|api|database|postgres|redis|docker|vite|react|next\.?js|hono|drizzle|pnpm|npm|yarn|bun|typescript|javascript|rust|go|python|walrus|seal|sui|encrypt|plaintext|security|privacy|codex|claude|cursor|agent|architecture|monorepo|workspace|environment|env)\b/i
+  return /\b(code|coding|skill|skills|learning|learn|comfortable|familiar|experience|experienced|proficient|repo|github|pull request|pr|commit|branch|test|lint|build|deploy|api|database|postgres|redis|docker|vite|react|next\.?js|hono|drizzle|pnpm|npm|yarn|bun|typescript|javascript|rust|go|python|solidity|walrus|seal|sui|encrypt|plaintext|security|privacy|codex|claude|cursor|agent|architecture|monorepo|workspace|environment|env)\b/i
     .test(value);
 }
 

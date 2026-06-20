@@ -74,7 +74,7 @@ describe("chat provider config routes", () => {
       providerKind: "openrouter",
       authMethod: "openrouter_pkce",
       hasApiKey: true,
-      model: "google/gemini-3.1-flash-lite",
+      model: "google/gemini-2.5-flash-lite",
     });
     expect(payload.configs).toHaveLength(1);
     expect(db.insertedProvider?.apiKeyCiphertext).toEqual(expect.any(String));
@@ -91,7 +91,7 @@ describe("chat provider config routes", () => {
       providerRow({
         id: "00000000-0000-4000-8000-0000000000aa",
         isActive: true,
-        model: "google/gemini-3.1-flash-lite",
+        model: "google/gemini-2.5-flash-lite",
         metadata: { authMethod: "openrouter_pkce" },
       }),
     ];
@@ -140,7 +140,7 @@ describe("chat provider config routes", () => {
       providerRow({
         id: "00000000-0000-4000-8000-0000000000aa",
         isActive: true,
-        model: "google/gemini-3.1-flash-lite",
+        model: "google/gemini-2.5-flash-lite",
         apiKeyCiphertext: "existing-ciphertext",
         apiKeyIv: "existing-iv",
         apiKeyTag: "existing-tag",
@@ -201,24 +201,18 @@ describe("chat provider config routes", () => {
     expect(payload.configs?.filter((config) => config.isActive)).toHaveLength(1);
   });
 
-  it("rejects a fourth saved OpenRouter model", async () => {
+  it("rejects a thirteenth saved OpenRouter model", async () => {
     withAuthEnv();
     process.env["LLM_API_KEY"] = "env-test-key";
-    const rows = [
+    const rows = Array.from({ length: 12 }, (_, index) =>
       providerRow({
-        id: "00000000-0000-4000-8000-0000000000a1",
-        isActive: true,
-        model: "google/gemini-3.1-flash-lite",
-      }),
-      providerRow({
-        id: "00000000-0000-4000-8000-0000000000a2",
-        model: "openai/gpt-4o-mini",
-      }),
-      providerRow({
-        id: "00000000-0000-4000-8000-0000000000a3",
-        model: "anthropic/claude-sonnet-4.5",
-      }),
-    ];
+        id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        isActive: index === 0,
+        model: index === 0
+          ? "google/gemini-2.5-flash-lite"
+          : `openrouter/test-model-${index}`,
+      })
+    );
     const app = createChatTestApp({
       db: createProviderListDb(rows),
     } as never);
@@ -228,7 +222,7 @@ describe("chat provider config routes", () => {
       {
         method: "POST",
         body: JSON.stringify({
-          displayName: "Fourth model",
+          displayName: "Thirteenth model",
           model: "meta-llama/llama-3.1-8b-instruct:free",
         }),
         headers: await authedHeaders(),
@@ -242,15 +236,15 @@ describe("chat provider config routes", () => {
     expect(response.status).toBe(409);
     expect(payload).toMatchObject({
       error: "openrouter_model_limit_reached",
-      maxModels: 3,
+      maxModels: 12,
     });
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(12);
   });
 
   it("does not expose legacy manual providers in the safe response", async () => {
     withAuthEnv();
     process.env["LLM_API_KEY"] = "env-test-key";
-    process.env["LLM_MODEL"] = "google/gemini-3.1-flash-lite";
+    process.env["LLM_MODEL"] = "google/gemini-2.5-flash-lite";
     const app = createChatTestApp({
       db: createProviderListDb([
         providerRow({
@@ -279,7 +273,7 @@ describe("chat provider config routes", () => {
     expect(response.status).toBe(200);
     expect(payload.activeConfig).toBeNull();
     expect(payload.fallback).toMatchObject({
-      model: "google/gemini-3.1-flash-lite",
+      model: "google/gemini-2.5-flash-lite",
     });
     expect(payload.configs).toEqual([
       expect.objectContaining({
@@ -289,10 +283,40 @@ describe("chat provider config routes", () => {
     ]);
   });
 
+  it("does not label Gemini defaults as OpenAI", async () => {
+    withAuthEnv();
+    process.env["LLM_PROVIDER"] = "openai";
+    process.env["LLM_API_KEY"] = "env-test-key";
+    process.env["LLM_MODEL"] = "google/gemini-2.5-flash-lite";
+    process.env["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1";
+    const app = createChatTestApp({
+      db: createProviderListDb([]),
+    } as never);
+
+    const response = await app.request(
+      "/v1/twins/00000000-0000-4000-8000-000000000001/chat/provider-config",
+      { headers: await authedHeaders() },
+    );
+    const payload = await response.json() as {
+      fallback?: { displayName?: string; model?: string };
+      runtimeDefaults?: { chat?: { displayName?: string; model?: string } };
+    };
+
+    expect(response.status).toBe(200);
+    expect(payload.fallback).toMatchObject({
+      displayName: "OpenRouter",
+      model: "google/gemini-2.5-flash-lite",
+    });
+    expect(payload.runtimeDefaults?.chat).toMatchObject({
+      displayName: "OpenRouter",
+      model: "google/gemini-2.5-flash-lite",
+    });
+  });
+
   it("selects the env fallback provider by clearing the active saved provider", async () => {
     withAuthEnv();
     process.env["LLM_API_KEY"] = "env-test-key";
-    process.env["LLM_MODEL"] = "google/gemini-3.1-flash-lite";
+    process.env["LLM_MODEL"] = "google/gemini-2.5-flash-lite";
     const rows = [
       providerRow({
         id: "00000000-0000-4000-8000-0000000000aa",
@@ -320,7 +344,7 @@ describe("chat provider config routes", () => {
     expect(response.status).toBe(200);
     expect(payload.activeConfig).toBeNull();
     expect(payload.fallback).toMatchObject({
-      model: "google/gemini-3.1-flash-lite",
+      model: "google/gemini-2.5-flash-lite",
     });
     expect(payload.configs?.filter((config) => config.isActive)).toHaveLength(0);
   });
@@ -481,7 +505,7 @@ function providerRow(overrides: Partial<{
     isActive: false,
     displayName: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    model: "google/gemini-3.1-flash-lite",
+    model: "google/gemini-2.5-flash-lite",
     apiKeyCiphertext: "ciphertext",
     apiKeyIv: "iv",
     apiKeyTag: "tag",
@@ -516,4 +540,19 @@ function withAuthEnv() {
   process.env["JWT_SECRET"] = "chat-provider-test-secret";
   process.env["TOKEN_ISSUER"] = "chat-provider-test";
   process.env["LLM_CREDENTIAL_ENCRYPTION_KEY"] = "chat-provider-test-encryption-key";
+  delete process.env["LLM_PROVIDER"];
+  delete process.env["LLM_API_KEY"];
+  delete process.env["LLM_MODEL"];
+  delete process.env["OPENAI_BASE_URL"];
+  delete process.env["EMBEDDING_PROVIDER"];
+  delete process.env["EMBEDDING_API_KEY"];
+  delete process.env["EMBEDDING_MODEL"];
+  delete process.env["EMBEDDING_BASE_URL"];
+  delete process.env["SPEECH_TO_TEXT_MODEL"];
+  delete process.env["SPEECH_TO_TEXT_BASE_URL"];
+  delete process.env["TEXT_TO_SPEECH_PROVIDER"];
+  delete process.env["TEXT_TO_SPEECH_API_KEY"];
+  delete process.env["TEXT_TO_SPEECH_MODEL"];
+  delete process.env["TEXT_TO_SPEECH_BASE_URL"];
+  delete process.env["GOOGLE_API_KEY"];
 }

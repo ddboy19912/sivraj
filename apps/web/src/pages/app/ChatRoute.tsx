@@ -2,7 +2,7 @@ import { ChatPage } from "@/components/chat/ChatPage";
 import { useAppRouteContext } from "@/providers/app-route-context";
 
 export default function ChatRoute() {
-  const { onboarding, providerState, setProviderOpen, setProviderState } =
+  const { onboarding, providerState, setProviderState } =
     useAppRouteContext();
 
   if (!onboarding.canUseProtectedApp) {
@@ -13,8 +13,8 @@ export default function ChatRoute() {
     <ChatPage
       session={onboarding.session}
       isSessionForWallet={onboarding.canUseProtectedApp}
+      twinName={onboarding.twinName}
       onSessionRefreshed={onboarding.setSession}
-      onOpenProviderSettings={() => setProviderOpen(true)}
       providerState={providerState}
       onProviderStateChange={setProviderState}
     />

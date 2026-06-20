@@ -4,7 +4,12 @@ import {
 } from "@sivraj/core";
 import type { SupportedArtifactSourceType } from "../../app.js";
 import { recordMetadata, sanitizeSafeMetadata } from "../safe-metadata.js";
-import { readBodyEncryptedPayload, requiredString, optionalString } from "../http/route-helpers.js";
+import {
+  optionalSha256,
+  optionalString,
+  readBodyEncryptedPayload,
+  requiredString,
+} from "../http/route-helpers.js";
 import { detectAiChatProviderFromFilename, readAiChatProvider } from "./ai-chat-provider.js";
 
 const SUPPORTED_SOURCE_TYPES = [
@@ -82,6 +87,7 @@ export function readArtifactUploadFields(body: Record<string, unknown>) {
   const sourceType = readSupportedSourceType(body["sourceType"]);
   const title = optionalString(body["title"]);
   const content = requiredString(body["content"]);
+  const contentSha256 = optionalSha256(body["contentSha256"] ?? body["contentHash"]);
   const encryptedPayload = readBodyEncryptedPayload(body);
   const privateMetadata = recordMetadata(body["metadata"]);
   const safeUploadMetadata = sanitizeSafeMetadata(privateMetadata);
@@ -90,6 +96,7 @@ export function readArtifactUploadFields(body: Record<string, unknown>) {
     sourceType,
     title,
     content,
+    contentSha256,
     encryptedPayload,
     privateMetadata,
     safeUploadMetadata,
@@ -103,4 +110,3 @@ export function detectExplicitAiChatProvider(metadata: Record<string, unknown>) 
       metadata["provider"],
   );
 }
-

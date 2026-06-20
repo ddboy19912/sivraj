@@ -139,6 +139,177 @@ export async function run_falls_back_to_an_aggregator_when_sdk_reads_fail() {
     expect(fetchCalls).toEqual(["https://aggregator.walrus-testnet.walrus.space/v1/blobs/blob-id"]);
 }
 
+export async function run_falls_back_to_an_aggregator_when_sdk_cannot_decode_slivers() {
+  const fetchCalls: string[] = [];
+  const expectedBytes = new Uint8Array([10, 11, 12]);
+  const reader = createWalrusReader({
+    config: {
+      network: "testnet",
+      rpcUrl: "https://fullnode.testnet.sui.io:443",
+      aggregatorUrl: "https://aggregator.walrus-testnet.walrus.space/",
+    },
+    client: {
+      async readBlob() {
+        throw new Error("Unable to retrieve enough slivers to decode blob blob-id.");
+      },
+    },
+    fetch: async (input) => {
+      fetchCalls.push(input);
+
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        async arrayBuffer() {
+          return expectedBytes.buffer.slice(
+            expectedBytes.byteOffset,
+            expectedBytes.byteOffset + expectedBytes.byteLength,
+          );
+        },
+      };
+    },
+  });
+
+  await expect(reader.read({ rawStorageRef: "walrus://blob/blob-id" })).resolves.toEqual(
+    expectedBytes,
+  );
+  expect(fetchCalls).toEqual(["https://aggregator.walrus-testnet.walrus.space/v1/blobs/blob-id"]);
+}
+
+export async function run_classifies_sui_gas_selection_failures_as_insufficient_balance() {
+  const signer = Ed25519Keypair.generate();
+  const storage = createWalrusStorage({
+    config: {
+      network: "testnet",
+      rpcUrl: "https://fullnode.testnet.sui.io:443",
+      privateKey: Ed25519Keypair.generate().getSecretKey(),
+      epochs: 3,
+      deletable: false,
+      minWriteBalanceMist: "10000000",
+    },
+    signer,
+    balanceClient: {
+      core: {
+        async getBalance() {
+          return {
+            balance: {
+              balance: "1000",
+            },
+          };
+        },
+      },
+    },
+    client: {
+      async writeBlob() {
+        throw new Error(
+          `Unable to perform gas selection due to insufficient SUI balance (in address balance or coins) for account ${signer.getPublicKey().toSuiAddress()} to satisfy required budget 9892000.`,
+        );
+      },
+    },
+  });
+
+  await expect(storage.store({ bytes: new Uint8Array([1]) })).rejects.toMatchObject({
+    name: "WalrusStorageError",
+    code: "walrus_insufficient_balance",
+    message: "Walrus storage wallet has insufficient SUI for this write",
+    storageWallet: {
+      network: "testnet",
+      address: signer.getPublicKey().toSuiAddress(),
+      balanceMist: "1000",
+      requiredMist: "10000000",
+      shortfallMist: "9999000",
+    },
+  });
+}
+
+export async function run_classifies_insufficient_balance_when_balance_diagnostics_fail() {
+  const signer = Ed25519Keypair.generate();
+  const storage = createWalrusStorage({
+    config: {
+      network: "testnet",
+      rpcUrl: "https://fullnode.testnet.sui.io:443",
+      privateKey: Ed25519Keypair.generate().getSecretKey(),
+      epochs: 3,
+      deletable: false,
+      minWriteBalanceMist: "10000000",
+    },
+    signer,
+    balanceClient: {
+      core: {
+        async getBalance() {
+          throw new Error("fetch failed");
+        },
+      },
+    },
+    client: {
+      async writeBlob() {
+        throw new Error(
+          `Unable to perform gas selection due to insufficient SUI balance (in address balance or coins) for account ${signer.getPublicKey().toSuiAddress()} to satisfy required budget 9892000.`,
+        );
+      },
+    },
+  });
+
+  await expect(storage.store({ bytes: new Uint8Array([1]) })).rejects.toMatchObject({
+    name: "WalrusStorageError",
+    code: "walrus_insufficient_balance",
+    message: "Walrus storage wallet has insufficient SUI for this write",
+  });
+}
+
+export async function run_classifies_wal_balance_failures_as_insufficient_balance() {
+  const signer = Ed25519Keypair.generate();
+  const walCoinType = "0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL";
+  const storage = createWalrusStorage({
+    config: {
+      network: "testnet",
+      rpcUrl: "https://fullnode.testnet.sui.io:443",
+      privateKey: Ed25519Keypair.generate().getSecretKey(),
+      epochs: 3,
+      deletable: false,
+    },
+    signer,
+    balanceClient: {
+      core: {
+        async getBalance(input) {
+          expect(input).toMatchObject({
+            owner: signer.getPublicKey().toSuiAddress(),
+            coinType: walCoinType,
+          });
+          return {
+            balance: {
+              balance: "338973",
+            },
+          };
+        },
+      },
+    },
+    client: {
+      async writeBlob() {
+        throw new Error(
+          `Insufficient balance of ${walCoinType} for owner ${signer.getPublicKey().toSuiAddress()}. Required: 1200339, Available: 338973`,
+        );
+      },
+    },
+  });
+
+  await expect(storage.store({ bytes: new Uint8Array([1]) })).rejects.toMatchObject({
+    name: "WalrusStorageError",
+    code: "walrus_insufficient_balance",
+    message: "Walrus storage wallet has insufficient WAL for this write",
+    storageWallet: {
+      network: "testnet",
+      address: signer.getPublicKey().toSuiAddress(),
+      coinType: walCoinType,
+      coinSymbol: "WAL",
+      balanceMist: "338973",
+      requiredMist: "1200339",
+      shortfallMist: "861366",
+      requiredAmountSource: "sdk_error",
+    },
+  });
+}
+
 export async function run_rejects_walrus_reads_when_bytes_do_not_match_the_expected_ha() {
   const reader = createWalrusReader({
       config: {

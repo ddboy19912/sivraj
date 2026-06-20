@@ -3,7 +3,9 @@ import { join } from "node:path";
 import {
   auditEvents,
   sourceArtifacts,
+  twinVoiceSettings,
   twinVoiceProfiles,
+  twins,
 } from "@sivraj/db";
 import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
@@ -20,6 +22,7 @@ import {
   DEFAULT_VOICE_PRESET_ID,
   getVoicePresetsForProvider,
   isVoicePresetId,
+  resolveCartesiaProviderVoiceId,
   type VoicePreset,
 } from "../services/voice-service-client.js";
 
@@ -27,7 +30,10 @@ type VoiceProvider = VoicePreset["provider"];
 
 const FALLBACK_VOICE_PROVIDER: VoiceProvider = "chatterbox_turbo";
 const MAX_SPEAK_TEXT_CHARS = 2_000;
+const MAX_TRANSCRIBE_AUDIO_BASE64_CHARS = 12 * 1024 * 1024;
 const MAX_REFERENCE_AUDIO_BASE64_CHARS = 8 * 1024 * 1024;
+const MAX_WAKE_PHRASE_CHARS = 80;
+const DEFAULT_PUSH_TO_TALK_MODE = "toggle";
 const PRESET_PREVIEW_TEXT = "This is how I can sound when we talk.";
 const PRESET_PREVIEW_EXTENSIONS = ["wav", "mp3", "webm", "m4a"] as const;
 const PRESET_PREVIEW_CONTENT_TYPES: Record<string, string> = {
@@ -49,6 +55,9 @@ export function createVoiceRoutes({
   privateMemoryStorage,
   privateMemoryReader,
   voiceSynthesizer,
+  speechToTextTranscriber,
+  realtimeSpeechToTextTokenIssuer,
+  realtimeTextToSpeechTokenIssuer,
   voicePreviewAssetDir,
 }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
@@ -90,6 +99,28 @@ export function createVoiceRoutes({
     return c.json(formatVoiceProfile(gate.twinId, profile));
   });
 
+  routes.get("/settings", requireAuth, async (c) => {
+    const routeAuth = authorizeTwinRoute(c);
+    if (!routeAuth.ok) {
+      return routeAuth.response;
+    }
+
+    const settings = await loadVoiceSettingsResponse(db, routeAuth.value.twinId);
+    return c.json(settings);
+  });
+
+  routes.put("/settings", requireAuth, async (c) => {
+    const routeAuth = authorizeTwinRoute(c);
+    if (!routeAuth.ok) {
+      return routeAuth.response;
+    }
+
+    return saveVoiceSettings(c, {
+      db,
+      gate: routeAuth.value,
+    });
+  });
+
   routes.post("/profile", requireAuth, async (c) => {
     const routeAuth = authorizeTwinRoute(c, "artifact:upload");
     if (!routeAuth.ok) {
@@ -118,6 +149,43 @@ export function createVoiceRoutes({
     });
   });
 
+  routes.post("/transcribe", requireAuth, async (c) => {
+    const routeAuth = authorizeTwinRoute(c);
+    if (!routeAuth.ok) {
+      return routeAuth.response;
+    }
+
+    return transcribeVoice(c, {
+      speechToTextTranscriber,
+      gate: routeAuth.value,
+    });
+  });
+
+  routes.post("/realtime-token", requireAuth, async (c) => {
+    const routeAuth = authorizeTwinRoute(c);
+    if (!routeAuth.ok) {
+      return routeAuth.response;
+    }
+
+    return createRealtimeSpeechToTextSession(c, {
+      realtimeSpeechToTextTokenIssuer,
+    });
+  });
+
+  routes.post("/realtime-tts-token", requireAuth, async (c) => {
+    const routeAuth = authorizeTwinRoute(c);
+    if (!routeAuth.ok) {
+      return routeAuth.response;
+    }
+
+    return createRealtimeTextToSpeechSession(c, {
+      db,
+      privateMemoryReader,
+      realtimeTextToSpeechTokenIssuer,
+      gate: routeAuth.value,
+    });
+  });
+
   return routes;
 }
 
@@ -126,8 +194,228 @@ type VoiceRouteDeps = {
   privateMemoryStorage: AppDependencies["privateMemoryStorage"];
   privateMemoryReader: AppDependencies["privateMemoryReader"];
   voiceSynthesizer: AppDependencies["voiceSynthesizer"];
+  speechToTextTranscriber: AppDependencies["speechToTextTranscriber"];
+  realtimeSpeechToTextTokenIssuer: AppDependencies["realtimeSpeechToTextTokenIssuer"];
+  realtimeTextToSpeechTokenIssuer: AppDependencies["realtimeTextToSpeechTokenIssuer"];
   gate: AuthorizedTwin;
 };
+
+type VoicePushToTalkMode = "toggle";
+
+type VoiceSettingsResponse = {
+  twinId: string;
+  wakeEnabled: boolean;
+  wakePhrase: string;
+  defaultWakePhrase: string;
+  wakePhraseIsDefault: boolean;
+  pushToTalkMode: VoicePushToTalkMode;
+  metadata: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+async function saveVoiceSettings(
+  c: Context<AuthEnv>,
+  { db, gate }: Pick<VoiceRouteDeps, "db" | "gate">,
+) {
+  const parsedBody = await parseJsonObjectBody(c);
+  if (!parsedBody.ok) {
+    return parsedBody.response;
+  }
+
+  const current = await loadVoiceSettingsResponse(db, gate.twinId);
+  const wakePhrase = "wakePhrase" in parsedBody.body
+    ? validateWakePhrase(parsedBody.body["wakePhrase"], current.defaultWakePhrase)
+    : { ok: true as const, value: current.wakePhrase };
+
+  if (!wakePhrase.ok) {
+    return c.json({ error: wakePhrase.error }, 400);
+  }
+
+  const clientWakeSupported = readOptionalBoolean(parsedBody.body["clientWakeSupported"]);
+  const requestedWakeEnabled = readOptionalBoolean(parsedBody.body["wakeEnabled"]);
+  const wakeEnabled = requestedWakeEnabled === undefined
+    ? current.wakeEnabled
+    : requestedWakeEnabled && clientWakeSupported !== false;
+  const pushToTalkMode = readPushToTalkMode(parsedBody.body["pushToTalkMode"])
+    ?? current.pushToTalkMode;
+  const metadata = {
+    ...current.metadata,
+    ...(requestedWakeEnabled && clientWakeSupported === false
+      ? { wakeUnsupportedAt: new Date().toISOString() }
+      : {}),
+  };
+
+  const settings = await upsertVoiceSettings(db, {
+    twinId: gate.twinId,
+    wakeEnabled,
+    wakePhrase: wakePhrase.value === current.defaultWakePhrase ? null : wakePhrase.value,
+    pushToTalkMode,
+    metadata,
+  });
+
+  writeVoiceAuditEvent(db, {
+    twinId: gate.twinId,
+    actorType: gate.auth.type,
+    actorId: gate.auth.sub,
+    eventType: "voice_settings.updated",
+    resourceType: "twin_voice_settings",
+    resourceId: settings.id,
+    metadata: {
+      wakeEnabled,
+      pushToTalkMode,
+      wakePhraseIsDefault: settings.wakePhrase === null,
+    },
+  });
+
+  return c.json(await loadVoiceSettingsResponse(db, gate.twinId));
+}
+
+async function transcribeVoice(
+  c: Context<AuthEnv>,
+  { speechToTextTranscriber }: Pick<VoiceRouteDeps, "speechToTextTranscriber" | "gate">,
+) {
+  const parsedBody = await parseJsonObjectBody(c);
+  if (!parsedBody.ok) {
+    return parsedBody.response;
+  }
+
+  const audioBase64 = requiredString(parsedBody.body["audioBase64"]);
+  if (!audioBase64) {
+    return c.json({ error: "missing_audio" }, 400);
+  }
+
+  if (audioBase64.length > MAX_TRANSCRIBE_AUDIO_BASE64_CHARS) {
+    return c.json({ error: "audio_too_large" }, 413);
+  }
+
+  if (!speechToTextTranscriber) {
+    return c.json({ error: "speech_to_text_not_configured" }, 503);
+  }
+
+  const transcript = await speechToTextTranscriber.transcribe({
+    audioBase64,
+    mimeType: optionalString(parsedBody.body["mimeType"]) ?? "audio/webm",
+    fileName: optionalString(parsedBody.body["fileName"]) ?? `voice-chat-${new Date().toISOString()}.webm`,
+    prompt: optionalString(parsedBody.body["prompt"]),
+  }).catch((error: unknown) => {
+    console.error("voice transcription failed", error);
+    return null;
+  });
+
+  if (!transcript) {
+    return c.json({ error: "speech_to_text_unavailable" }, 503);
+  }
+
+  const text = transcript.text.trim();
+  if (!text) {
+    return c.json({ error: "empty_transcript" }, 422);
+  }
+
+  return c.json({
+    text,
+    provider: transcript.provider,
+    model: transcript.model,
+    metadata: transcript.metadata ?? {},
+  });
+}
+
+async function createRealtimeSpeechToTextSession(
+  c: Context<AuthEnv>,
+  {
+    realtimeSpeechToTextTokenIssuer,
+  }: Pick<VoiceRouteDeps, "realtimeSpeechToTextTokenIssuer">,
+) {
+  if (!realtimeSpeechToTextTokenIssuer) {
+    return c.json({ error: "realtime_speech_to_text_not_configured" }, 503);
+  }
+
+  const session = await realtimeSpeechToTextTokenIssuer.createSession().catch((error: unknown) => {
+    console.error("voice realtime token creation failed", error);
+    return null;
+  });
+
+  if (!session) {
+    return c.json({ error: "realtime_speech_to_text_unavailable" }, 503);
+  }
+
+  return c.json({
+    provider: session.provider,
+    accessToken: session.accessToken,
+    expiresIn: session.expiresIn,
+    websocketUrl: session.websocketUrl,
+    model: session.model,
+    encoding: session.encoding,
+    sampleRate: session.sampleRate,
+    apiVersion: session.apiVersion,
+  });
+}
+
+async function createRealtimeTextToSpeechSession(
+  c: Context<AuthEnv>,
+  {
+    db,
+    privateMemoryReader,
+    realtimeTextToSpeechTokenIssuer,
+    gate,
+  }: Pick<
+    VoiceRouteDeps,
+    "db" | "privateMemoryReader" | "realtimeTextToSpeechTokenIssuer" | "gate"
+  >,
+) {
+  if (!realtimeTextToSpeechTokenIssuer) {
+    return c.json({ error: "realtime_text_to_speech_not_configured" }, 503);
+  }
+
+  const parsedBody = await parseJsonObjectBody(c);
+  if (!parsedBody.ok) {
+    return parsedBody.response;
+  }
+
+  const voiceSelection = await resolveSpeakVoiceSelection({
+    db,
+    privateMemoryReader,
+    twinId: gate.twinId,
+    payload: parsedBody.body,
+  });
+
+  if ("error" in voiceSelection) {
+    return c.json({ error: voiceSelection.error }, voiceSelection.status);
+  }
+
+  const providerVoiceId = resolveCartesiaProviderVoiceId(
+    voiceSelection.voiceId,
+    voiceSelection.providerVoiceId,
+  );
+  if (!providerVoiceId) {
+    return c.json({ error: "realtime_voice_not_available" }, 503);
+  }
+
+  const session = await realtimeTextToSpeechTokenIssuer.createSession({
+    voiceId: providerVoiceId,
+    language: optionalString(parsedBody.body["language"]) ?? "en",
+  }).catch((error: unknown) => {
+    console.error("voice realtime tts token creation failed", error);
+    return null;
+  });
+
+  if (!session) {
+    return c.json({ error: "realtime_text_to_speech_unavailable" }, 503);
+  }
+
+  return c.json({
+    provider: session.provider,
+    accessToken: session.accessToken,
+    expiresIn: session.expiresIn,
+    websocketUrl: session.websocketUrl,
+    model: session.model,
+    voiceId: session.voiceId,
+    language: session.language,
+    encoding: session.encoding,
+    sampleRate: session.sampleRate,
+    apiVersion: session.apiVersion,
+  });
+}
 
 async function saveVoiceProfile(
   c: Context<AuthEnv>,
@@ -617,6 +905,135 @@ async function readPresetPreviewAsset(input: {
   }
 
   return null;
+}
+
+async function loadVoiceSettingsResponse(
+  db: AppDependencies["db"],
+  twinId: string,
+): Promise<VoiceSettingsResponse> {
+  const [settings, twinName] = await Promise.all([
+    loadVoiceSettings(db, twinId),
+    loadTwinName(db, twinId),
+  ]);
+  return formatVoiceSettings(twinId, settings, defaultWakePhrase(twinName));
+}
+
+async function loadTwinName(db: AppDependencies["db"], twinId: string) {
+  const [twin] = await db
+    .select({ name: twins.name })
+    .from(twins)
+    .where(eq(twins.id, twinId))
+    .limit(1);
+
+  return twin?.name ?? "Sivraj";
+}
+
+async function loadVoiceSettings(db: AppDependencies["db"], twinId: string) {
+  const [settings] = await db
+    .select()
+    .from(twinVoiceSettings)
+    .where(eq(twinVoiceSettings.twinId, twinId))
+    .limit(1);
+
+  return settings ?? null;
+}
+
+async function upsertVoiceSettings(
+  db: AppDependencies["db"],
+  input: {
+    twinId: string;
+    wakeEnabled: boolean;
+    wakePhrase: string | null;
+    pushToTalkMode: VoicePushToTalkMode;
+    metadata: Record<string, unknown>;
+  },
+) {
+  const existing = await loadVoiceSettings(db, input.twinId);
+  const values = {
+    wakeEnabled: input.wakeEnabled,
+    wakePhrase: input.wakePhrase,
+    pushToTalkMode: input.pushToTalkMode,
+    metadata: input.metadata,
+    updatedAt: new Date(),
+  };
+
+  const [settings] = existing
+    ? await db
+        .update(twinVoiceSettings)
+        .set(values)
+        .where(eq(twinVoiceSettings.twinId, input.twinId))
+        .returning()
+    : await db
+        .insert(twinVoiceSettings)
+        .values({
+          twinId: input.twinId,
+          ...values,
+        })
+        .returning();
+
+  return settings;
+}
+
+function formatVoiceSettings(
+  twinId: string,
+  settings: unknown,
+  defaultWakePhraseValue: string,
+): VoiceSettingsResponse {
+  const record = settings && typeof settings === "object"
+    ? settings as Record<string, unknown>
+    : {};
+  const savedWakePhrase = optionalString(record["wakePhrase"] ?? record["wake_phrase"]);
+  const pushToTalkMode = readPushToTalkMode(record["pushToTalkMode"] ?? record["push_to_talk_mode"])
+    ?? DEFAULT_PUSH_TO_TALK_MODE;
+
+  return {
+    twinId,
+    wakeEnabled: record["wakeEnabled"] === true || record["wake_enabled"] === true,
+    wakePhrase: savedWakePhrase ?? defaultWakePhraseValue,
+    defaultWakePhrase: defaultWakePhraseValue,
+    wakePhraseIsDefault: !savedWakePhrase,
+    pushToTalkMode,
+    metadata: readRecord(record["metadata"]),
+    createdAt: formatDate(record["createdAt"] ?? record["created_at"]),
+    updatedAt: formatDate(record["updatedAt"] ?? record["updated_at"]),
+  };
+}
+
+function defaultWakePhrase(twinName: string) {
+  const normalizedName = twinName.trim().replace(/\s+/g, " ");
+  return `Hey ${normalizedName || "Sivraj"}`;
+}
+
+function validateWakePhrase(
+  value: unknown,
+  defaultWakePhraseValue: string,
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (value === null) {
+    return { ok: true, value: defaultWakePhraseValue };
+  }
+
+  const wakePhrase = optionalString(value)?.replace(/\s+/g, " ").trim();
+  if (!wakePhrase) {
+    return { ok: false, error: "invalid_wake_phrase" };
+  }
+
+  if (wakePhrase.length > MAX_WAKE_PHRASE_CHARS) {
+    return { ok: false, error: "wake_phrase_too_long" };
+  }
+
+  if (!/\S+\s+\S+/u.test(wakePhrase)) {
+    return { ok: false, error: "wake_phrase_requires_multiple_words" };
+  }
+
+  return { ok: true, value: wakePhrase };
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readPushToTalkMode(value: unknown): VoicePushToTalkMode | null {
+  return value === "toggle" ? value : null;
 }
 
 async function loadVoiceProfile(db: AppDependencies["db"], twinId: string) {

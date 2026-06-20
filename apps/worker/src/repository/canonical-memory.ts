@@ -55,6 +55,15 @@ export function buildCanonicalMemoryKey(
   metadata: Record<string, unknown>,
   subject: string | null,
 ): string {
+  const currentTruth = readCurrentTruth(metadata);
+  if (subject && currentTruth?.slot) {
+    return [
+      "profile_slot",
+      normalizeCanonicalText(subject),
+      normalizeCanonicalText(currentTruth.slot),
+    ].join(":");
+  }
+
   const category = asRecord(metadata.memoryMetadata).category;
   const normalizedStatementHash = metadata.normalizedStatementHash;
 
@@ -94,6 +103,7 @@ export function mergeCanonicalMemoryMetadata(
 ): Record<string, unknown> {
   const existing = asRecord(existingMetadata);
   const incoming = asRecord(incomingMetadata);
+  const currentTruth = mergeCurrentTruthMetadata(existing, incoming, evidence);
   const evidenceHashes = mergeStringArrays(
     readStringArray(existing.evidenceHashes),
     [evidence.evidenceHash],
@@ -112,6 +122,7 @@ export function mergeCanonicalMemoryMetadata(
     subject: incoming.subject ?? existing.subject,
     sourceType: incoming.sourceType ?? existing.sourceType,
     memoryMetadata: incoming.memoryMetadata ?? existing.memoryMetadata,
+    ...(currentTruth ? { currentTruth } : {}),
     consolidationMethod: evidence.semanticMerge?.decision === "same"
       ? "llm_semantic_merge_judgment"
       : "deterministic_subject_or_statement_key",
@@ -130,6 +141,171 @@ export function mergeCanonicalMemoryMetadata(
     memoryFragmentIds,
     evidenceCount: evidenceHashes.length,
   };
+}
+
+type CurrentTruthMetadata = {
+  kind: string;
+  slot: string;
+  value: string;
+  valueType: string;
+  mutable: boolean;
+  status: "active";
+  evidenceHash: string;
+  sourceArtifactId: string;
+  memoryFragmentId: string;
+  updatedAt: string;
+  previousValues: Array<{
+    value: string;
+    evidenceHash?: string;
+    sourceArtifactId?: string;
+    memoryFragmentId?: string;
+    validUntil: string;
+  }>;
+  conflictResolution?: {
+    action: "superseded_previous_value" | "merged_same_value";
+    previousValue?: string;
+    newValue: string;
+    resolvedAt: string;
+  };
+};
+
+function mergeCurrentTruthMetadata(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  evidence: {
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    evidenceHash: string;
+  },
+): CurrentTruthMetadata | null {
+  const incomingTruth = readCurrentTruth(incoming);
+  if (!incomingTruth) {
+    return readCurrentTruth(existing);
+  }
+
+  const existingTruth = readCurrentTruth(existing);
+  const now = new Date().toISOString();
+  const base: CurrentTruthMetadata = {
+    ...incomingTruth,
+    status: "active",
+    evidenceHash: evidence.evidenceHash,
+    sourceArtifactId: evidence.sourceArtifactId,
+    memoryFragmentId: evidence.memoryFragmentId,
+    updatedAt: now,
+    previousValues: existingTruth?.previousValues ?? [],
+  };
+
+  if (!existingTruth || !sameCurrentTruthSlot(existingTruth, incomingTruth)) {
+    return base;
+  }
+
+  if (normalizeCurrentTruthValue(existingTruth.value) === normalizeCurrentTruthValue(incomingTruth.value)) {
+    return {
+      ...base,
+      previousValues: existingTruth.previousValues,
+      conflictResolution: {
+        action: "merged_same_value",
+        newValue: incomingTruth.value,
+        resolvedAt: now,
+      },
+    };
+  }
+
+  if (!incomingTruth.mutable) {
+    return {
+      ...base,
+      previousValues: existingTruth.previousValues,
+      conflictResolution: {
+        action: "superseded_previous_value",
+        previousValue: existingTruth.value,
+        newValue: incomingTruth.value,
+        resolvedAt: now,
+      },
+    };
+  }
+
+  return {
+    ...base,
+    previousValues: [
+      ...existingTruth.previousValues,
+      {
+        value: existingTruth.value,
+        evidenceHash: existingTruth.evidenceHash,
+        sourceArtifactId: existingTruth.sourceArtifactId,
+        memoryFragmentId: existingTruth.memoryFragmentId,
+        validUntil: now,
+      },
+    ],
+    conflictResolution: {
+      action: "superseded_previous_value",
+      previousValue: existingTruth.value,
+      newValue: incomingTruth.value,
+      resolvedAt: now,
+    },
+  };
+}
+
+function readCurrentTruth(metadata: Record<string, unknown>): CurrentTruthMetadata | null {
+  const raw = asRecord(metadata.currentTruth);
+  const nestedRaw = asRecord(asRecord(metadata.memoryMetadata).currentTruth);
+  const source = Object.keys(raw).length > 0 ? raw : nestedRaw;
+  const slot = readNonEmptyString(source.slot);
+  const value = readNonEmptyString(source.value);
+  if (!slot || !value) {
+    return null;
+  }
+
+  return {
+    kind: readNonEmptyString(source.kind) ?? "profile_fact",
+    slot,
+    value,
+    valueType: readNonEmptyString(source.valueType) ?? "string",
+    mutable: source.mutable !== false,
+    status: "active",
+    evidenceHash: readNonEmptyString(source.evidenceHash) ?? "",
+    sourceArtifactId: readNonEmptyString(source.sourceArtifactId) ?? "",
+    memoryFragmentId: readNonEmptyString(source.memoryFragmentId) ?? "",
+    updatedAt: readNonEmptyString(source.updatedAt) ?? new Date(0).toISOString(),
+    previousValues: readPreviousCurrentTruthValues(source.previousValues),
+    ...(asRecord(source.conflictResolution).action
+      ? { conflictResolution: asRecord(source.conflictResolution) as CurrentTruthMetadata["conflictResolution"] }
+      : {}),
+  };
+}
+
+function readPreviousCurrentTruthValues(value: unknown): CurrentTruthMetadata["previousValues"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    const previousValue = readNonEmptyString(record.value);
+    const validUntil = readNonEmptyString(record.validUntil);
+    if (!previousValue || !validUntil) {
+      return [];
+    }
+
+    return [{
+      value: previousValue,
+      evidenceHash: readNonEmptyString(record.evidenceHash) ?? undefined,
+      sourceArtifactId: readNonEmptyString(record.sourceArtifactId) ?? undefined,
+      memoryFragmentId: readNonEmptyString(record.memoryFragmentId) ?? undefined,
+      validUntil,
+    }];
+  });
+}
+
+function sameCurrentTruthSlot(left: CurrentTruthMetadata, right: CurrentTruthMetadata) {
+  return normalizeCanonicalText(left.slot) === normalizeCanonicalText(right.slot);
+}
+
+function normalizeCurrentTruthValue(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export function maxNullableNumber(

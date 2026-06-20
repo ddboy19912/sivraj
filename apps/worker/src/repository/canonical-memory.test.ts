@@ -40,6 +40,18 @@ describe("rankCanonicalMergeCandidates", () => {
 });
 
 describe("buildCanonicalMemoryKey", () => {
+  it("uses current truth slots for mutable profile facts", () => {
+    expect(buildCanonicalMemoryKey("fact", {
+      memoryMetadata: {
+        currentTruth: {
+          slot: "age",
+          value: "40",
+          mutable: true,
+        },
+      },
+    }, "Fortune")).toBe("profile_slot:fortune:age");
+  });
+
   it("prefers subject keys when available", () => {
     expect(buildCanonicalMemoryKey("preference", { memoryMetadata: { category: "Style" } }, "Use pnpm"))
       .toBe("subject:preference:use_pnpm:style");
@@ -76,6 +88,68 @@ describe("mergeCanonicalMemoryMetadata", () => {
     expect(merged.memoryFragmentIds).toEqual(["fragment-1"]);
     expect(merged.consolidationMethod).toBe("llm_semantic_merge_judgment");
     expect(merged.subject).toBe("Updated subject");
+  });
+
+  it("keeps the newest mutable profile value active and preserves previous values", () => {
+    const first = mergeCanonicalMemoryMetadata(
+      null,
+      {
+        subject: "Fortune",
+        memoryMetadata: {
+          currentTruth: {
+            kind: "mutable_profile",
+            slot: "age",
+            value: "40",
+            valueType: "number",
+            mutable: true,
+          },
+        },
+      },
+      {
+        sourceArtifactId: "artifact-1",
+        memoryFragmentId: "fragment-1",
+        evidenceHash: "age-40",
+      },
+    );
+    const second = mergeCanonicalMemoryMetadata(
+      first,
+      {
+        subject: "Fortune",
+        memoryMetadata: {
+          currentTruth: {
+            kind: "mutable_profile",
+            slot: "age",
+            value: "60",
+            valueType: "number",
+            mutable: true,
+          },
+        },
+      },
+      {
+        sourceArtifactId: "artifact-2",
+        memoryFragmentId: "fragment-2",
+        evidenceHash: "age-60",
+      },
+    );
+
+    expect(second.currentTruth).toMatchObject({
+      slot: "age",
+      value: "60",
+      evidenceHash: "age-60",
+      conflictResolution: {
+        action: "superseded_previous_value",
+        previousValue: "40",
+        newValue: "60",
+      },
+    });
+    expect(second.currentTruth).toMatchObject({
+      previousValues: [
+        expect.objectContaining({
+          value: "40",
+          evidenceHash: "age-40",
+        }),
+      ],
+    });
   });
 });
 

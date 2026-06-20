@@ -48,7 +48,7 @@ export function ProviderConfigDialog({
       <DrawerContent
         className={cn(
           "overflow-hidden",
-          direction === "right" && "max-w-[min(680px,calc(100vw-28px))] pt-5",
+          direction === "right" && "max-w-[min(520px,calc(100vw-28px))] pt-5",
           direction === "bottom" &&
             "max-h-[min(86svh,760px)] pb-[max(18px,env(safe-area-inset-bottom))]",
         )}
@@ -56,7 +56,7 @@ export function ProviderConfigDialog({
         <DrawerHeader className="border-b border-white/6 pb-4 text-left pt-0!">
           <DrawerTitle className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-white/90">
             <Cpu className="size-4.5 text-[rgba(var(--theme-color-rgb),0.7)]" />
-            LLM provider
+            Chat model
           </DrawerTitle>
         </DrawerHeader>
 

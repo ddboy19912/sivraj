@@ -10,9 +10,10 @@ describe("resolveProviderPresentation", () => {
         status: "connected",
         isActive: true,
         authMethod: "openrouter_pkce",
+        capability: "chat",
         displayName: "OpenRouter",
         baseUrl: "https://openrouter.ai/api/v1",
-        model: "google/gemini-3.1-flash-lite",
+        model: "google/gemini-2.5-flash-lite",
         hasApiKey: true,
         lastTestedAt: null,
         updatedAt: null,
@@ -21,7 +22,7 @@ describe("resolveProviderPresentation", () => {
       configs: [],
       fallback: null,
     })).toMatchObject({
-      label: "google/gemini-3.1-flash-lite via OpenRouter",
+      label: "google/gemini-2.5-flash-lite via OpenRouter",
     });
   });
 
@@ -31,15 +32,15 @@ describe("resolveProviderPresentation", () => {
       activeConfig: null,
       configs: [],
       fallback: {
-        providerKind: "openai",
-        displayName: "OpenAI",
-        baseUrl: "https://api.openai.com",
-        model: "google/gemini-3.1-flash-lite",
+        providerKind: "openrouter",
+        displayName: "OpenRouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        model: "google/gemini-2.5-flash-lite",
         source: "env",
       },
     })).toMatchObject({
-      label: "google/gemini-3.1-flash-lite",
-      mode: "Gemini (default)",
+      label: "google/gemini-2.5-flash-lite",
+      mode: "OpenRouter default",
     });
   });
 });

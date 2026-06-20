@@ -8,6 +8,7 @@ import {
   updateSavedProviderModel,
 } from "@/lib/chat/provider-config-handlers";
 import type { Session } from "@/lib/session";
+import type { RuntimeCapability } from "@/lib/chat/chat-api";
 
 export function startOpenRouterProviderDialogOAuth({
   session,
@@ -45,15 +46,17 @@ export function createProviderDialogOpenRouterModel({
   session,
   displayName,
   model,
+  capability,
   onSessionRefreshed,
 }: {
   session: Session;
   displayName: string;
   model: string;
+  capability: RuntimeCapability;
   onSessionRefreshed: (session: Session) => void;
 }) {
   return createSavedOpenRouterModelConfig(
-    { displayName, model },
+    { displayName, model, capability },
     session,
     onSessionRefreshed,
   );
@@ -61,12 +64,14 @@ export function createProviderDialogOpenRouterModel({
 
 export function selectDefaultProviderDialogConfig({
   session,
+  capability,
   onSessionRefreshed,
 }: {
   session: Session;
+  capability: RuntimeCapability;
   onSessionRefreshed: (session: Session) => void;
 }) {
-  return selectDefaultProviderConfig(session, onSessionRefreshed);
+  return selectDefaultProviderConfig(capability, session, onSessionRefreshed);
 }
 
 export function deleteProviderDialogConfig({
@@ -86,17 +91,19 @@ export function updateProviderDialogModel({
   providerConfigId,
   displayName,
   model,
+  capability,
   onSessionRefreshed,
 }: {
   session: Session;
   providerConfigId: string;
   displayName: string;
   model: string;
+  capability: RuntimeCapability;
   onSessionRefreshed: (session: Session) => void;
 }) {
   return updateSavedProviderModel(
     providerConfigId,
-    { displayName, model },
+    { displayName, model, capability },
     session,
     onSessionRefreshed,
   );

@@ -6,7 +6,12 @@ import {
   type SealEncryptor,
   type SealPolicyConfig,
 } from "@sivraj/crypto-seal";
-import { createWalrusStorage, type WalrusStorage } from "@sivraj/storage-walrus";
+import {
+  createWalrusReader,
+  createWalrusStorage,
+  type WalrusReader,
+  type WalrusStorage,
+} from "@sivraj/storage-walrus";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 export type PrivateEncryptedStorageConfig = {
@@ -16,6 +21,7 @@ export type PrivateEncryptedStorageConfig = {
   walrusNetwork: "mainnet" | "testnet" | "devnet" | "localnet";
   walrusEpochs: number;
   walrusDeletable: boolean;
+  walrusAggregatorUrl?: string;
   walrusUploadRelayUrl?: string;
   walrusUploadRelayTipMaxMist?: number;
   sealPackageId: string;
@@ -46,6 +52,7 @@ export function readPrivateEncryptedStorageConfig(
     walrusNetwork: readWalrusNetwork(env["WALRUS_NETWORK"]),
     walrusEpochs: readInteger(env["WALRUS_EPOCHS"], 5),
     walrusDeletable: readBoolean(env["WALRUS_DELETABLE"], false),
+    walrusAggregatorUrl: readMaybe(env["WALRUS_AGGREGATOR_URL"]),
     walrusUploadRelayUrl: readMaybe(env["WALRUS_UPLOAD_RELAY_URL"]),
     walrusUploadRelayTipMaxMist: readMaybeInteger(env["WALRUS_UPLOAD_RELAY_TIP_MAX_MIST"]),
     sealPackageId: env["SEAL_PACKAGE_ID"]!,
@@ -60,6 +67,7 @@ export function createPrivateEncryptedStorageRuntime(
 ): {
   seal: SealEncryptor;
   walrus: WalrusStorage;
+  walrusReader: WalrusReader;
 } {
   const policy: SealPolicyConfig = {
     packageId: config.sealPackageId,
@@ -89,6 +97,13 @@ export function createPrivateEncryptedStorageRuntime(
         deletable: config.walrusDeletable,
         uploadRelayUrl: config.walrusUploadRelayUrl,
         uploadRelayTipMaxMist: config.walrusUploadRelayTipMaxMist,
+      },
+    }),
+    walrusReader: createWalrusReader({
+      config: {
+        network: config.walrusNetwork,
+        rpcUrl: config.suiRpcUrl,
+        aggregatorUrl: config.walrusAggregatorUrl,
       },
     }),
   };

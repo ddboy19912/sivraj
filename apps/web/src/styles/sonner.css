@@ -3,7 +3,10 @@
   font-family: var(--font-sans);
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast) {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+) {
   --sivraj-toast-rgb: var(--theme-color-rgb);
   --sivraj-toast-text: #f6feff;
   --sivraj-toast-muted: rgba(246, 254, 255, 0.66);
@@ -36,23 +39,38 @@
   backdrop-filter: blur(34px) saturate(180%);
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="success"] {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)[data-type="success"] {
   --sivraj-toast-rgb: 43, 214, 127;
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="error"] {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)[data-type="error"] {
   --sivraj-toast-rgb: 255, 91, 105;
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="warning"] {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)[data-type="warning"] {
   --sivraj-toast-rgb: 255, 198, 87;
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)[data-type="info"] {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)[data-type="info"] {
   --sivraj-toast-rgb: 56, 189, 248;
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)::before {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)::before {
   pointer-events: none;
   position: absolute;
   inset-inline: 1.15rem;
@@ -67,7 +85,10 @@
   );
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)::after {
+:where(
+  [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+  [data-sonner-toast].sivraj-toast
+)::after {
   pointer-events: none;
   position: absolute;
   inset: 0;
@@ -81,7 +102,10 @@
   z-index: 0;
 }
 
-:where([data-sonner-toaster].sivraj-sonner [data-sonner-toast], [data-sonner-toast].sivraj-toast)
+:where(
+    [data-sonner-toaster].sivraj-sonner [data-sonner-toast],
+    [data-sonner-toast].sivraj-toast
+  )
   > :where([data-icon], [data-content], [data-close-button]) {
   position: relative;
   z-index: 1;
@@ -99,7 +123,6 @@
 [data-sonner-toaster].sivraj-sonner [data-title] {
   color: var(--sivraj-toast-text) !important;
   font-size: 0.92rem !important;
-  font-weight: 750 !important;
   letter-spacing: 0 !important;
 }
 

@@ -8,6 +8,7 @@ import {
 import {
   handleArtifactEvents,
   handleArtifactGet,
+  handleArtifactPreview,
   handleArtifactPrivacyCheck,
   handleArtifactRetry,
   handleArtifactUpload,
@@ -35,6 +36,16 @@ export function createArtifactRoutes(deps: AppDependencies) {
     }
 
     return handleArtifactRetry(c, deps, gate.value);
+  });
+
+  artifactRoutes.get("/:artifactId/preview", requireAuth, async (c) => {
+    const gate = await authorizeTwinArtifactRoute(c, db, "memory:read");
+
+    if (!gate.ok) {
+      return gate.response;
+    }
+
+    return handleArtifactPreview(c, deps, gate.value);
   });
 
   artifactRoutes.get("/:artifactId", requireAuth, async (c) => {

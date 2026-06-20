@@ -77,5 +77,9 @@ function createRouteContext(
     providerState: null,
     setProviderOpen: vi.fn(),
     setProviderState: vi.fn(),
+    twinRuntime: {
+      runtimeState: { status: "idle", processedEventIds: [] },
+      dispatchRuntimeEvent: vi.fn(),
+    },
   };
 }

@@ -1,14 +1,14 @@
-import {
-  createOptimisticUserMessage,
-  titleFromMessage,
-} from "@/lib/chat/chat-formatters";
+import { titleFromMessage } from "@/lib/chat/chat-formatters";
 import {
   createThread,
+  deleteThread,
   loadProviderConfig,
   loadThreadMessages,
   loadThreads,
-  sendChatMessage,
+  streamChatTurn,
   type ChatMessage,
+  type ChatMemoryIntent,
+  type ChatTurnStreamEvent,
   type ChatThread,
   type ProviderConfigResponse,
 } from "@/lib/chat/chat-api";
@@ -67,40 +67,53 @@ export async function createChatThread(
   return response.thread;
 }
 
-export async function sendChatPageMessage({
+export function deleteChatThread(
+  threadId: string,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+) {
+  return deleteThread(threadId, session, onSessionRefreshed);
+}
+
+export async function sendStreamingChatPageMessage({
   session,
   activeThreadId,
   content,
+  memoryIntent,
+  retryAttempt = 0,
   onSessionRefreshed,
+  signal,
+  onEvent,
 }: {
   session: Session;
   activeThreadId: string | null;
   content: string;
+  memoryIntent: ChatMemoryIntent;
+  retryAttempt?: number;
   onSessionRefreshed: (session: Session) => void;
+  signal?: AbortSignal;
+  onEvent: (event: ChatTurnStreamEvent) => void;
 }) {
-  const optimistic = createOptimisticUserMessage(activeThreadId, content);
   const threadId =
     activeThreadId ??
     (await createThread(titleFromMessage(content), session, onSessionRefreshed))
       .thread.id;
-  const responsePromise = sendChatMessage(
+
+  await streamChatTurn({
     threadId,
     content,
+    memoryIntent,
+    retryAttempt,
     session,
     onSessionRefreshed,
-  );
-  const threadResponsePromise = responsePromise.then(() =>
-    loadThreads(session, onSessionRefreshed),
-  );
-  const [response, threadResponse] = await Promise.all([
-    responsePromise,
-    threadResponsePromise,
-  ]);
+    signal,
+    onEvent,
+  });
+
+  const threadResponse = await loadThreads(session, onSessionRefreshed);
 
   return {
-    optimisticId: optimistic.id,
     threadId,
-    messages: [response.userMessage, response.assistantMessage],
     threads: threadResponse.threads,
   };
 }

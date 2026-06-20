@@ -1,6 +1,7 @@
-import { Check, ClipboardPaste, Cloud, Loader2, Trash2 } from "lucide-react";
+import { Check, Cloud, Loader2, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { ClipboardActionButton } from "@/components/ui/clipboard-action-button";
 import {
   Dialog,
   DialogContent,
@@ -8,20 +9,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { SafeProviderConfig } from "@/lib/chat/chat-api";
+import type {
+  RuntimeCapability,
+  RuntimeCapabilityConfig,
+  SafeProviderConfig,
+} from "@/lib/chat/chat-api";
 import { cn } from "@/lib/ui/utils";
 
 export type ProviderConfigFormProps = {
   activeProviderConfigId: string | null;
   savedConfigs: SafeProviderConfig[];
   fallbackLabel: string | null;
+  runtimeDefaults: Record<string, RuntimeCapabilityConfig> | null;
   isBusy: boolean;
   onConnectOpenRouter: () => void;
   onCreateOpenRouterModel: (input: {
     displayName: string;
     model: string;
+    capability: RuntimeCapability;
   }) => Promise<void> | void;
-  onSelectDefaultProvider: () => void;
+  onSelectDefaultProvider: (capability: RuntimeCapability) => void;
   onSelectSavedProvider: (providerConfigId: string) => void;
   onDeleteSavedProvider: (providerConfigId: string) => void;
   onUpdateProviderModel: (
@@ -29,6 +36,7 @@ export type ProviderConfigFormProps = {
     input: {
       displayName: string;
       model: string;
+      capability: RuntimeCapability;
     },
   ) => Promise<void> | void;
 };
@@ -37,14 +45,106 @@ type ProviderIconAsset =
   | { type: "image"; src: string }
   | { type: "mask"; src: string };
 
-const DEFAULT_GEMINI_MODEL = "google/gemini-3.1-flash-lite";
-const GEMINI_PROVIDER_NAME = "Gemini (default)";
-const MAX_OPENROUTER_MODEL_CONFIGS = 3;
+type ActiveCapabilityProvider = {
+  displayName: string;
+  model: string;
+  icon: ProviderIconAsset;
+  source: "default" | "saved";
+  savedConfig: SafeProviderConfig | null;
+};
+
+const MAX_OPENROUTER_MODEL_CONFIGS = 12;
+const CHAT_CAPABILITY: RuntimeCapability = "chat";
+const RUNTIME_STATUS_CAPABILITIES: RuntimeCapability[] = [
+  "embeddings",
+  "speech_to_text",
+  "text_to_speech",
+];
+const RUNTIME_CAPABILITY_LABELS: Record<
+  RuntimeCapability,
+  {
+    value: RuntimeCapability;
+    label: string;
+    description: string;
+  }
+> = {
+  chat: {
+    value: "chat",
+    label: "Chat",
+    description: "Answers messages",
+  },
+  embeddings: {
+    value: "embeddings",
+    label: "Embedding",
+    description: "Indexes memories and files",
+  },
+  speech_to_text: {
+    value: "speech_to_text",
+    label: "Speech to text",
+    description: "Transcribes voice input",
+  },
+  text_to_speech: {
+    value: "text_to_speech",
+    label: "Text to speech",
+    description: "Speaks responses",
+  },
+};
+
+function capabilityLabel(capability: RuntimeCapability) {
+  return RUNTIME_CAPABILITY_LABELS[capability]?.label ?? "Chat";
+}
+
+function capabilityDescription(capability: RuntimeCapability) {
+  return RUNTIME_CAPABILITY_LABELS[capability]?.description ?? "";
+}
+
+function iconForProviderKind(
+  providerKind: string | undefined,
+): ProviderIconAsset {
+  return providerKind === "openrouter"
+    ? { type: "mask", src: "/icons/openrouter.svg" }
+    : { type: "image", src: "/icons/gemini.webp" };
+}
+
+function resolveActiveProviderForCapability({
+  capability,
+  runtimeDefaults,
+  savedConfigs,
+}: {
+  capability: RuntimeCapability;
+  runtimeDefaults: Record<string, RuntimeCapabilityConfig> | null;
+  savedConfigs: SafeProviderConfig[];
+}): ActiveCapabilityProvider {
+  const savedConfig =
+    savedConfigs.find(
+      (config) => config.capability === capability && config.isActive,
+    ) ?? null;
+
+  if (savedConfig) {
+    return {
+      displayName: savedConfig.displayName,
+      model: savedConfig.model,
+      icon: { type: "mask", src: "/icons/openrouter.svg" },
+      source: "saved",
+      savedConfig,
+    };
+  }
+
+  const fallback = runtimeDefaults?.[capability];
+
+  return {
+    displayName: fallback?.displayName ?? "Default model",
+    model: fallback?.model ?? "Not configured",
+    icon: iconForProviderKind(fallback?.providerKind),
+    source: "default",
+    savedConfig: null,
+  };
+}
 
 export function ProviderConfigForm({
-  activeProviderConfigId,
   savedConfigs,
   fallbackLabel,
+  runtimeDefaults,
   isBusy,
   onConnectOpenRouter,
   onCreateOpenRouterModel,
@@ -53,31 +153,38 @@ export function ProviderConfigForm({
   onDeleteSavedProvider,
   onUpdateProviderModel,
 }: ProviderConfigFormProps) {
-  const activeConfig =
-    savedConfigs.find((config) => config.id === activeProviderConfigId) ?? null;
+  const [isAddModelDialogOpen, setIsAddModelDialogOpen] = React.useState(false);
+  const [isAddingModel, setIsAddingModel] = React.useState(false);
+  const activeConfig = resolveActiveProviderForCapability({
+    capability: CHAT_CAPABILITY,
+    runtimeDefaults,
+    savedConfigs,
+  });
+  const visibleSavedConfigs = savedConfigs.filter(
+    (config) => config.capability === CHAT_CAPABILITY,
+  );
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-5">
       <ActiveProviderHero
         activeConfig={activeConfig}
-        fallbackLabel={fallbackLabel}
+        fallbackLabel={runtimeDefaults?.chat?.model ?? fallbackLabel}
       />
 
-      <section className="grid gap-2">
-        <SectionLabel>Providers</SectionLabel>
-
-        <div className="grid gap-1">
+      <section className="grid gap-2.5">
+        <SectionLabel>Chat model</SectionLabel>
+        <div className="grid gap-1.5">
           <ProviderOption
-            icon={{ type: "image", src: "/icons/gemini.webp" }}
-            name={GEMINI_PROVIDER_NAME}
-            detail={fallbackLabel ?? DEFAULT_GEMINI_MODEL}
-            active={!activeConfig}
+            icon={iconForProviderKind(runtimeDefaults?.chat?.providerKind)}
+            name="Environment default"
+            detail={runtimeDefaults?.chat?.model ?? "Not configured"}
+            active={!activeConfig.savedConfig}
             disabled={isBusy}
-            onSelect={onSelectDefaultProvider}
+            onSelect={() => onSelectDefaultProvider(CHAT_CAPABILITY)}
           />
 
-          {savedConfigs.map((config) => {
-            const isActive = config.id === activeProviderConfigId;
+          {visibleSavedConfigs.map((config) => {
+            const isActive = Boolean(config.isActive);
             const providerConfigId = config.id;
 
             return (
@@ -95,7 +202,6 @@ export function ProviderConfigForm({
                     icon={{ type: "mask", src: "/icons/openrouter.svg" }}
                     name={config.displayName}
                     detail={config.model}
-                    meta="OAuth"
                     active={false}
                     disabled={isBusy}
                     onSelect={() =>
@@ -116,7 +222,7 @@ export function ProviderConfigForm({
         <AddOpenRouterModelCard
           disabled={isBusy}
           savedModelCount={savedConfigs.length}
-          onCreateOpenRouterModel={onCreateOpenRouterModel}
+          onOpenAddModel={() => setIsAddModelDialogOpen(true)}
         />
       ) : (
         <OpenRouterConnectCard
@@ -124,6 +230,41 @@ export function ProviderConfigForm({
           onConnectOpenRouter={onConnectOpenRouter}
         />
       )}
+
+      <RuntimeDefaultsSummary runtimeDefaults={runtimeDefaults} />
+
+      <OpenRouterModelFormDialog
+        open={isAddModelDialogOpen}
+        title="Add chat model"
+        description="Reuses your connected OpenRouter OAuth key."
+        submitLabel="Save model"
+        loadingLabel="Saving"
+        disabled={isBusy}
+        isSaving={isAddingModel}
+        onOpenChange={(open) => {
+          if (!open) {
+            setIsAddModelDialogOpen(false);
+          }
+        }}
+        onSubmit={(input) => {
+          setIsAddingModel(true);
+          return Promise.resolve(
+            onCreateOpenRouterModel({
+              ...input,
+              capability: CHAT_CAPABILITY,
+            }),
+          ).then(
+            () => {
+              setIsAddingModel(false);
+              setIsAddModelDialogOpen(false);
+            },
+            (error: unknown) => {
+              setIsAddingModel(false);
+              throw error;
+            },
+          );
+        }}
+      />
     </div>
   );
 }
@@ -133,17 +274,12 @@ export function ProviderConfigForm({
 function AddOpenRouterModelCard({
   disabled,
   savedModelCount,
-  onCreateOpenRouterModel,
+  onOpenAddModel,
 }: {
   disabled: boolean;
   savedModelCount: number;
-  onCreateOpenRouterModel: (input: {
-    displayName: string;
-    model: string;
-  }) => Promise<void> | void;
+  onOpenAddModel: () => void;
 }) {
-  const [isAddModelDialogOpen, setIsAddModelDialogOpen] = React.useState(false);
-  const [isAdding, setIsAdding] = React.useState(false);
   const hasReachedModelLimit = savedModelCount >= MAX_OPENROUTER_MODEL_CONFIGS;
 
   return (
@@ -162,7 +298,7 @@ function AddOpenRouterModelCard({
             ? `OpenRouter model limit reached: ${MAX_OPENROUTER_MODEL_CONFIGS} models`
             : "Add OpenRouter model"
         }
-        onClick={() => setIsAddModelDialogOpen(true)}
+        onClick={onOpenAddModel}
         className="group flex h-16 items-center justify-between rounded-xl border border-dashed border-white/[0.08] bg-white/[0.018] px-3 text-left transition hover:border-[rgba(var(--theme-color-rgb),0.24)] hover:bg-[rgba(var(--theme-color-rgb),0.035)] disabled:pointer-events-none disabled:opacity-50"
       >
         <span className="flex min-w-0 items-center gap-2.5">
@@ -174,41 +310,49 @@ function AddOpenRouterModelCard({
           </span>
           <span className="min-w-0">
             <span className="block truncate text-[13px] font-medium text-white/82">
-              Add OpenRouter model
+              Add chat model
             </span>
             <span className="block truncate text-[12px] text-white/30">
               {hasReachedModelLimit
                 ? `Limit reached: ${MAX_OPENROUTER_MODEL_CONFIGS} models`
-                : "Name it, then paste a model ID"}
+                : "Paste an OpenRouter model ID"}
             </span>
           </span>
         </span>
         <Cloud className="size-4 shrink-0 text-white/18 transition group-hover:text-[rgba(var(--theme-color-rgb),0.58)]" />
       </button>
+    </section>
+  );
+}
 
-      <OpenRouterModelFormDialog
-        open={isAddModelDialogOpen}
-        title="Add model"
-        description="Reuses your connected OpenRouter OAuth key."
-        submitLabel="Add model"
-        loadingLabel="Adding"
-        disabled={disabled}
-        isSaving={isAdding}
-        onOpenChange={setIsAddModelDialogOpen}
-        onSubmit={(input) => {
-          setIsAdding(true);
-          return Promise.resolve(onCreateOpenRouterModel(input)).then(
-            () => {
-              setIsAdding(false);
-              setIsAddModelDialogOpen(false);
-            },
-            (error: unknown) => {
-              setIsAdding(false);
-              throw error;
-            },
+function RuntimeDefaultsSummary({
+  runtimeDefaults,
+}: {
+  runtimeDefaults: Record<string, RuntimeCapabilityConfig> | null;
+}) {
+  return (
+    <section className="grid gap-2.5">
+      <SectionLabel>Runtime defaults</SectionLabel>
+      <div className="grid gap-1 rounded-xl border border-white/[0.06] bg-black/18 p-1.5">
+        {RUNTIME_STATUS_CAPABILITIES.map((capability) => {
+          const config = runtimeDefaults?.[capability];
+          return (
+            <div
+              key={capability}
+              className="grid min-w-0 grid-cols-[minmax(7rem,0.7fr)_minmax(0,1.3fr)] items-center gap-3 rounded-lg px-2.5 py-2"
+            >
+              <span className="truncate text-[12px] font-medium text-white/52">
+                {capabilityLabel(capability)}
+              </span>
+              <span className="min-w-0 truncate text-right font-mono text-[11px] text-white/34">
+                {config?.configured === false
+                  ? "Not configured"
+                  : (config?.model ?? "Environment")}
+              </span>
+            </div>
           );
-        }}
-      />
+        })}
+      </div>
     </section>
   );
 }
@@ -256,37 +400,20 @@ function OpenRouterModelFormDialog({
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
-  async function pasteModelId() {
-    if (!navigator.clipboard?.readText) {
-      toast.error("Clipboard unavailable", {
-        description: "Paste manually into the model field.",
-      });
-      return;
-    }
-
-    let text = "";
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      toast.error("Could not paste model ID", {
-        description: "Allow clipboard access and try again.",
-      });
-      return;
-    }
-
+  function pasteModelId(text: string) {
     const modelId = text.trim();
     if (!modelId) {
       toast.warning("Clipboard is empty");
-      return;
+      return false;
     }
 
     if (!modelInputRef.current) {
-      return;
+      return false;
     }
 
     modelInputRef.current.value = modelId;
     modelInputRef.current.focus();
-    toast.success("Model ID pasted", { description: modelId });
+    return true;
   }
 
   return (
@@ -368,16 +495,15 @@ function OpenRouterModelFormDialog({
                   autoComplete="off"
                   className="h-10 min-w-0 flex-1 rounded-lg border border-white/[0.08] bg-black/24 px-3 font-mono text-[12px] text-white/82 outline-none transition placeholder:text-white/18 selection:bg-[rgba(var(--theme-color-rgb),0.34)] focus:border-[rgba(var(--theme-color-rgb),0.38)] focus:bg-black/32 focus:ring-2 focus:ring-[rgba(var(--theme-color-rgb),0.1)] disabled:opacity-50"
                 />
-                <button
-                  type="button"
+                <ClipboardActionButton
+                  action="paste"
                   disabled={disabled || isSaving}
                   aria-label="Paste model ID"
-                  title="Paste model ID"
-                  onClick={() => void pasteModelId()}
-                  className="grid size-10 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-white/[0.035] text-white/42 transition hover:border-white/[0.14] hover:bg-white/[0.06] hover:text-white/72 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <ClipboardPaste className="size-4" />
-                </button>
+                  feedbackLabel="Pasted"
+                  onClipboardPaste={pasteModelId}
+                  className="size-10 shrink-0 rounded-lg border border-white/[0.08] bg-white/[0.035] text-white/42 hover:border-white/[0.14] hover:bg-white/[0.06] hover:text-white/72"
+                  iconClassName="size-4"
+                />
               </div>
             </label>
           </div>
@@ -412,33 +538,17 @@ function ActiveProviderHero({
   activeConfig,
   fallbackLabel,
 }: {
-  activeConfig: SafeProviderConfig | null;
+  activeConfig: ActiveCapabilityProvider;
   fallbackLabel: string | null;
 }) {
-  const modelName = activeConfig
-    ? activeConfig.model
-    : (fallbackLabel ?? DEFAULT_GEMINI_MODEL);
-  const providerLabel = activeConfig
-    ? activeConfig.displayName
-    : GEMINI_PROVIDER_NAME;
-  const icon = activeConfig
-    ? { type: "mask" as const, src: "/icons/openrouter.svg" }
-    : { type: "image" as const, src: "/icons/gemini.webp" };
+  const modelName = activeConfig.model || fallbackLabel || "Not configured";
 
   return (
-    <div className="relative isolate overflow-hidden rounded-2xl">
-      {/* Background gradient layers */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[rgba(var(--theme-color-rgb),0.12)] via-[rgba(var(--theme-color-rgb),0.04)] to-transparent" />
-      <div className="pointer-events-none absolute -top-16 -right-16 size-40 rounded-full bg-[rgba(var(--theme-color-rgb),0.08)] blur-[60px]" />
-      <div className="pointer-events-none absolute -bottom-8 -left-8 size-24 rounded-full bg-emerald-500/6 blur-[40px]" />
-
-      {/* Border ring */}
-      <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/[0.08]" />
-
+    <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-black/26 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
       <div className="relative flex items-center gap-4 px-5 py-4">
         <div className="grid size-12 shrink-0 place-items-center rounded-[14px] bg-black/30 ring-1 ring-white/[0.08]">
           <ProviderIcon
-            asset={icon}
+            asset={activeConfig.icon}
             className="size-6 text-[rgb(var(--theme-color-rgb))]"
           />
         </div>
@@ -450,15 +560,14 @@ function ActiveProviderHero({
                 <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
                 <span className="relative inline-flex size-1.5 rounded-full bg-emerald-400" />
               </span>
-              Active
-            </span>
-            <span className="text-[11px] text-white/28">·</span>
-            <span className="truncate text-[11px] text-white/36">
-              {providerLabel}
+              Active chat model
             </span>
           </div>
           <div className="mt-1 truncate text-[15px] font-semibold tracking-tight text-white">
             {modelName}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-white/30">
+            {capabilityDescription(CHAT_CAPABILITY)}
           </div>
         </div>
       </div>
@@ -472,7 +581,6 @@ function ProviderOption({
   icon,
   name,
   detail,
-  meta,
   active,
   disabled,
   onSelect,
@@ -481,7 +589,6 @@ function ProviderOption({
   icon: ProviderIconAsset;
   name: string;
   detail: string;
-  meta?: string;
   active: boolean;
   disabled: boolean;
   onSelect: () => void;
@@ -525,11 +632,6 @@ function ProviderOption({
           <span className="truncate text-[13px] font-medium text-white/90">
             {name}
           </span>
-          {meta ? (
-            <span className="shrink-0 rounded-md bg-white/6 px-1.5 py-0.5 text-[10px] font-medium text-white/30">
-              {meta}
-            </span>
-          ) : null}
         </div>
         <div className="mt-0.5 truncate text-[12px] text-white/32">
           {detail}
@@ -569,6 +671,7 @@ function ActiveOpenRouterProvider({
     input: {
       displayName: string;
       model: string;
+      capability: RuntimeCapability;
     },
   ) => Promise<void> | void;
 }) {
@@ -602,9 +705,6 @@ function ActiveOpenRouterProvider({
           <div className="flex items-center gap-2">
             <span className="truncate text-[13px] font-semibold text-white/92">
               {config.displayName}
-            </span>
-            <span className="shrink-0 rounded-md bg-white/6 px-1.5 py-0.5 text-[10px] font-medium text-white/32">
-              OAuth
             </span>
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-white/36">
@@ -657,7 +757,12 @@ function ActiveOpenRouterProvider({
           }
 
           setIsProviderSaving(true);
-          return Promise.resolve(onUpdateProviderModel(config.id, input)).then(
+          return Promise.resolve(
+            onUpdateProviderModel(config.id, {
+              ...input,
+              capability: CHAT_CAPABILITY,
+            }),
+          ).then(
             () => {
               setIsProviderSaving(false);
               setIsEditProviderDialogOpen(false);

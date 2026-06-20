@@ -6,7 +6,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { auditEvents, llmProviderConfigs } from "@sivraj/db";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppDependencies } from "../app.js";
 import type { AuthEnv } from "../middleware/auth.js";
@@ -15,13 +15,15 @@ import { optionalString } from "../lib/http/route-helpers.js";
 import {
   defaultBaseUrl,
   PROVIDER_DEFAULTS,
-  providerLabel,
+  readEnvRuntimeCapabilityDefaults,
+  runtimeProviderLabel,
   type ProviderRuntimeConfig,
+  type RuntimeCapability,
 } from "../lib/chat/helpers.js";
 
 const OPENROUTER_AUTH_URL = "https://openrouter.ai/auth";
 const OPENROUTER_KEY_EXCHANGE_URL = "https://openrouter.ai/api/v1/auth/keys";
-const MAX_OPENROUTER_MODEL_CONFIGS = 3;
+const MAX_OPENROUTER_MODEL_CONFIGS = 12;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const LLM_CREDENTIAL_ENCRYPTION_MESSAGE =
   "LLM_CREDENTIAL_ENCRYPTION_KEY is required before connecting OAuth or saving provider credentials.";
@@ -37,7 +39,7 @@ export async function handleGetProviderConfig(
 
   const { twinId } = routeAuth.value;
   const configs = await loadProviderConfigs(db, twinId);
-  const activeConfig = configs.find((config) => config.isActive) ?? null;
+  const activeConfig = findActiveConfigForCapability(configs, "chat");
   const envConfig = readEnvProviderConfig(process.env);
 
   return c.json(providerConfigResponse({
@@ -154,6 +156,7 @@ export async function handleCompleteOpenRouterOAuth(
       supportsOpenAICompatibleChat: true,
       apiKeySource: "openrouter_oauth",
       authMethod: "openrouter_pkce",
+      capability: "chat",
     },
   });
 
@@ -166,7 +169,7 @@ export async function handleCompleteOpenRouterOAuth(
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
 
   return c.json(providerConfigResponse({
-    activeConfig: config ?? configs.find((item) => item.isActive) ?? null,
+    activeConfig: config ?? findActiveConfigForCapability(configs, "chat"),
     configs,
     envConfig: readEnvProviderConfig(process.env),
   }));
@@ -200,7 +203,9 @@ export async function handleSelectProviderConfig(
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
 
   return c.json(providerConfigResponse({
-    activeConfig: config,
+    activeConfig: readProviderCapability(config.metadata) === "chat"
+      ? config
+      : findActiveConfigForCapability(configs, "chat"),
     configs,
     envConfig: readEnvProviderConfig(process.env),
   }));
@@ -215,11 +220,14 @@ export async function handleSelectFallbackProviderConfig(
     return routeAuth.response;
   }
 
-  await clearActiveProviderConfigs(db, routeAuth.value.twinId);
+  const body = await c.req.json().catch(() => null);
+  const capability = readProviderCapabilityFromBody(body);
+
+  await clearActiveProviderConfigs(db, routeAuth.value.twinId, capability);
   await recordProviderAudit(db, routeAuth.value, {
     eventType: "chat.llm_provider_config.default_selected",
     resourceId: routeAuth.value.twinId,
-    metadata: { source: "env" },
+    metadata: { source: "env", capability },
   });
 
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
@@ -246,6 +254,7 @@ export async function handleCreateOpenRouterModelConfig(
     return c.json({ error: "invalid_llm_provider_model" }, 400);
   }
   const displayName = readProviderDisplayName(body) ?? model;
+  const capability = readProviderCapabilityFromBody(body);
 
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
   const sourceConfig = configs.find((config) => Boolean(config.apiKeyCiphertext));
@@ -262,6 +271,7 @@ export async function handleCreateOpenRouterModelConfig(
   const config = await createOpenRouterModelConfig(db, {
     twinId: routeAuth.value.twinId,
     sourceConfig,
+    capability,
     displayName,
     model,
   });
@@ -269,11 +279,11 @@ export async function handleCreateOpenRouterModelConfig(
   await recordProviderAudit(db, routeAuth.value, {
     eventType: "chat.llm_provider_config.openrouter_model_created",
     resourceId: config?.id ?? routeAuth.value.twinId,
-    metadata: { providerKind: "openrouter", model },
+    metadata: { providerKind: "openrouter", model, capability },
   });
 
   const nextConfigs = await loadProviderConfigs(db, routeAuth.value.twinId);
-  const activeConfig = nextConfigs.find((item) => item.isActive) ?? config ?? null;
+  const activeConfig = findActiveConfigForCapability(nextConfigs, "chat");
 
   return c.json(providerConfigResponse({
     activeConfig,
@@ -302,6 +312,7 @@ export async function handleUpdateProviderModel(
     return c.json({ error: "invalid_llm_provider_model" }, 400);
   }
   const displayName = readProviderDisplayName(body) ?? model;
+  const capability = readProviderCapabilityFromBody(body);
 
   const existing = await loadProviderConfigById(
     db,
@@ -315,15 +326,16 @@ export async function handleUpdateProviderModel(
   await updateProviderConfigModel(db, routeAuth.value.twinId, providerConfigId, {
     displayName,
     model,
+    capability,
   });
   await recordProviderAudit(db, routeAuth.value, {
     eventType: "chat.llm_provider_config.updated",
     resourceId: providerConfigId,
-    metadata: { providerKind: existing.providerKind, displayName, model },
+    metadata: { providerKind: existing.providerKind, displayName, model, capability },
   });
 
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
-  const activeConfig = configs.find((item) => item.isActive) ?? null;
+  const activeConfig = findActiveConfigForCapability(configs, "chat");
 
   return c.json(providerConfigResponse({
     activeConfig,
@@ -358,7 +370,7 @@ export async function handleDeleteProviderConfig(
   });
 
   const configs = await loadProviderConfigs(db, routeAuth.value.twinId);
-  const activeConfig = configs.find((item) => item.isActive) ?? null;
+  const activeConfig = findActiveConfigForCapability(configs, "chat");
 
   return c.json(providerConfigResponse({
     activeConfig,
@@ -400,7 +412,11 @@ async function createProviderConfig(db: AppDependencies["db"], input: {
   metadata: Record<string, unknown>;
 }) {
   if (input.isActive) {
-    await clearActiveProviderConfigs(db, input.twinId);
+    await clearActiveProviderConfigs(
+      db,
+      input.twinId,
+      readProviderCapability(input.metadata),
+    );
   }
 
   const [config] = await db
@@ -436,10 +452,11 @@ async function createProviderConfig(db: AppDependencies["db"], input: {
 async function createOpenRouterModelConfig(db: AppDependencies["db"], input: {
   twinId: string;
   sourceConfig: ProviderConfigRow;
+  capability: RuntimeCapability;
   displayName: string;
   model: string;
 }) {
-  await clearActiveProviderConfigs(db, input.twinId);
+  await clearActiveProviderConfigs(db, input.twinId, input.capability);
 
   const [config] = await db
     .insert(llmProviderConfigs)
@@ -455,6 +472,7 @@ async function createOpenRouterModelConfig(db: AppDependencies["db"], input: {
         supportsOpenAICompatibleChat: true,
         apiKeySource: "openrouter_oauth",
         authMethod: "openrouter_pkce",
+        capability: input.capability,
         credentialSourceProviderConfigId: input.sourceConfig.id,
       },
       apiKeyCiphertext: input.sourceConfig.apiKeyCiphertext,
@@ -470,17 +488,29 @@ async function createOpenRouterModelConfig(db: AppDependencies["db"], input: {
 async function clearActiveProviderConfigs(
   db: AppDependencies["db"],
   twinId: string,
+  capability: RuntimeCapability,
   exceptProviderConfigId?: string,
 ) {
+  const configs = await loadProviderConfigs(db, twinId);
+  const ids = configs
+    .filter((config) =>
+      config.isActive &&
+      config.id !== exceptProviderConfigId &&
+      readProviderCapability(config.metadata) === capability
+    )
+    .map((config) => config.id);
+
+  if (ids.length === 0) {
+    return;
+  }
+
   await db
     .update(llmProviderConfigs)
     .set({ isActive: false, updatedAt: new Date() })
-    .where(exceptProviderConfigId
-      ? and(
-          eq(llmProviderConfigs.twinId, twinId),
-          ne(llmProviderConfigs.id, exceptProviderConfigId),
-        )
-      : eq(llmProviderConfigs.twinId, twinId));
+    .where(and(
+      eq(llmProviderConfigs.twinId, twinId),
+      inArray(llmProviderConfigs.id, ids),
+    ));
 }
 
 async function selectProviderConfig(
@@ -497,7 +527,8 @@ async function selectProviderConfig(
     return null;
   }
 
-  await clearActiveProviderConfigs(db, twinId, providerConfigId);
+  const capability = readProviderCapability(existing.metadata);
+  await clearActiveProviderConfigs(db, twinId, capability, providerConfigId);
 
   const [config] = await db
     .update(llmProviderConfigs)
@@ -543,13 +574,21 @@ async function updateProviderConfigModel(
   input: {
     displayName: string;
     model: string;
+    capability: RuntimeCapability;
   },
 ) {
+  const existing = await loadProviderConfigById(db, twinId, providerConfigId);
+  const metadata = {
+    ...readMetadata(existing?.metadata),
+    capability: input.capability,
+  };
+
   const [config] = await db
     .update(llmProviderConfigs)
     .set({
       displayName: input.displayName,
       model: input.model,
+      metadata,
       updatedAt: new Date(),
     })
     .where(and(
@@ -566,7 +605,7 @@ export async function loadProviderConfig(db: AppDependencies["db"], twinId: stri
 }
 
 export async function loadActiveProviderConfig(db: AppDependencies["db"], twinId: string) {
-  const [config] = await db
+  const configs = await db
     .select()
     .from(llmProviderConfigs)
     .where(and(
@@ -574,7 +613,8 @@ export async function loadActiveProviderConfig(db: AppDependencies["db"], twinId
       eq(llmProviderConfigs.isActive, true),
       eq(llmProviderConfigs.status, "connected"),
     ))
-    .limit(1);
+    .limit(20);
+  const config = findActiveConfigForCapability(configs, "chat");
 
   return config && isOpenRouterOAuthProviderConfig(config) ? config : null;
 }
@@ -622,6 +662,7 @@ function providerConfigResponse(input: {
     config: safeActiveConfig,
     activeConfig: safeActiveConfig,
     configs: input.configs.map(toSafeProviderConfig),
+    runtimeDefaults: readEnvRuntimeCapabilityDefaults(process.env),
     fallback: input.envConfig
       ? {
           providerKind: input.envConfig.providerKind,
@@ -641,6 +682,7 @@ function toSafeProviderConfig(config: Partial<ProviderConfigRow>) {
     status: config.status,
     isActive: Boolean(config.isActive),
     authMethod: readProviderAuthMethod(config.metadata),
+    capability: readProviderCapability(config.metadata),
     displayName: config.displayName,
     baseUrl: config.baseUrl,
     model: config.model,
@@ -651,12 +693,48 @@ function toSafeProviderConfig(config: Partial<ProviderConfigRow>) {
 }
 
 function readProviderAuthMethod(metadata: unknown) {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return "none";
-  }
-
-  const authMethod = (metadata as Record<string, unknown>)["authMethod"];
+  const authMethod = readMetadata(metadata)["authMethod"];
   return authMethod === "openrouter_pkce" ? authMethod : "none";
+}
+
+function readMetadata(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : {};
+}
+
+function readProviderCapability(metadata: unknown): RuntimeCapability {
+  const capability = readMetadata(metadata)["capability"];
+
+  return capability === "embeddings" ||
+    capability === "speech_to_text" ||
+    capability === "text_to_speech" ||
+    capability === "chat"
+    ? capability
+    : "chat";
+}
+
+function readProviderCapabilityFromBody(body: unknown): RuntimeCapability {
+  const value = body && typeof body === "object"
+    ? optionalString((body as Record<string, unknown>)["capability"])
+    : null;
+
+  return value === "embeddings" ||
+    value === "speech_to_text" ||
+    value === "text_to_speech" ||
+    value === "chat"
+    ? value
+    : "chat";
+}
+
+function findActiveConfigForCapability(
+  configs: ProviderConfigRow[],
+  capability: RuntimeCapability,
+) {
+  return configs.find((config) =>
+    config.isActive &&
+    readProviderCapability(config.metadata) === capability
+  ) ?? null;
 }
 
 function readProviderModel(body: unknown) {
@@ -735,10 +813,14 @@ export async function resolveRuntimeProviderConfig(
 }
 
 function readEnvProviderConfig(env: Record<string, string | undefined>): ProviderRuntimeConfig | null {
-  const providerKind = env["LLM_PROVIDER"] || "openai";
+  const providerKind = env["LLM_PROVIDER"] || "openrouter";
   const apiKey = env["LLM_API_KEY"] ?? "";
   const baseUrl = env["OPENAI_BASE_URL"] || defaultBaseUrl(providerKind);
-  const model = env["LLM_MODEL"] || (providerKind === "ollama" ? "llama3.1" : "gpt-4o-mini");
+  const model = env["LLM_MODEL"] || (
+    providerKind === "ollama"
+      ? PROVIDER_DEFAULTS.ollama.model
+      : PROVIDER_DEFAULTS.openrouter.model
+  );
 
   if (providerKind !== "ollama" && !apiKey) {
     return null;
@@ -747,7 +829,7 @@ function readEnvProviderConfig(env: Record<string, string | undefined>): Provide
   return {
     id: null,
     providerKind,
-    displayName: providerLabel(providerKind),
+    displayName: runtimeProviderLabel({ providerKind, baseUrl, model }),
     baseUrl,
     model,
     apiKey,

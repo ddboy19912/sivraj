@@ -3,6 +3,7 @@ import { createContext, use } from "react";
 import type { AgentStatusHudState } from "@/components/ai/AgentStatusHud";
 import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { OnboardingFlow } from "@/types/onboarding.types";
+import type { TwinRuntimeController } from "@/types/twin.types";
 
 export type AppRouteContextValue = {
   homeAgentState: AgentState;
@@ -11,6 +12,7 @@ export type AppRouteContextValue = {
   providerState: ProviderConfigResponse | null;
   setProviderOpen: (open: boolean) => void;
   setProviderState: (state: ProviderConfigResponse | null) => void;
+  twinRuntime: Pick<TwinRuntimeController, "runtimeState" | "dispatchRuntimeEvent">;
 };
 
 export const AppRouteContext = createContext<AppRouteContextValue | null>(null);

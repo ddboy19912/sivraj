@@ -2,6 +2,7 @@ import { resolveDatabaseUrl } from "@sivraj/config";
 import {
   createConfiguredSpeechToTextTranscriber,
   createConfiguredStructuredGenerator,
+  createConfiguredTextEmbedder,
 } from "@sivraj/llm";
 import { createIntelligenceProcessingQueue } from "@sivraj/queue";
 import { createWorkerDb } from "./db.js";
@@ -53,6 +54,10 @@ export async function startWorker(serviceName: string): Promise<void> {
     artifactReconcileLimit: bootstrapInput.artifactReconcileLimit,
     connectorReconcileIntervalMs: bootstrapInput.connectorReconcileIntervalMs,
     connectorReconcileLimit: bootstrapInput.connectorReconcileLimit,
+    candidateMemoryArchiveReconcileIntervalMs: bootstrapInput.candidateMemoryArchiveReconcileIntervalMs,
+    candidateMemoryArchiveReconcileLimit: bootstrapInput.candidateMemoryArchiveReconcileLimit,
+    memoryRenewalIntervalMs: bootstrapInput.memoryRenewalIntervalMs,
+    memoryRenewalLimit: bootstrapInput.memoryRenewalLimit,
     llmModel: process.env["LLM_MODEL"] || null,
     llmBaseUrl: process.env["OPENAI_BASE_URL"] || "https://api.openai.com",
   });
@@ -75,6 +80,7 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
   const privateFragmentStorage = createConfiguredPrivateFragmentStorage(process.env);
   const privateSourceStorage = createConfiguredPrivateSourceStorage(process.env);
   const speechToTextTranscriber = createConfiguredSpeechToTextTranscriber(process.env);
+  const textEmbedder = createConfiguredTextEmbedder(process.env);
   const structuredGenerator = createConfiguredStructuredGenerator(process.env);
   const entityExtractor = structuredGenerator
     ? createEntityExtractor(structuredGenerator)
@@ -97,6 +103,7 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
       privateMemoryReader,
       privateFragmentStorage,
       speechToTextTranscriber: speechToTextTranscriber ?? undefined,
+      textEmbedder: textEmbedder ?? undefined,
       intelligenceQueue,
     });
 
@@ -113,6 +120,7 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
     privateFragmentStorage,
     privateSourceStorage,
     speechToTextTranscriber,
+    textEmbedder,
     structuredGenerator,
     entityExtractor,
     memoryExtractor,
@@ -126,5 +134,15 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
     artifactReconcileLimit: readPositiveInt(process.env["ARTIFACT_RECONCILE_LIMIT"], 25),
     connectorReconcileIntervalMs: readPositiveInt(process.env["CONNECTOR_RECONCILE_INTERVAL_MS"], 60_000),
     connectorReconcileLimit: readPositiveInt(process.env["CONNECTOR_RECONCILE_LIMIT"], 25),
+    candidateMemoryArchiveReconcileIntervalMs: readPositiveInt(
+      process.env["CANDIDATE_MEMORY_ARCHIVE_RECONCILE_INTERVAL_MS"],
+      60_000,
+    ),
+    candidateMemoryArchiveReconcileLimit: readPositiveInt(
+      process.env["CANDIDATE_MEMORY_ARCHIVE_RECONCILE_LIMIT"],
+      25,
+    ),
+    memoryRenewalIntervalMs: readPositiveInt(process.env["MEMORY_RENEWAL_RECONCILE_INTERVAL_MS"], 6 * 60 * 60 * 1000),
+    memoryRenewalLimit: readPositiveInt(process.env["MEMORY_RENEWAL_RECONCILE_LIMIT"], 25),
   };
 }

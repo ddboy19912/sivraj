@@ -51,6 +51,7 @@ export type EngineeringProfileMemoryRecord = {
 };
 
 export type EngineeringProfileCategoryKey =
+  | "userSkills"
   | "architectureDecisions"
   | "projectConventions"
   | "styleRules"
@@ -132,6 +133,7 @@ export type CodingAgentContextScope = {
 };
 
 export type CodingAgentContextPacketSectionKey =
+  | "userSkills"
   | "userPreferences"
   | "architectureRules"
   | "projectConventions"
@@ -255,6 +257,7 @@ export type CodingAgentContextPacketInput = {
 };
 
 const CATEGORY_FOR_TYPE: Record<EngineeringMemoryType, EngineeringProfileCategoryKey> = {
+  user_skill: "userSkills",
   architecture_decision: "architectureDecisions",
   project_convention: "projectConventions",
   style_rule: "styleRules",
@@ -268,6 +271,7 @@ const CATEGORY_FOR_TYPE: Record<EngineeringMemoryType, EngineeringProfileCategor
 };
 
 const CATEGORY_KEYS: EngineeringProfileCategoryKey[] = [
+  "userSkills",
   "architectureDecisions",
   "projectConventions",
   "styleRules",
@@ -289,6 +293,7 @@ const PROFILE_STATUSES: EngineeringProfileMemoryStatus[] = [
 ];
 
 const ENGINEERING_MEMORY_TYPES: EngineeringMemoryType[] = [
+  "user_skill",
   "coding_preference",
   "architecture_decision",
   "project_convention",
@@ -844,6 +849,7 @@ function normalizeProfileMemory(
 
 function emptyCategories(): Record<EngineeringProfileCategoryKey, EngineeringProfileEntry[]> {
   return {
+    userSkills: [],
     architectureDecisions: [],
     projectConventions: [],
     styleRules: [],
@@ -859,6 +865,7 @@ function emptyCategories(): Record<EngineeringProfileCategoryKey, EngineeringPro
 
 function emptyContextSections(): Record<CodingAgentContextPacketSectionKey, CodingAgentContextPacketItem[]> {
   return {
+    userSkills: [],
     userPreferences: [],
     architectureRules: [],
     projectConventions: [],
@@ -873,6 +880,7 @@ function emptyContextSections(): Record<CodingAgentContextPacketSectionKey, Codi
 
 const CONTEXT_SECTION_KEYS: CodingAgentContextPacketSectionKey[] = [
   "agentInstructions",
+  "userSkills",
   "userPreferences",
   "projectConventions",
   "architectureRules",
@@ -884,6 +892,7 @@ const CONTEXT_SECTION_KEYS: CodingAgentContextPacketSectionKey[] = [
 ];
 
 const CONTEXT_SECTION_FOR_CATEGORY: Record<EngineeringProfileCategoryKey, CodingAgentContextPacketSectionKey | null> = {
+  userSkills: "userSkills",
   architectureDecisions: "architectureRules",
   projectConventions: "projectConventions",
   styleRules: "styleRules",
@@ -898,6 +907,7 @@ const CONTEXT_SECTION_FOR_CATEGORY: Record<EngineeringProfileCategoryKey, Coding
 
 const HUMANIZED_CONTEXT_SECTION: Record<CodingAgentContextPacketSectionKey, string> = {
   agentInstructions: "Agent Instructions",
+  userSkills: "User Skills",
   userPreferences: "User Coding Preferences",
   projectConventions: "Project Conventions",
   architectureRules: "Architecture Decisions",
@@ -1813,4 +1823,3 @@ function readStringMetadata(value: unknown): string | null {
 function readNumberMetadata(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
-

@@ -6,6 +6,7 @@ export type { Session }
 export const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000'
 
 const refreshRequests = new Map<string, Promise<Session>>()
+const SESSION_REFRESH_SKEW_MS = 30_000
 
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected error.'
@@ -183,6 +184,19 @@ async function refreshApiSession(session: Session): Promise<Session> {
   return refreshRequest
 }
 
+export async function ensureFreshSession(
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<Session> {
+  if (!isSessionExpiring(session)) {
+    return session
+  }
+
+  const refreshed = await refreshApiSession(session)
+  onSessionRefreshed(refreshed)
+  return refreshed
+}
+
 export async function postAuthedJson<TResponse>(
   path: string,
   body: Record<string, unknown>,
@@ -200,6 +214,100 @@ export async function postAuthedJson<TResponse>(
     onSessionRefreshed(refreshed)
     return postJson<TResponse>(path, body, refreshed.token)
   }
+}
+
+export async function postAuthedStream(
+  path: string,
+  body: Record<string, unknown>,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+  signal?: AbortSignal,
+): Promise<Response> {
+  try {
+    return await postStream(path, body, session.token, signal)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+    return postStream(path, body, refreshed.token, signal)
+  }
+}
+
+export async function getAuthedStream(
+  path: string,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+  signal?: AbortSignal,
+): Promise<Response> {
+  try {
+    return await getStream(path, session.token, signal)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+    return getStream(path, refreshed.token, signal)
+  }
+}
+
+async function postStream(
+  path: string,
+  body: Record<string, unknown>,
+  token?: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  if (!response.body) {
+    throw new Error('Chat stream did not return a readable body.')
+  }
+
+  return response
+}
+
+async function getStream(
+  path: string,
+  token?: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'GET',
+    signal,
+    headers: {
+      accept: 'text/event-stream',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  if (!response.body) {
+    throw new Error('Event stream did not return a readable body.')
+  }
+
+  return response
 }
 
 export async function putAuthedJson<TResponse>(
@@ -255,6 +363,24 @@ export async function getAuthedAudio(
     const refreshed = await refreshApiSession(session)
     onSessionRefreshed(refreshed)
     return getAudio(path, refreshed.token)
+  }
+}
+
+export async function getAuthedBlob(
+  path: string,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<Blob> {
+  try {
+    return await getBlob(path, session.token)
+  } catch (error) {
+    if (!isAuthError(error)) {
+      throw error
+    }
+
+    const refreshed = await refreshApiSession(session)
+    onSessionRefreshed(refreshed)
+    return getBlob(path, refreshed.token)
   }
 }
 
@@ -321,6 +447,21 @@ async function getAudio(path: string, token: string): Promise<Blob> {
   return readAudioResponse(response)
 }
 
+async function getBlob(path: string, token: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(apiErrorMessage(response.status, payload))
+  }
+
+  return response.blob()
+}
+
 async function readAudioResponse(response: Response): Promise<Blob> {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
@@ -328,6 +469,11 @@ async function readAudioResponse(response: Response): Promise<Blob> {
   }
 
   return response.blob()
+}
+
+function isSessionExpiring(session: Session) {
+  const expiresAt = Date.parse(session.expiresAt)
+  return !Number.isFinite(expiresAt) || expiresAt - Date.now() <= SESSION_REFRESH_SKEW_MS
 }
 
 function isNewerSessionForSameWallet(

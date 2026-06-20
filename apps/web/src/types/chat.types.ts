@@ -1,4 +1,9 @@
-import type { ChatMessage, ChatThread } from "@/lib/chat/chat-api";
+import type {
+  ChatMemoryIntent,
+  ChatMessage,
+  ChatMessageAttachment,
+  ChatThread,
+} from "@/lib/chat/chat-api";
 import type { ProviderPresentation } from "@/lib/chat/chat-formatters";
 
 export type AiChatProvider = "chatgpt" | "claude" | "generic_chat";
@@ -24,18 +29,41 @@ export type ChatNotice = {
   text: string;
 } | null;
 
+export type ChatPageStatus =
+  | "booting"
+  | "ready"
+  | "sending"
+  | "retrieving_context"
+  | "streaming"
+  | "failed"
+  | "disconnected";
+
+export type ChatAttachmentUploadStatus = {
+  phase: "idle" | "encrypting" | "uploading" | "processing";
+  fileName: string | null;
+};
+
 export type ChatConversationPanelProps = {
   activeThread: ChatThread | null;
   providerPresentation: ProviderPresentation;
+  twinName: string;
+  status: ChatPageStatus;
   notice: ChatNotice;
   isLoading: boolean;
   isSending: boolean;
+  attachmentUploadStatus: ChatAttachmentUploadStatus;
   messages: ChatMessage[];
   draft: string;
+  memoryIntent: ChatMemoryIntent;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
-  onOpenProviderSettings: () => void;
   onCreateThread: () => void;
+  onDeleteThread: (threadId: string) => void;
   onDraftChange: (value: string) => void;
+  onMemoryIntentChange: (value: ChatMemoryIntent) => void;
   onComposerKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onSendMessage: () => void;
+  onStopStreaming: () => void;
+  onRetryLastMessage: () => void;
+  onAttachFiles: (files: FileList | null) => void;
+  onOpenAttachment: (attachment: ChatMessageAttachment) => void;
 };

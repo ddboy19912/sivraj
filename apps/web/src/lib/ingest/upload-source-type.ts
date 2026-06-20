@@ -15,7 +15,23 @@ function isMarkdownFile(file: File) {
   return name.endsWith('.md') || name.endsWith('.markdown') || file.type.includes('markdown')
 }
 
+function isPdfFile(file: File) {
+  return file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf'
+}
+
+function isImageFile(file: File) {
+  return file.type.startsWith('image/')
+}
+
 export function inferUploadSourceType(file: File): SourceType {
+  if (isPdfFile(file)) {
+    return 'pdf'
+  }
+
+  if (isImageFile(file)) {
+    return 'image'
+  }
+
   if (isMarkdownFile(file)) {
     return 'markdown'
   }

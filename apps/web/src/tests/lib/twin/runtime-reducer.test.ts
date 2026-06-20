@@ -38,7 +38,109 @@ describe("twinRuntimeReducer", () => {
     ).toMatchObject({
       status: "speaking",
       eventId: firstMeetEvent.eventId,
-      audioUrl: "blob:speech",
+      clips: ["blob:speech"],
+      clipCursor: 0,
+      streamClosed: true,
+    });
+  });
+
+  it("streams sentence chunks into an ordered playlist", () => {
+    const eventId = "voice-1:speech";
+    const chunk = {
+      type: "speech.audio_chunk" as const,
+      eventId,
+      dedupeKey: "voice:voice-1",
+      sourceEventId: "voice-1",
+    };
+
+    const speaking = twinRuntimeReducer(createInitialTwinRuntimeState(), {
+      ...chunk,
+      audioUrl: "blob:one",
+    });
+    expect(speaking).toMatchObject({
+      status: "speaking",
+      eventId,
+      clips: ["blob:one"],
+      clipCursor: 0,
+      streamClosed: false,
+    });
+
+    const appended = twinRuntimeReducer(speaking, {
+      ...chunk,
+      audioUrl: "blob:two",
+    });
+    expect(appended).toMatchObject({
+      clips: ["blob:one", "blob:two"],
+      clipCursor: 0,
+    });
+
+    const advanced = twinRuntimeReducer(appended, {
+      type: "speech.clip_advanced",
+      eventId,
+    });
+    expect(advanced).toMatchObject({ clipCursor: 1, status: "speaking" });
+
+    const closed = twinRuntimeReducer(advanced, {
+      type: "speech.stream_closed",
+      eventId,
+    });
+    expect(closed).toMatchObject({ streamClosed: true, clipCursor: 1 });
+
+    const completed = twinRuntimeReducer(closed, {
+      type: "speech.clip_advanced",
+      eventId,
+    });
+    expect(completed).toMatchObject({
+      status: "idle",
+      processedEventIds: [eventId],
+    });
+  });
+
+  it("completes a buffering stream when it closes after the last clip played", () => {
+    const eventId = "voice-2:speech";
+    const speaking = twinRuntimeReducer(createInitialTwinRuntimeState(), {
+      type: "speech.audio_chunk",
+      eventId,
+      dedupeKey: "voice:voice-2",
+      sourceEventId: "voice-2",
+      audioUrl: "blob:one",
+    });
+    const buffering = twinRuntimeReducer(speaking, {
+      type: "speech.clip_advanced",
+      eventId,
+    });
+    expect(buffering).toMatchObject({ status: "speaking", clipCursor: 1 });
+
+    const completed = twinRuntimeReducer(buffering, {
+      type: "speech.stream_closed",
+      eventId,
+    });
+    expect(completed).toMatchObject({
+      status: "idle",
+      processedEventIds: [eventId],
+    });
+  });
+
+  it("keeps thinking when stale listening completion arrives after processing starts", () => {
+    const eventId = "voice-1";
+    const listening = twinRuntimeReducer(createInitialTwinRuntimeState(), {
+      type: "agent.listening_started",
+      eventId,
+    });
+    const thinking = twinRuntimeReducer(listening, {
+      type: "agent.thinking_started",
+      eventId,
+      label: "Transcribing",
+    });
+    const completed = twinRuntimeReducer(thinking, {
+      type: "agent.listening_completed",
+      eventId,
+    });
+
+    expect(completed).toMatchObject({
+      status: "thinking",
+      eventId,
+      label: "Transcribing",
     });
   });
 

@@ -306,6 +306,7 @@ async function completeSpeechToTextArtifact(
     twinId: artifact.twinId,
     sourceArtifactId: artifact.id,
     content: transcript.text,
+    sourceRepresentedContent: transcript.text,
     privateFragmentStorage: options.privateFragmentStorage,
     sourceType: artifact.sourceType,
     importanceScore: 0.5,
@@ -404,6 +405,7 @@ async function processEncryptedParsedContent(
       attributed,
       {
         confidenceScore: 0.7,
+        sourceRepresentedContent: privatePayload.content,
         requirePrivateFragmentStorage: true,
         processingStateExtras: { decryptPath: "seal_walrus" },
         auditMetadataExtras: {
@@ -520,6 +522,7 @@ async function processPlaintextArtifact(
     attributed,
     {
       confidenceScore: 0.6,
+      sourceRepresentedContent: plaintext,
     },
   );
 }

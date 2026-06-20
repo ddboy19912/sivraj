@@ -8,39 +8,60 @@ import type { ChatConversationPanelProps } from "@/types/chat.types";
 export function ChatConversationPanel({
   activeThread,
   providerPresentation,
+  twinName,
+  status,
   notice,
   isLoading,
   isSending,
+  attachmentUploadStatus,
   messages,
   draft,
+  memoryIntent,
   messagesEndRef,
-  onOpenProviderSettings,
   onCreateThread,
+  onDeleteThread,
   onDraftChange,
+  onMemoryIntentChange,
   onComposerKeyDown,
   onSendMessage,
+  onStopStreaming,
+  onRetryLastMessage,
+  onAttachFiles,
+  onOpenAttachment,
 }: ChatConversationPanelProps) {
   return (
     <div className={cn(liquidGlass, "flex min-w-0 flex-1 flex-col overflow-hidden rounded-[32px]")}>
       <ChatConversationHeader
         activeThread={activeThread}
         providerPresentation={providerPresentation}
-        onOpenProviderSettings={onOpenProviderSettings}
+        twinName={twinName}
         onCreateThread={onCreateThread}
+        onDeleteThread={onDeleteThread}
       />
       <ChatMessagesViewport
+        status={status}
         notice={notice}
         isLoading={isLoading}
         isSending={isSending}
         messages={messages}
         messagesEndRef={messagesEndRef}
+        onOpenAttachment={onOpenAttachment}
       />
       <ChatComposer
         draft={draft}
+        memoryIntent={memoryIntent}
+        twinName={twinName}
+        status={status}
+        notice={notice}
         isSending={isSending}
+        attachmentUploadStatus={attachmentUploadStatus}
         onDraftChange={onDraftChange}
+        onMemoryIntentChange={onMemoryIntentChange}
         onComposerKeyDown={onComposerKeyDown}
         onSendMessage={onSendMessage}
+        onStopStreaming={onStopStreaming}
+        onRetryLastMessage={onRetryLastMessage}
+        onAttachFiles={onAttachFiles}
       />
     </div>
   );

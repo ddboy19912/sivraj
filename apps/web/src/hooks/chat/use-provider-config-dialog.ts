@@ -15,12 +15,13 @@ type UseProviderConfigDialogInput = {
 };
 
 export function useProviderConfigDialog(input: UseProviderConfigDialogInput) {
+  const { onProviderChanged, onSessionRefreshed, open, session } = input;
   const state = useProviderConfigState(input);
   const handlers = createProviderConfigDialogHandlers({
-    session: input.session,
+    session,
     state,
-    onSessionRefreshed: input.onSessionRefreshed,
-    onProviderChanged: input.onProviderChanged,
+    onSessionRefreshed,
+    onProviderChanged,
   });
   const hasPendingOAuthCallback = hasPendingOpenRouterOAuthCallback();
   const oauthCallbackStartedRef = useRef(false);
@@ -38,7 +39,7 @@ export function useProviderConfigDialog(input: UseProviderConfigDialogInput) {
       return;
     }
 
-    if (!input.open || !input.session || oauthCallbackStartedRef.current) {
+    if (!open || !session || oauthCallbackStartedRef.current) {
       return;
     }
 
@@ -48,8 +49,8 @@ export function useProviderConfigDialog(input: UseProviderConfigDialogInput) {
     setStatus(null);
 
     completeOpenRouterProviderDialogOAuth({
-      session: input.session,
-      onSessionRefreshed: input.onSessionRefreshed,
+      session,
+      onSessionRefreshed,
     })
       .then((response) => {
         if (cancelled || !response) {
@@ -60,7 +61,7 @@ export function useProviderConfigDialog(input: UseProviderConfigDialogInput) {
         setSavedConfigs(response.configs ?? []);
         setActiveProviderConfigId(activeConfig?.id ?? null);
         setHasSavedApiKey(Boolean(activeConfig?.hasApiKey));
-        input.onProviderChanged(response);
+        onProviderChanged(response);
         toast.success("OpenRouter connected", {
           description: "OAuth credential saved.",
         });
@@ -85,10 +86,10 @@ export function useProviderConfigDialog(input: UseProviderConfigDialogInput) {
     };
   }, [
     hasPendingOAuthCallback,
-    input.onProviderChanged,
-    input.onSessionRefreshed,
-    input.open,
-    input.session,
+    onProviderChanged,
+    onSessionRefreshed,
+    open,
+    session,
     setActiveProviderConfigId,
     setHasSavedApiKey,
     setIsBusy,

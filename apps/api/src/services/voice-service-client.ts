@@ -47,9 +47,55 @@ export type VoiceSynthesizer = {
   cloneVoice?(input: VoiceCloneInput): Promise<{ providerVoiceId: string }>;
 };
 
+export type RealtimeSpeechToTextSession = {
+  provider: "cartesia";
+  accessToken: string;
+  expiresIn: number;
+  websocketUrl: string;
+  model: string;
+  encoding: "pcm_s16le";
+  sampleRate: number;
+  apiVersion: string;
+};
+
+export type RealtimeSpeechToTextTokenIssuer = {
+  provider: "cartesia";
+  createSession(): Promise<RealtimeSpeechToTextSession>;
+};
+
+export type RealtimeTextToSpeechSession = {
+  provider: "cartesia";
+  accessToken: string;
+  expiresIn: number;
+  websocketUrl: string;
+  model: string;
+  voiceId: string;
+  language: string;
+  encoding: "pcm_s16le";
+  sampleRate: number;
+  apiVersion: string;
+};
+
+export type RealtimeTextToSpeechTokenInput = {
+  voiceId: string;
+  language?: string;
+};
+
+export type RealtimeTextToSpeechTokenIssuer = {
+  provider: "cartesia";
+  createSession(input: RealtimeTextToSpeechTokenInput): Promise<RealtimeTextToSpeechSession>;
+};
+
 export const DEFAULT_VOICE_PRESET_ID = "warm_operator";
 
 const DEFAULT_CARTESIA_VOICE_ID = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4";
+const DEFAULT_CARTESIA_API_VERSION = "2026-03-01";
+const DEFAULT_CARTESIA_STT_MODEL = "ink-2";
+const DEFAULT_CARTESIA_STT_SAMPLE_RATE = 48_000;
+const DEFAULT_CARTESIA_STT_TOKEN_EXPIRES_IN_SECONDS = 60;
+const DEFAULT_CARTESIA_TTS_MODEL = "sonic-3.5";
+const DEFAULT_CARTESIA_TTS_SAMPLE_RATE = 44_100;
+const DEFAULT_CARTESIA_TTS_TOKEN_EXPIRES_IN_SECONDS = 60;
 
 const CARTESIA_PRESET_VOICE_IDS: Record<string, string> = {
   warm_operator: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4",
@@ -141,6 +187,180 @@ export function createConfiguredVoiceSynthesizer(
   return kind === "gradio"
     ? createGradioVoiceSynthesizer(config)
     : createHttpVoiceSynthesizer(config);
+}
+
+export function createConfiguredRealtimeSpeechToTextTokenIssuer(
+  env: Record<string, string | undefined>,
+): RealtimeSpeechToTextTokenIssuer | undefined {
+  return createCartesiaRealtimeSpeechToTextTokenIssuer({
+    apiKey: env["CARTESIA_API_KEY"],
+    apiVersion: env["CARTESIA_VERSION"] ?? DEFAULT_CARTESIA_API_VERSION,
+    baseUrl: env["CARTESIA_BASE_URL"],
+    model: env["CARTESIA_REALTIME_STT_MODEL"] ?? DEFAULT_CARTESIA_STT_MODEL,
+    sampleRate: readPositiveInteger(
+      env["CARTESIA_STT_SAMPLE_RATE"],
+      DEFAULT_CARTESIA_STT_SAMPLE_RATE,
+    ),
+    tokenExpiresIn: readPositiveInteger(
+      env["CARTESIA_STT_TOKEN_EXPIRES_IN_SECONDS"],
+      DEFAULT_CARTESIA_STT_TOKEN_EXPIRES_IN_SECONDS,
+    ),
+    timeoutMs: readPositiveInteger(env["VOICE_SERVICE_TIMEOUT_MS"], 45_000),
+  });
+}
+
+export function createConfiguredRealtimeTextToSpeechTokenIssuer(
+  env: Record<string, string | undefined>,
+): RealtimeTextToSpeechTokenIssuer | undefined {
+  return createCartesiaRealtimeTextToSpeechTokenIssuer({
+    apiKey: env["CARTESIA_API_KEY"],
+    apiVersion: env["CARTESIA_VERSION"] ?? DEFAULT_CARTESIA_API_VERSION,
+    baseUrl: env["CARTESIA_BASE_URL"],
+    model: env["CARTESIA_MODEL_ID"] ?? DEFAULT_CARTESIA_TTS_MODEL,
+    sampleRate: readPositiveInteger(
+      env["CARTESIA_TTS_SAMPLE_RATE"],
+      DEFAULT_CARTESIA_TTS_SAMPLE_RATE,
+    ),
+    tokenExpiresIn: readPositiveInteger(
+      env["CARTESIA_TTS_TOKEN_EXPIRES_IN_SECONDS"],
+      DEFAULT_CARTESIA_TTS_TOKEN_EXPIRES_IN_SECONDS,
+    ),
+    timeoutMs: readPositiveInteger(env["VOICE_SERVICE_TIMEOUT_MS"], 45_000),
+  });
+}
+
+export function createCartesiaRealtimeSpeechToTextTokenIssuer(config: {
+  apiKey?: string;
+  apiVersion?: string;
+  baseUrl?: string;
+  model?: string;
+  sampleRate?: number;
+  tokenExpiresIn?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): RealtimeSpeechToTextTokenIssuer | undefined {
+  if (!config.apiKey) {
+    return undefined;
+  }
+
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const apiVersion = config.apiVersion ?? DEFAULT_CARTESIA_API_VERSION;
+  const baseUrl = normalizeCartesiaBaseUrl(config.baseUrl);
+  const tokenExpiresIn = Math.min(
+    Math.max(config.tokenExpiresIn ?? DEFAULT_CARTESIA_STT_TOKEN_EXPIRES_IN_SECONDS, 1),
+    3_600,
+  );
+
+  return {
+    provider: "cartesia",
+    async createSession() {
+      const response = await fetchWithTimeout(fetchImpl, `${baseUrl}/access-token`, {
+        method: "POST",
+        timeoutMs: config.timeoutMs ?? 45_000,
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "cartesia-version": apiVersion,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          grants: {
+            stt: true,
+          },
+          expires_in: tokenExpiresIn,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `cartesia_access_token_failed:${response.status}:${truncateText(await response.text())}`,
+        );
+      }
+
+      const payload = await response.json() as { token?: unknown };
+      if (typeof payload.token !== "string" || !payload.token) {
+        throw new Error(`cartesia_access_token_missing:${truncateText(JSON.stringify(payload))}`);
+      }
+
+      return {
+        provider: "cartesia",
+        accessToken: payload.token,
+        expiresIn: tokenExpiresIn,
+        websocketUrl: baseUrl.replace(/^http/i, "ws"),
+        model: config.model ?? DEFAULT_CARTESIA_STT_MODEL,
+        encoding: "pcm_s16le",
+        sampleRate: config.sampleRate ?? DEFAULT_CARTESIA_STT_SAMPLE_RATE,
+        apiVersion,
+      };
+    },
+  };
+}
+
+export function createCartesiaRealtimeTextToSpeechTokenIssuer(config: {
+  apiKey?: string;
+  apiVersion?: string;
+  baseUrl?: string;
+  model?: string;
+  sampleRate?: number;
+  tokenExpiresIn?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): RealtimeTextToSpeechTokenIssuer | undefined {
+  if (!config.apiKey) {
+    return undefined;
+  }
+
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const apiVersion = config.apiVersion ?? DEFAULT_CARTESIA_API_VERSION;
+  const baseUrl = normalizeCartesiaBaseUrl(config.baseUrl);
+  const tokenExpiresIn = Math.min(
+    Math.max(config.tokenExpiresIn ?? DEFAULT_CARTESIA_TTS_TOKEN_EXPIRES_IN_SECONDS, 1),
+    3_600,
+  );
+
+  return {
+    provider: "cartesia",
+    async createSession(input) {
+      const response = await fetchWithTimeout(fetchImpl, `${baseUrl}/access-token`, {
+        method: "POST",
+        timeoutMs: config.timeoutMs ?? 45_000,
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          "cartesia-version": apiVersion,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          grants: {
+            tts: true,
+          },
+          expires_in: tokenExpiresIn,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `cartesia_access_token_failed:${response.status}:${truncateText(await response.text())}`,
+        );
+      }
+
+      const payload = await response.json() as { token?: unknown };
+      if (typeof payload.token !== "string" || !payload.token) {
+        throw new Error(`cartesia_access_token_missing:${truncateText(JSON.stringify(payload))}`);
+      }
+
+      return {
+        provider: "cartesia",
+        accessToken: payload.token,
+        expiresIn: tokenExpiresIn,
+        websocketUrl: baseUrl.replace(/^http/i, "ws"),
+        model: config.model ?? DEFAULT_CARTESIA_TTS_MODEL,
+        voiceId: input.voiceId,
+        language: input.language ?? "en",
+        encoding: "pcm_s16le",
+        sampleRate: config.sampleRate ?? DEFAULT_CARTESIA_TTS_SAMPLE_RATE,
+        apiVersion,
+      };
+    },
+  };
 }
 
 function createCartesiaVoiceSynthesizer(config: {
@@ -332,6 +552,13 @@ export function isVoicePresetId(value: string): boolean {
   return VOICE_PRESETS.some((preset) => preset.id === value);
 }
 
+export function resolveCartesiaProviderVoiceId(
+  voiceId: string,
+  providerVoiceId?: string | null,
+): string | null {
+  return providerVoiceId ?? CARTESIA_PRESET_VOICE_IDS[voiceId] ?? null;
+}
+
 function readPositiveInteger(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -366,3 +593,6 @@ function stripDataUrlPrefix(value: string): string {
   return index >= 0 ? value.slice(index + marker.length) : value;
 }
 
+function normalizeCartesiaBaseUrl(value: string | undefined): string {
+  return (value || "https://api.cartesia.ai").replace(/\/+$/, "");
+}
