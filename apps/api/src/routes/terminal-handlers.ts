@@ -1,7 +1,4 @@
-import {
-  auditEvents,
-  connectorAccounts,
-} from "@sivraj/db";
+import { auditEvents, connectorAccounts } from "@sivraj/db";
 import { desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AuthClaims } from "@sivraj/auth";
@@ -19,7 +16,6 @@ import {
 import type {
   TerminalCommandId,
   TerminalCommandResponse,
-  TerminalOutputLine,
 } from "./terminal-types.js";
 
 type ParsedTerminalCommand =
@@ -66,9 +62,9 @@ export async function handleTerminalCommandPost(
   return c.json(response, response.status === "success" ? 200 : 400);
 }
 
-export function parseTerminalCommandBody(body: Record<string, unknown>):
-  | { ok: true; command: ParsedTerminalCommand }
-  | { ok: false; error: string } {
+export function parseTerminalCommandBody(
+  body: Record<string, unknown>,
+): { ok: true; command: ParsedTerminalCommand } | { ok: false; error: string } {
   const commandId = optionalString(body["commandId"]);
   const args = readStringArray(body["args"]);
   const flags = readRecord(body["flags"]);
@@ -112,7 +108,10 @@ export function parseTerminalCommandBody(body: Record<string, unknown>):
     };
   }
 
-  return { ok: false, error: `Unsupported terminal command: ${commandId ?? "missing"}.` };
+  return {
+    ok: false,
+    error: `Unsupported terminal command: ${commandId ?? "missing"}.`,
+  };
 }
 
 async function executeTerminalCommand(
@@ -270,7 +269,9 @@ async function syncConnector(
         text: `Connector sync queued: ${syncRunId ?? "sync run created"}`,
       },
       ...(jobId ? [{ kind: "info" as const, text: `Job: ${jobId}` }] : []),
-      ...(warning ? [{ kind: "warning" as const, text: `Warning: ${warning}` }] : []),
+      ...(warning
+        ? [{ kind: "warning" as const, text: `Warning: ${warning}` }]
+        : []),
     ],
   };
 }
@@ -340,19 +341,24 @@ async function recordTerminalCommandAudit(
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    ? value.filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
     : [];
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 
 function readLimit(value: unknown, fallback: number, max: number): number {
   const parsed = Number.parseInt(String(value ?? fallback), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, max)
+    : fallback;
 }
 
 function readResponseError(value: unknown): string | null {
@@ -382,7 +388,10 @@ function readNestedString(
     return null;
   }
 
-  return readStringProperty((value as Record<string, unknown>)[firstKey], secondKey);
+  return readStringProperty(
+    (value as Record<string, unknown>)[firstKey],
+    secondKey,
+  );
 }
 
 function formatDate(value: unknown): string {

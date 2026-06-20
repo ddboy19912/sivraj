@@ -1,32 +1,35 @@
-import type { ProviderKind, ProviderConfigResponse } from "@/lib/chat/chat-api";
+import type {
+  ProviderConfigResponse,
+  RuntimeCapabilityConfig,
+  SafeProviderConfig,
+} from "@/lib/chat/chat-api";
 
 export type ProviderConfigSetters = {
-  setProviderKind: (value: ProviderKind) => void;
-  setDisplayName: (value: string) => void;
-  setBaseUrl: (value: string) => void;
-  setModel: (value: string) => void;
   setHasSavedApiKey: (value: boolean) => void;
-  setApiKey: (value: string) => void;
   setFallbackLabel: (value: string | null) => void;
+  setRuntimeDefaults: (value: Record<string, RuntimeCapabilityConfig> | null) => void;
+  setSavedConfigs: (value: SafeProviderConfig[]) => void;
+  setActiveProviderConfigId: (value: string | null) => void;
 };
 
 export function applyLoadedProviderConfig(
   response: ProviderConfigResponse,
   setters: ProviderConfigSetters,
 ) {
-  if (response.config) {
-    const kind = response.config.providerKind;
-    setters.setProviderKind(kind);
-    setters.setDisplayName(response.config.displayName);
-    setters.setBaseUrl(response.config.baseUrl);
-    setters.setModel(response.config.model);
-    setters.setHasSavedApiKey(response.config.hasApiKey);
-    setters.setApiKey("");
+  const activeConfig = response.activeConfig ?? response.config;
+
+  if (activeConfig) {
+    setters.setHasSavedApiKey(activeConfig.hasApiKey);
+  } else {
+    setters.setHasSavedApiKey(false);
   }
 
+  setters.setSavedConfigs(response.configs ?? []);
+  setters.setActiveProviderConfigId(activeConfig?.id ?? null);
   setters.setFallbackLabel(
     response.fallback
-      ? `${response.fallback.displayName} ${response.fallback.model}`
+      ? response.fallback.model
       : null,
   );
+  setters.setRuntimeDefaults(response.runtimeDefaults ?? null);
 }

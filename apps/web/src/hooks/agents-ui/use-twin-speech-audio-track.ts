@@ -62,6 +62,14 @@ export function useTwinSpeechAudioTrack(
       source.connect(destination);
       source.connect(audioContext.destination);
 
+      // createMediaElementSource reroutes the element's output through this
+      // graph, so a suspended context silently drops the speech. Resume it
+      // (allowed under the sticky activation from push-to-talk) so playback is
+      // actually audible.
+      if (audioContext.state === "suspended") {
+        void audioContext.resume().catch(() => undefined);
+      }
+
       const mediaTrack = destination.stream.getAudioTracks()[0];
       if (!mediaTrack) {
         void audioContext.close();

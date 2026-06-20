@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   createArtifactProcessingQueue,
   createArtifactProcessingWorker,
@@ -13,6 +16,7 @@ import {
 } from "@sivraj/queue";
 import { enqueueDueConnectorSyncs, processConnectorSyncRun } from "./connectors.js";
 import {
+  enqueueDueCandidateMemoryArchives,
   processCandidateMemoryArchive,
   processArtifactIntelligence,
   processQueuedArtifacts,
@@ -24,8 +28,15 @@ import type { createDrizzleArtifactRepository } from "./repository.js";
 import type { createConfiguredPrivateMemoryReader } from "@sivraj/private-memory-reader";
 import type { createConfiguredPrivateFragmentStorage } from "./private-fragment-storage.js";
 import type { createConfiguredPrivateSourceStorage } from "./private-source-storage.js";
-import type { createConfiguredSpeechToTextTranscriber, createConfiguredStructuredGenerator } from "@sivraj/llm";
+import type {
+  createConfiguredSpeechToTextTranscriber,
+  createConfiguredStructuredGenerator,
+  createConfiguredTextEmbedder,
+} from "@sivraj/llm";
 import { readPositiveInt } from "./lib/env-utils.js";
+
+const execFileAsync = promisify(execFile);
+const memoryRenewalScriptPath = fileURLToPath(new URL("../scripts/renew-memory.mjs", import.meta.url));
 
 type WorkerDb = ReturnType<typeof createWorkerDb>;
 type ArtifactRepository = ReturnType<typeof createDrizzleArtifactRepository>;
@@ -33,6 +44,7 @@ type PrivateMemoryReader = ReturnType<typeof createConfiguredPrivateMemoryReader
 type PrivateFragmentStorage = ReturnType<typeof createConfiguredPrivateFragmentStorage>;
 type PrivateSourceStorage = ReturnType<typeof createConfiguredPrivateSourceStorage>;
 type SpeechToTextTranscriber = ReturnType<typeof createConfiguredSpeechToTextTranscriber>;
+type TextEmbedder = ReturnType<typeof createConfiguredTextEmbedder>;
 type StructuredGenerator = ReturnType<typeof createConfiguredStructuredGenerator>;
 
 export type WorkerRuntime = {
@@ -43,6 +55,8 @@ export type WorkerRuntime = {
   connectorSyncWorker: ReturnType<typeof createConnectorSyncWorker>;
   reconciler: ReturnType<typeof setInterval>;
   connectorReconciler: ReturnType<typeof setInterval>;
+  candidateMemoryArchiveReconciler: ReturnType<typeof setInterval>;
+  memoryRenewalReconciler: ReturnType<typeof setInterval>;
   close: () => Promise<void>;
 };
 
@@ -55,6 +69,7 @@ export type WorkerBootstrapInput = {
   privateFragmentStorage: PrivateFragmentStorage;
   privateSourceStorage: PrivateSourceStorage;
   speechToTextTranscriber: SpeechToTextTranscriber | null;
+  textEmbedder: TextEmbedder | null;
   structuredGenerator: StructuredGenerator | null;
   entityExtractor: ReturnType<typeof import("./ingestion-processor.js").createEntityExtractor> | undefined;
   memoryExtractor: ReturnType<typeof import("./ingestion-processor.js").createMemoryExtractor> | undefined;
@@ -68,6 +83,10 @@ export type WorkerBootstrapInput = {
   artifactReconcileLimit: number;
   connectorReconcileIntervalMs: number;
   connectorReconcileLimit: number;
+  candidateMemoryArchiveReconcileIntervalMs: number;
+  candidateMemoryArchiveReconcileLimit: number;
+  memoryRenewalIntervalMs: number;
+  memoryRenewalLimit: number;
 };
 
 function runReconcilerTask<T>(params: {
@@ -126,6 +145,8 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
       privateMemoryReader: input.privateMemoryReader,
       privateFragmentStorage: input.privateFragmentStorage,
       speechToTextTranscriber: input.speechToTextTranscriber,
+      textEmbedder: input.textEmbedder,
+      structuredGenerator: input.structuredGenerator,
       intelligenceQueue,
       transientCiphertextCache,
       artifactRetryQueue,
@@ -189,6 +210,7 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
     async (data, job) => {
       const startedAt = Date.now();
       const result = await processCandidateMemoryArchive(input.repository, {
+        archiveId: data.archiveId,
         artifactId: data.artifactId,
         twinId: data.twinId,
         memoryFragmentId: data.memoryFragmentId,
@@ -199,6 +221,27 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
         metadata: data.metadata,
         privateFragmentStorage: input.privateFragmentStorage,
       });
+
+      if (result["status"] === "failed") {
+        await artifactStatusPublisher.publishArtifactStatus({
+          artifactId: data.artifactId,
+          twinId: data.twinId,
+          sourceType: data.sourceType,
+          status: "completed",
+          intelligenceStatus: "completed",
+          reason: typeof result["reason"] === "string" ? result["reason"] : undefined,
+          processing: {
+            candidateMemoryArchive: {
+              status: "failed",
+              reason: typeof result["reason"] === "string" ? result["reason"] : undefined,
+              retryable: result["retryable"] === true,
+              candidateMemoryCount: result["candidateMemoryCount"],
+              archiveMs: result["archiveMs"],
+            },
+          },
+          occurredAt: new Date().toISOString(),
+        });
+      }
 
       console.log(`${input.serviceName} candidate memory archive job processed`, {
         jobId: job.id,
@@ -252,6 +295,8 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
         privateMemoryReader: input.privateMemoryReader,
         privateFragmentStorage: input.privateFragmentStorage,
         speechToTextTranscriber: input.speechToTextTranscriber ?? undefined,
+        textEmbedder: input.textEmbedder ?? undefined,
+        structuredGenerator: input.structuredGenerator ?? undefined,
         intelligenceQueue,
       }),
       onSuccess: (result) => {
@@ -279,6 +324,39 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
     });
   }, input.connectorReconcileIntervalMs);
 
+  const candidateMemoryArchiveReconciler = setInterval(() => {
+    runReconcilerTask({
+      serviceName: input.serviceName,
+      failureLabel: "candidate memory archive reconciler",
+      task: () => enqueueDueCandidateMemoryArchives(input.repository, {
+        limit: input.candidateMemoryArchiveReconcileLimit,
+        candidateMemoryArchiveQueue,
+      }),
+      onSuccess: (result) => {
+        if (result.scanned > 0 || result.failed > 0) {
+          console.log(`${input.serviceName} candidate memory archive reconciler processed`, result);
+        }
+      },
+    });
+  }, input.candidateMemoryArchiveReconcileIntervalMs);
+
+  const memoryRenewalReconciler = setInterval(() => {
+    runReconcilerTask({
+      serviceName: input.serviceName,
+      failureLabel: "memory renewal reconciler",
+      task: () => runMemoryRenewalReconciler({
+        limit: input.memoryRenewalLimit,
+      }),
+      onSuccess: (result) => {
+        if (result.trim().length > 0) {
+          console.log(`${input.serviceName} memory renewal reconciler completed`, {
+            output: result.trim().slice(0, 2000),
+          });
+        }
+      },
+    });
+  }, input.memoryRenewalIntervalMs);
+
   return {
     worker,
     intelligenceWorker,
@@ -287,9 +365,13 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
     connectorSyncWorker,
     reconciler,
     connectorReconciler,
+    candidateMemoryArchiveReconciler,
+    memoryRenewalReconciler,
     close: async () => {
       clearInterval(reconciler);
       clearInterval(connectorReconciler);
+      clearInterval(candidateMemoryArchiveReconciler);
+      clearInterval(memoryRenewalReconciler);
       await candidateMemoryArchiveWorker.close();
       await connectorSyncWorker.close();
       await weeklyReflectionWorker.close();
@@ -304,6 +386,26 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
       await input.closeDb();
     },
   };
+}
+
+async function runMemoryRenewalReconciler(input: {
+  limit: number;
+}) {
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    [
+      memoryRenewalScriptPath,
+      "--yes",
+      "--limit",
+      String(input.limit),
+    ],
+    {
+      env: process.env,
+      maxBuffer: 1024 * 1024 * 4,
+    },
+  );
+
+  return [stdout, stderr].filter(Boolean).join("\n");
 }
 
 function attachWorkerLogging(

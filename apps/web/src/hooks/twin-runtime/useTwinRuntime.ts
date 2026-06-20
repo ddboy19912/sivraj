@@ -128,24 +128,32 @@ export function useTwinRuntime({
       return;
     }
 
-    await postAuthedJson(
-      `/v1/twins/${session.twinId}/identity-profile/first-meet-intro/consumed`,
-      {},
-      session,
-      setSession,
-    );
+    const currentState = runtimeStateRef.current;
+    const shouldConsumeFirstMeetIntro =
+      currentState.status === "speaking" &&
+      currentState.eventId === eventId &&
+      currentState.sourceEventId === eventId;
+
+    if (shouldConsumeFirstMeetIntro) {
+      await postAuthedJson(
+        `/v1/twins/${session.twinId}/identity-profile/first-meet-intro/consumed`,
+        {},
+        session,
+        setSession,
+      );
+    }
 
     getRequestedSpeechEventIds().delete(eventId);
     dispatchRuntimeAction({ type: "speech.completed", eventId });
-
-    const currentState = runtimeStateRef.current;
 
     if (currentState.status !== "speaking" || currentState.eventId !== eventId) {
       return;
     }
 
-    URL.revokeObjectURL(currentState.audioUrl);
-    audioUrls.delete(currentState.audioUrl);
+    for (const clipUrl of currentState.clips) {
+      URL.revokeObjectURL(clipUrl);
+      audioUrls.delete(clipUrl);
+    }
   }
 
   return {

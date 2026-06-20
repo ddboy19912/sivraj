@@ -10,6 +10,7 @@ import {
   parseOcrScannedPdf,
   parsePlainText,
   parseSlackExport,
+  parseTextPdf,
   parseWhatsAppExport,
 } from "@sivraj/ingestion";
 import type { ParsedProcessableContent, PrivateSourcePayload, QueuedArtifact } from "../types/ingestion.types.js";
@@ -70,6 +71,7 @@ const SOURCE_PARSERS: Record<string, SourceParser> = {
     const parsed = await parseEmail({ content: payload.content, title: payload.title });
     return { content: parsed.content, parser: parsed.parser, conversation: parsed.conversation };
   },
+  pdf: parsePdfPayload,
   ocr_pdf: async (payload) => {
     const parsed = await parseOcrScannedPdf({ content: payload.content, title: payload.title });
     return { content: parsed.content, parser: parsed.parser, conversation: parsed.conversation };
@@ -103,6 +105,35 @@ const SOURCE_PARSERS: Record<string, SourceParser> = {
     return { content: parsed.content, parser: parsed.parser, conversation: parsed.conversation };
   },
 };
+
+async function parsePdfPayload(payload: PrivateSourcePayload): Promise<ParserResult> {
+  const parsedText = await parseTextPdf({ content: payload.content, title: payload.title });
+
+  if (parsedText.content.trim()) {
+    return {
+      content: parsedText.content,
+      parser: parsedText.parser,
+      conversation: parsedText.conversation,
+    };
+  }
+
+  const parsedOcr = await parseOcrScannedPdf({ content: payload.content, title: payload.title });
+
+  return {
+    content: parsedOcr.content,
+    parser: parsedOcr.parser
+      ? {
+          ...parsedOcr.parser,
+          warnings: [
+            ...(parsedText.parser?.warnings ?? []),
+            "pdf_text_empty_ocr_fallback",
+            ...parsedOcr.parser.warnings,
+          ],
+        }
+      : parsedOcr.parser,
+    conversation: parsedOcr.conversation,
+  };
+}
 
 export async function parseProcessableContent(
   artifact: QueuedArtifact,

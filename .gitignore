@@ -24,6 +24,7 @@ yarn-debug.log*
 .DS_Store
 .idea/
 .vscode/
+.cursor/skills/impeccable/
 
 # Temporary files
 tmp/

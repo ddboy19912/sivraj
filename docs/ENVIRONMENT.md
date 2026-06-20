@@ -59,6 +59,8 @@ Root `.env.example` is source of truth.
 - `WORKER_CONCURRENCY`
 - `ARTIFACT_RECONCILE_INTERVAL_MS`
 - `ARTIFACT_RECONCILE_LIMIT`
+- `CANDIDATE_MEMORY_ARCHIVE_RECONCILE_INTERVAL_MS`
+- `CANDIDATE_MEMORY_ARCHIVE_RECONCILE_LIMIT`
 - `CONNECTOR_RECONCILE_INTERVAL_MS`
 - `CONNECTOR_RECONCILE_LIMIT`
 - `CONNECTOR_SYNC_CONCURRENCY`
@@ -69,8 +71,6 @@ Root `.env.example` is source of truth.
 - `LLM_API_KEY`
 - `LLM_MODEL`
 - `LLM_REQUEST_TIMEOUT_MS`
-- `SPEECH_TO_TEXT_PROVIDER`
-- `SPEECH_TO_TEXT_API_KEY`
 - `SPEECH_TO_TEXT_MODEL`
 - `EMBEDDING_MODEL`
 - `WALRUS_NETWORK`
@@ -143,6 +143,8 @@ Root `.env.example` is source of truth.
 - `INTELLIGENCE_CHUNK_CHARS`: Target character size for chunking large memory fragments before entity and memory extraction. Defaults to `18000`.
 - `INTELLIGENCE_CHUNK_CONCURRENCY`: Max concurrent chunk extraction tasks inside one intelligence job. Defaults to `2`.
 - `CANDIDATE_MEMORY_ARCHIVE_CONCURRENCY`: Max concurrent low-priority candidate-memory archive jobs. Defaults to `1`.
+- `CANDIDATE_MEMORY_ARCHIVE_RECONCILE_INTERVAL_MS`: How often the worker requeues candidate-memory archives that were committed to Postgres but not yet archived to Walrus. Defaults to `60000`.
+- `CANDIDATE_MEMORY_ARCHIVE_RECONCILE_LIMIT`: Max candidate-memory archive batches scanned per reconciliation pass. Defaults to `25`.
 - `CONNECTOR_RECONCILE_INTERVAL_MS`: How often the worker scans connected non-manual connector accounts that are due for sync. Defaults to `60000`.
 - `CONNECTOR_RECONCILE_LIMIT`: Max connector accounts scanned per reconciliation pass. Defaults to `25`.
 - `CONNECTOR_SYNC_CONCURRENCY`: Max concurrent connector sync jobs. Defaults to `1`.
@@ -158,21 +160,27 @@ Root `.env.example` is source of truth.
 
 ### LLM
 
-- `LLM_PROVIDER`: Model provider key.
+- `LLM_PROVIDER`: Model provider key. Default sponsored provider: `openrouter`.
 - `LLM_API_KEY`: Provider API key.
-- `LLM_MODEL`: Main synthesis model.
+- `OPENAI_BASE_URL`: OpenAI-compatible base URL. Use `https://openrouter.ai/api` for OpenRouter.
+- `LLM_MODEL`: Main synthesis model. Default sponsored model: `google/gemini-2.5-flash-lite`.
 - `LLM_REQUEST_TIMEOUT_MS`: Per structured-generation request timeout in milliseconds. Defaults to `45000`; prevents worker jobs from sitting in `processing` indefinitely when an OpenAI-compatible provider hangs.
-- `EMBEDDING_MODEL`: Embedding model.
+- `CHAT_CONTEXT_RESOLVE_TIMEOUT_MS`: Chat turn-planner timeout in milliseconds. Defaults to `30000`; planner errors still fail fast, but slow successful planner calls can continue before deterministic fallback is used.
+- `LLM_CREDENTIAL_ENCRYPTION_KEY`: Required for user-managed LLM providers and OpenRouter OAuth. Use a stable 32-byte base64 or 64-character hex value; changing it makes previously saved provider keys unreadable.
+- `EMBEDDING_PROVIDER`: Embedding provider. Default sponsored provider: `openrouter`.
+- `EMBEDDING_API_KEY`: Optional dedicated embedding API key. Falls back to `LLM_API_KEY` when unset.
+- `EMBEDDING_BASE_URL`: Embedding API base URL. Use `https://openrouter.ai/api` for OpenRouter.
+- `EMBEDDING_MODEL`: Embedding model. Default sponsored model: `openai/text-embedding-3-small`.
+- `EMBEDDING_REQUEST_TIMEOUT_MS`: Per embedding request timeout in milliseconds. Defaults to `30000`.
 
 ### Speech To Text
 
-- `SPEECH_TO_TEXT_PROVIDER`: Voice note transcription provider. Use `openai` or `none`.
-- `SPEECH_TO_TEXT_API_KEY`: Optional dedicated transcription API key. Falls back to `LLM_API_KEY` when unset.
-- `SPEECH_TO_TEXT_MODEL`: Audio transcription model. Defaults to `gpt-4o-mini-transcribe`.
+- `SPEECH_TO_TEXT_BASE_URL`: Optional Cartesia STT API base URL. Defaults to `https://api.cartesia.ai`.
+- `SPEECH_TO_TEXT_MODEL`: Cartesia batch transcription model. Defaults to `ink-whisper`.
 
 ### Voice Synthesis
 
-- `VOICE_SERVICE_KIND`: Voice service transport. Use `cartesia` for fast hosted Sonic TTS, `http` for the local Chatterbox FastAPI service, and `gradio` for a Hugging Face Chatterbox Space. Defaults to `http` when unset.
+- `VOICE_SERVICE_KIND`: Voice service transport. Use `cartesia` for fast hosted Sonic TTS, `http` for the local Chatterbox FastAPI service, and `gradio` for a Hugging Face Chatterbox Space. Production default is `cartesia`.
 - `VOICE_SERVICE_URL`: Internal URL for the standalone Chatterbox voice service. For Hugging Face Spaces, use the public Space runtime URL like `https://owner-space-name.hf.space`.
 - `VOICE_SERVICE_API_KEY`: Optional shared token with the voice service. For local FastAPI this is sent as a bearer token. For the Gradio Space this is sent as a hidden function input. For Cartesia, prefer `CARTESIA_API_KEY`; `VOICE_SERVICE_API_KEY` is accepted as a fallback.
 - `VOICE_SERVICE_TIMEOUT_MS`: Voice synthesis timeout in milliseconds. Defaults to `45000`.

@@ -10,8 +10,8 @@ import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 type ChatPageProps = {
   session: Session | null;
   isSessionForWallet: boolean;
+  twinName: string;
   onSessionRefreshed: (session: Session) => void;
-  onOpenProviderSettings: () => void;
   providerState: ProviderConfigResponse | null;
   onProviderStateChange: (state: ProviderConfigResponse | null) => void;
 };
@@ -30,21 +30,31 @@ export function ChatPage(props: ChatPageProps) {
         activeThreadId={chat.activeThreadId}
         onSelectThread={(threadId) => void chat.switchThread(threadId)}
         onCreateThread={() => void chat.startNewThread()}
+        onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
       />
       <ChatConversationPanel
         activeThread={chat.activeThread}
         providerPresentation={chat.providerPresentation}
+        twinName={props.twinName}
+        status={chat.status}
         notice={chat.notice}
         isLoading={chat.isLoading}
         isSending={chat.isSending}
+        attachmentUploadStatus={chat.attachmentUploadStatus}
         messages={chat.messages}
         draft={chat.draft}
+        memoryIntent={chat.memoryIntent}
         messagesEndRef={chat.messagesEndRef}
-        onOpenProviderSettings={props.onOpenProviderSettings}
         onCreateThread={() => void chat.startNewThread()}
+        onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
         onDraftChange={chat.setDraft}
+        onMemoryIntentChange={chat.setMemoryIntent}
         onComposerKeyDown={chat.handleComposerKeyDown}
         onSendMessage={() => void chat.sendMessage()}
+        onStopStreaming={chat.stopStreaming}
+        onRetryLastMessage={() => void chat.retryLastMessage()}
+        onAttachFiles={(files) => void chat.attachFiles(files)}
+        onOpenAttachment={(attachment) => void chat.openAttachment(attachment)}
       />
     </section>
   );

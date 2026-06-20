@@ -37,7 +37,12 @@ describe("artifact upload input helpers", () => {
     expect(readArtifactUploadFields({
       sourceType: "note",
       content: "hello",
-    })).toMatchObject({ content: "hello", sourceType: "note" });
+      contentSha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    })).toMatchObject({
+      content: "hello",
+      contentSha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      sourceType: "note",
+    });
 
     expect(detectExplicitAiChatProvider({ aiChatProvider: "claude" })).toBe("claude");
   });

@@ -6,6 +6,7 @@ import {
 } from "@sivraj/intelligence";
 import type { StructuredGenerator } from "@sivraj/llm";
 import type { PrivateMemoryReader } from "@sivraj/private-memory-reader";
+import { WalrusStorageError } from "@sivraj/storage-walrus";
 import {
   aggregateExtractionResults,
   createIntelligenceChunks,
@@ -40,7 +41,10 @@ import type {
 } from "./types/ingestion.types.js";
 import { errorMessage } from "./ingestion/errors.js";
 import { approximateBase64Bytes } from "./ingestion/readers.js";
-import { withIntelligenceState } from "./ingestion/processing-metadata.js";
+import {
+  withCandidateMemoryArchiveState,
+  withIntelligenceState,
+} from "./ingestion/processing-metadata.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -69,9 +73,12 @@ function artifactProcessingRuntimeOptions(
     privateMemoryReader: options.privateMemoryReader,
     privateFragmentStorage: options.privateFragmentStorage,
     speechToTextTranscriber: options.speechToTextTranscriber,
+    textEmbedder: options.textEmbedder,
+    structuredGenerator: options.structuredGenerator,
     intelligenceQueue: options.intelligenceQueue,
     transientCiphertextBase64: options.transientCiphertextBase64,
     transientCiphertextSha256: options.transientCiphertextSha256,
+    publishArtifactStatus: options.publishArtifactStatus,
   };
 }
 
@@ -113,6 +120,8 @@ export async function processQueuedArtifacts(
     privateMemoryReader?: PrivateMemoryReader;
     privateFragmentStorage?: PrivateFragmentStorage;
     speechToTextTranscriber?: ArtifactProcessingRuntimeOptions["speechToTextTranscriber"];
+    textEmbedder?: ArtifactProcessingRuntimeOptions["textEmbedder"];
+    structuredGenerator?: ArtifactProcessingRuntimeOptions["structuredGenerator"];
     intelligenceQueue?: IntelligenceProcessingQueue;
   } = {},
 ): Promise<ProcessQueuedArtifactsResult> {
@@ -132,6 +141,8 @@ export async function processQueuedArtifacts(
       privateMemoryReader: options.privateMemoryReader,
       privateFragmentStorage: options.privateFragmentStorage,
       speechToTextTranscriber: options.speechToTextTranscriber,
+      textEmbedder: options.textEmbedder,
+      structuredGenerator: options.structuredGenerator,
       intelligenceQueue: options.intelligenceQueue,
     }).catch((error: unknown) => {
       if (error instanceof RetryableArtifactProcessingError) {
@@ -146,6 +157,60 @@ export async function processQueuedArtifacts(
     }
 
     result[outcome] += 1;
+  }
+
+  return result;
+}
+
+export async function enqueueDueCandidateMemoryArchives(
+  repository: ArtifactRepository,
+  input: {
+    limit?: number;
+    now?: Date;
+    candidateMemoryArchiveQueue?: CandidateMemoryArchiveQueue;
+  },
+): Promise<{ scanned: number; queued: number; failed: number }> {
+  const due = await repository.findDueCandidateMemoryArchives({
+    limit: input.limit ?? 10,
+    now: input.now ?? new Date(),
+  });
+  const result = {
+    scanned: due.length,
+    queued: 0,
+    failed: 0,
+  };
+
+  if (!input.candidateMemoryArchiveQueue) {
+    return result;
+  }
+
+  for (const archive of due) {
+    try {
+      const queued = await input.candidateMemoryArchiveQueue.enqueueCandidateMemoryArchive({
+        archiveId: archive.id,
+        artifactId: archive.sourceArtifactId,
+        twinId: archive.twinId,
+        memoryFragmentId: archive.memoryFragmentId,
+        sourceType: archive.sourceType,
+        candidateMemoryIds: archive.candidateMemoryIds,
+        encryptedBytesBase64: archive.encryptedBytesBase64,
+        contentSha256: archive.contentSha256,
+        metadata: archive.metadata,
+      });
+
+      await repository.markCandidateMemoryArchiveQueued({
+        archiveId: archive.id,
+        candidateMemoryIds: archive.candidateMemoryIds,
+        jobId: queued.jobId,
+      });
+      result.queued += 1;
+    } catch (error) {
+      result.failed += 1;
+      console.error("candidate memory archive reconcile enqueue failed", {
+        archiveId: archive.id,
+        error: errorMessage(error),
+      });
+    }
   }
 
   return result;
@@ -192,6 +257,7 @@ export async function processArtifactIntelligence(
   const intelligence = buildArtifactIntelligenceResult(entityExtraction, memoryExtraction, timings);
 
   await finalizeArtifactIntelligence(repository, context.artifact.id, intelligence);
+  throwIfArtifactIntelligenceFailed(context.artifact.id, intelligence);
 
   return intelligence;
 }
@@ -415,6 +481,43 @@ async function finalizeArtifactIntelligence(
   );
 }
 
+export function throwIfArtifactIntelligenceFailed(
+  artifactId: string,
+  intelligence: Record<string, unknown>,
+) {
+  if (intelligence["status"] !== "failed") {
+    return;
+  }
+
+  throw new RetryableArtifactProcessingError({
+    artifactId,
+    reason: "artifact_intelligence_failed",
+    detail: readArtifactIntelligenceFailureDetail(intelligence),
+  });
+}
+
+function readArtifactIntelligenceFailureDetail(intelligence: Record<string, unknown>) {
+  const entityExtraction = asRecord(intelligence["entityExtraction"]);
+  const memoryExtraction = asRecord(intelligence["memoryExtraction"]);
+  const reason = [
+    readFailureReason(entityExtraction),
+    readFailureReason(memoryExtraction),
+  ].filter(Boolean).join("; ");
+
+  return reason || "artifact intelligence processing failed";
+}
+
+function readFailureReason(result: Record<string, unknown>) {
+  if (result["status"] !== "failed") {
+    return null;
+  }
+
+  return [
+    typeof result["reason"] === "string" ? result["reason"] : null,
+    typeof result["errorMessage"] === "string" ? result["errorMessage"] : null,
+  ].filter(Boolean).join(": ") || "failed";
+}
+
 async function processEntityExtraction(
   repository: ArtifactRepository,
   input: {
@@ -634,6 +737,7 @@ async function processMemoryExtractionChunks(
 export async function processCandidateMemoryArchive(
   repository: ArtifactRepository,
   input: {
+    archiveId?: string | null;
     artifactId: string;
     twinId: string;
     memoryFragmentId: string;
@@ -649,6 +753,11 @@ export async function processCandidateMemoryArchive(
     throw new Error("encrypted_candidate_memory_archive_storage_not_configured");
   }
 
+  await repository.markCandidateMemoryArchiveArchiving({
+    archiveId: input.archiveId,
+    candidateMemoryIds: input.candidateMemoryIds,
+  });
+
   const startedAt = Date.now();
   const stored = await input.privateFragmentStorage.storeEncryptedPrivateFragment({
     twinId: input.twinId,
@@ -658,10 +767,58 @@ export async function processCandidateMemoryArchive(
     contentSha256: input.contentSha256,
     metadata: input.metadata,
     contentKind: "candidate_memory",
+  }).catch(async (error: unknown) => {
+    if (!isCandidateArchiveFailureError(error)) {
+      await recordRetryableCandidateArchiveFailure(repository, input, error, Date.now() - startedAt);
+      throw error;
+    }
+
+    const archiveMs = Date.now() - startedAt;
+    const failure = candidateArchiveFailureMetadata(input, error, archiveMs);
+    await repository.markCandidateMemoriesArchiveFailed({
+      archiveId: input.archiveId,
+      candidateMemoryIds: input.candidateMemoryIds,
+      metadata: failure.candidateMetadata,
+    });
+
+    const artifact = await repository.findArtifactById(input.artifactId);
+    if (artifact) {
+      await repository.markArtifactCompleted(
+        input.artifactId,
+        withCandidateMemoryArchiveState(asRecord(artifact.metadata), failure.processingMetadata),
+      );
+    }
+
+    await repository.createAuditEvent({
+      twinId: input.twinId,
+      eventType: "artifact.candidate_memories_archive_failed",
+      resourceId: input.artifactId,
+      metadata: {
+        memoryFragmentId: input.memoryFragmentId,
+        candidateMemoryCount: input.candidateMemoryIds.length,
+        archiveMs,
+        reason: failure.processingMetadata.reason,
+        errorCode: failure.processingMetadata.errorCode,
+        retryable: false,
+      },
+    });
+
+    return null;
   });
+
+  if (!stored) {
+    return {
+      status: "failed",
+      reason: "storage_wallet_insufficient_balance",
+      candidateMemoryCount: input.candidateMemoryIds.length,
+      retryable: false,
+      archiveMs: Date.now() - startedAt,
+    };
+  }
   const archiveMs = Date.now() - startedAt;
 
   await repository.markCandidateMemoriesArchived({
+    archiveId: input.archiveId,
     candidateMemoryIds: input.candidateMemoryIds,
     statementStorageRef: stored.contentStorageRef,
     statementSha256: stored.contentSha256,
@@ -687,9 +844,112 @@ export async function processCandidateMemoryArchive(
 
   return {
     status: "completed",
+    archiveId: input.archiveId ?? null,
     candidateMemoryCount: input.candidateMemoryIds.length,
     archiveMs,
     statementStorageRef: stored.contentStorageRef,
+  };
+}
+
+function isCandidateArchiveFailureError(error: unknown): error is WalrusStorageError {
+  return error instanceof WalrusStorageError && error.code === "walrus_insufficient_balance";
+}
+
+async function recordRetryableCandidateArchiveFailure(
+  repository: ArtifactRepository,
+  input: {
+    archiveId?: string | null;
+    artifactId: string;
+    twinId: string;
+    memoryFragmentId: string;
+    candidateMemoryIds: string[];
+  },
+  error: unknown,
+  archiveMs: number,
+) {
+  const message = archiveErrorMessage(error);
+  const failedAt = new Date().toISOString();
+  const metadata = {
+    archiveStatus: "failed",
+    archiveFailedAt: failedAt,
+    archiveReason: "archive_retryable_failure",
+    archiveErrorCode: "archive_retryable_failure",
+    archiveErrorMessage: message,
+    archiveRetryable: true,
+    archiveMs,
+  };
+
+  await repository.markCandidateMemoriesArchiveFailed({
+    archiveId: input.archiveId,
+    candidateMemoryIds: input.candidateMemoryIds,
+    metadata,
+  });
+
+  await repository.createAuditEvent({
+    twinId: input.twinId,
+    eventType: "artifact.candidate_memories_archive_retryable_failed",
+    resourceId: input.artifactId,
+    metadata: {
+      archiveId: input.archiveId ?? null,
+      memoryFragmentId: input.memoryFragmentId,
+      candidateMemoryCount: input.candidateMemoryIds.length,
+      archiveMs,
+      errorMessage: message,
+      retryable: true,
+    },
+  });
+}
+
+function archiveErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function candidateArchiveFailureMetadata(
+  input: {
+    archiveId?: string | null;
+    memoryFragmentId: string;
+    candidateMemoryIds: string[];
+  },
+  error: WalrusStorageError,
+  archiveMs: number,
+) {
+  const failedAt = new Date().toISOString();
+  const reason = "storage_wallet_insufficient_balance";
+  const storageWallet = error.storageWallet
+    ? {
+        network: error.storageWallet.network,
+        address: error.storageWallet.address,
+        coinType: error.storageWallet.coinType,
+        balanceSui: error.storageWallet.balanceSui,
+        requiredSui: error.storageWallet.requiredSui,
+        shortfallSui: error.storageWallet.shortfallSui,
+      }
+    : undefined;
+
+  return {
+    candidateMetadata: {
+      archiveStatus: "failed",
+      archiveFailedAt: failedAt,
+      archiveReason: reason,
+      archiveErrorCode: error.code,
+      archiveErrorMessage: error.message,
+      archiveRetryable: false,
+      archiveMs,
+      ...(storageWallet ? { storageWallet } : {}),
+    },
+    processingMetadata: {
+      status: "failed",
+      reason,
+      errorCode: error.code,
+      errorMessage: error.message,
+      retryable: false,
+      failedAt,
+      archiveMs,
+      archiveId: input.archiveId ?? null,
+      memoryFragmentId: input.memoryFragmentId,
+      candidateMemoryCount: input.candidateMemoryIds.length,
+      ...(storageWallet ? { storageWallet } : {}),
+    },
   };
 }
 

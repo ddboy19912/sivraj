@@ -38,6 +38,7 @@ export type IntelligenceProcessingJobData = {
 };
 
 export type CandidateMemoryArchiveJobData = {
+  archiveId?: string;
   artifactId: string;
   twinId: string;
   memoryFragmentId: string;
@@ -122,6 +123,7 @@ export type ArtifactStatusEvent = {
   intelligenceStatus?: "queued" | "processing" | "completed" | "failed" | "skipped";
   intelligenceStage?: "entity_extraction" | "memory_extraction";
   reason?: string;
+  processing?: Record<string, unknown>;
   occurredAt: string;
 };
 
@@ -205,7 +207,7 @@ export function createCandidateMemoryArchiveQueue(redisUrl: string): CandidateMe
       const job = await queue.add(ARCHIVE_CANDIDATE_MEMORY_JOB_NAME, data, {
         ...artifactJobOptions,
         priority: 10,
-        jobId: `${data.artifactId}:candidate-memory-archive:${data.contentSha256.slice(0, 16)}`,
+        jobId: data.archiveId ?? `${data.artifactId}:candidate-memory-archive:${data.contentSha256.slice(0, 16)}`,
       });
 
       return { jobId: String(job.id) };

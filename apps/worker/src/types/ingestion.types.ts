@@ -10,6 +10,8 @@ import type {
 } from "@sivraj/intelligence";
 import type { ParsedConversationMessage, ParserMetadata } from "@sivraj/ingestion";
 import type { SpeechToTextTranscriber } from "@sivraj/llm";
+import type { StructuredGenerator } from "@sivraj/llm";
+import type { TextEmbedder } from "@sivraj/llm";
 import type { PrivateMemoryReader } from "@sivraj/private-memory-reader";
 
 export type QueuedArtifact = {
@@ -51,10 +53,16 @@ export type ArtifactRepository = {
   findQueuedArtifacts(limit: number): Promise<QueuedArtifact[]>;
   claimArtifact(id: string): Promise<QueuedArtifact | null>;
   claimRecoverableArtifact(id: string): Promise<QueuedArtifact | null>;
+  markArtifactProcessing(id: string, metadata: Record<string, unknown>): Promise<void>;
   markArtifactPending(id: string, metadata: Record<string, unknown>): Promise<void>;
   markArtifactCompleted(id: string, metadata: Record<string, unknown>): Promise<void>;
   markArtifactFailed(id: string, metadata: Record<string, unknown>): Promise<void>;
-  findMemoryFragmentBySourceArtifactId(sourceArtifactId: string): Promise<{ id: string } | null>;
+  findMemoryFragmentBySourceArtifactId(sourceArtifactId: string): Promise<{
+    id: string;
+    contentStorageRef: string | null;
+    contentSha256: string | null;
+    metadata?: unknown;
+  } | null>;
   findMemoryFragmentById(id: string): Promise<{
     id: string;
     twinId: string;
@@ -74,6 +82,58 @@ export type ArtifactRepository = {
     importanceScore: number;
     confidenceScore: number;
   }): Promise<{ id: string }>;
+  replaceDocumentChunks(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    chunks: Array<{
+      chunkIndex: number;
+      contentStorageRef: string;
+      contentSha256: string;
+      tokenCount: number;
+      charStart: number;
+      charEnd: number;
+      pageStart?: number | null;
+      pageEnd?: number | null;
+      embedding?: number[] | null;
+      embeddingModel?: string | null;
+      embeddingProvider?: string | null;
+      embeddingGeneratedAt?: Date | null;
+      metadata?: Record<string, unknown> | null;
+    }>;
+  }): Promise<{ count: number }>;
+  replaceDocumentPages(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    pages: Array<{
+      pageNumber: number;
+      contentStorageRef: string;
+      contentSha256: string;
+      tokenCount: number;
+      charStart: number;
+      charEnd: number;
+      metadata?: Record<string, unknown> | null;
+    }>;
+  }): Promise<{ count: number }>;
+  replaceDocumentStructureItems(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    items: Array<{
+      itemType: string;
+      label: string;
+      normalizedLabel: string;
+      ordinal?: number | null;
+      pageStart?: number | null;
+      pageEnd?: number | null;
+      charStart?: number | null;
+      charEnd?: number | null;
+      confidenceScore?: number | null;
+      extractionMethod: string;
+      metadata?: Record<string, unknown> | null;
+    }>;
+  }): Promise<{ count: number }>;
   upsertGraphNode(input: {
     twinId: string;
     nodeType: ExtractedEntity["graphNodeType"];
@@ -96,6 +156,7 @@ export type ArtifactRepository = {
     twinId: string;
     sourceArtifactId: string;
     memoryFragmentId: string;
+    archiveId?: string | null;
     memoryType: ExtractedMemory["memoryType"];
     statement?: string;
     normalizedStatement?: string;
@@ -104,15 +165,63 @@ export type ArtifactRepository = {
     evidenceHash: string;
     evidenceLength: number;
     confidenceScore: number;
+    archiveStatus?: "not_required" | "pending" | "queued" | "archiving" | "archived" | "failed_retryable" | "failed_blocked" | "cancelled";
     metadata: Record<string, unknown>;
     mergeJudge?: CanonicalMemoryMergeJudge;
   }): Promise<{ id: string }>;
+  createCandidateMemoryArchive(input: {
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  }): Promise<{ id: string }>;
+  markCandidateMemoryArchiveQueued(input: {
+    archiveId: string;
+    candidateMemoryIds: string[];
+    jobId: string;
+  }): Promise<void>;
+  markCandidateMemoryArchiveArchiving(input: {
+    archiveId?: string | null;
+    candidateMemoryIds: string[];
+  }): Promise<void>;
   markCandidateMemoriesArchived(input: {
+    archiveId?: string | null;
     candidateMemoryIds: string[];
     statementStorageRef: string;
     statementSha256: string;
     metadata: Record<string, unknown>;
   }): Promise<void>;
+  markCandidateMemoriesArchiveFailed(input: {
+    archiveId?: string | null;
+    candidateMemoryIds: string[];
+    metadata: Record<string, unknown>;
+  }): Promise<void>;
+  findCandidateMemoryArchiveById(id: string): Promise<{
+    id: string;
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  } | null>;
+  findDueCandidateMemoryArchives(input: { limit: number; now?: Date }): Promise<Array<{
+    id: string;
+    twinId: string;
+    sourceArtifactId: string;
+    memoryFragmentId: string;
+    sourceType: string;
+    candidateMemoryIds: string[];
+    encryptedBytesBase64: string;
+    contentSha256: string;
+    metadata: Record<string, unknown>;
+  }>>;
   findWeeklyReflectionSignals(input: {
     twinId: string;
     periodStart: Date;
@@ -214,7 +323,7 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
+    contentKind?: "memory_fragment" | "candidate_memory" | "document_chunk" | "reflection";
   }): Promise<{
     contentStorageRef: string;
     contentSha256: string;
@@ -226,7 +335,7 @@ export type PrivateFragmentStorage = {
     sourceArtifactId: string;
     sourceType: string;
     content: string;
-    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
+    contentKind?: "memory_fragment" | "candidate_memory" | "document_chunk" | "reflection";
   }): Promise<{
     encryptedBytesBase64: string;
     contentSha256: string;
@@ -239,7 +348,7 @@ export type PrivateFragmentStorage = {
     encryptedBytesBase64: string;
     contentSha256: string;
     metadata: Record<string, unknown>;
-    contentKind?: "memory_fragment" | "candidate_memory" | "reflection";
+    contentKind?: "memory_fragment" | "candidate_memory" | "document_chunk" | "reflection";
   }): Promise<{
     contentStorageRef: string;
     contentSha256: string;
@@ -263,9 +372,20 @@ export type ArtifactProcessingRuntimeOptions = {
   privateMemoryReader?: PrivateMemoryReader;
   privateFragmentStorage?: PrivateFragmentStorage;
   speechToTextTranscriber?: SpeechToTextTranscriber;
+  textEmbedder?: TextEmbedder;
+  structuredGenerator?: StructuredGenerator;
   intelligenceQueue?: IntelligenceProcessingQueue;
   transientCiphertextBase64?: string;
   transientCiphertextSha256?: string;
+  publishArtifactStatus?: (event: {
+    artifactId: string;
+    twinId: string;
+    sourceType: string;
+    status: "pending" | "queued" | "processing" | "completed" | "failed" | "cancelled";
+    reason?: string;
+    processing?: Record<string, unknown>;
+    occurredAt: string;
+  }) => Promise<void>;
 };
 
 export type ArtifactProcessingRequestOptions = ArtifactProcessingRuntimeOptions & {
@@ -274,6 +394,7 @@ export type ArtifactProcessingRequestOptions = ArtifactProcessingRuntimeOptions 
 
 export type CandidateMemoryArchiveQueue = {
   enqueueCandidateMemoryArchive(data: {
+    archiveId?: string;
     artifactId: string;
     twinId: string;
     memoryFragmentId: string;
@@ -293,6 +414,9 @@ export type PrivateSourcePayload = {
 
 export type MemoryFragmentProcessingRef = {
   id: string;
+  contentStorageRef?: string | null;
+  contentSha256?: string | null;
+  metadata?: Record<string, unknown>;
   transientCiphertextBase64?: string;
   transientCiphertextSha256?: string;
 };

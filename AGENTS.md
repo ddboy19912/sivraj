@@ -28,3 +28,11 @@ When a quick fix would leave ambiguous state, flicker, or brittle inference, fix
 ## React verification
 
 - Before finishing React app work, run `npx react-doctor@latest` and address actionable findings so the app stays aligned with React best practices.
+
+## Product design standard
+
+- Before changing or creating UI, read `PRODUCT.md` and `DESIGN.md`; treat them as product context and design-system memory.
+- Work in the product lane unless explicitly building marketing: dense, task-serving, stateful interfaces beat decorative page composition.
+- Use the Impeccable-inspired loop captured in `DESIGN.md`: set context, shape the interaction, craft with existing primitives, polish, harden, and prevent drift.
+- Avoid AI-design tells called out in `DESIGN.md`: generic card grids, nested cards, decorative glass, neon glow, gradient text, bloated copy, weak hierarchy, cramped controls, clipped popovers, and motion without state meaning.
+- For frontend work, verify the rendered result with tests/builds and, when visual changes are meaningful, inspect the UI in a browser or screenshot before declaring it done.

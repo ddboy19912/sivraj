@@ -18,11 +18,29 @@ describe("safe metadata helpers", () => {
     const metadata = {
       processing: {
         reason: "timeout",
+        documentIndex: {
+          status: "processing",
+          phase: "embedding_chunks",
+          embeddedChunks: 12,
+          chunkCount: 40,
+          text: "private document text",
+        },
         intelligence: { status: "completed", model: "gpt" },
       },
     };
 
-    expect(readProcessingMetadata(metadata)).toMatchObject({ reason: "timeout" });
+    expect(readProcessingMetadata(metadata)).toMatchObject({
+      reason: "timeout",
+      documentIndex: {
+        status: "processing",
+        phase: "embedding_chunks",
+        embeddedChunks: 12,
+        chunkCount: 40,
+      },
+    });
+    expect(readProcessingMetadata(metadata).documentIndex).not.toMatchObject({
+      text: expect.any(String),
+    });
     expect(readProcessingReason(metadata)).toBe("timeout");
     expect(readIntelligenceStatus(metadata)).toBe("completed");
     expect(readIntelligenceMetadata(metadata)).toMatchObject({

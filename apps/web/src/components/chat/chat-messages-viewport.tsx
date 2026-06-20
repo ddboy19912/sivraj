@@ -1,8 +1,13 @@
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
+import { toast } from "sonner";
+import {
+  AssistantTypingIndicator,
+  MessageBubble,
+} from "@/components/chat/chat-message-bubble";
 import { ChatMessagesEmptyState } from "@/components/chat/chat-messages-empty-state";
-import { MessageBubble } from "@/components/chat/chat-message-bubble";
-import { cn } from "@/lib/ui/utils";
-import type { ChatMessage } from "@/lib/chat/chat-api";
+import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/chat-api";
+import type { ChatPageStatus } from "@/types/chat.types";
 
 type Notice = {
   tone: "error" | "info";
@@ -10,21 +15,26 @@ type Notice = {
 } | null;
 
 export function ChatMessagesViewport({
+  status,
   notice,
   isLoading,
   isSending,
   messages,
   messagesEndRef,
+  onOpenAttachment,
 }: {
+  status: ChatPageStatus;
   notice: Notice;
   isLoading: boolean;
   isSending: boolean;
   messages: ChatMessage[];
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  onOpenAttachment: (attachment: ChatMessageAttachment) => void;
 }) {
+  useErrorNoticeToast(notice);
+
   return (
     <div className="relative z-1 flex-1 overflow-y-auto px-5 py-5 max-sm:px-4">
-      {notice ? <ChatNotice notice={notice} /> : null}
       {isLoading ? (
         <div className="grid h-full place-items-center text-white/48">
           <Loader2 className="size-6 animate-spin" />
@@ -36,50 +46,60 @@ export function ChatMessagesViewport({
       ) : (
         <ChatMessageList
           messages={messages}
+          status={status}
           isSending={isSending}
           messagesEndRef={messagesEndRef}
+          onOpenAttachment={onOpenAttachment}
         />
       )}
     </div>
   );
 }
 
-function ChatMessageList({
-  messages,
-  isSending,
-  messagesEndRef,
-}: {
-  messages: ChatMessage[];
-  isSending: boolean;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  return (
-    <div className="mx-auto flex max-w-[820px] flex-col gap-6">
-      {messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
-      {isSending ? (
-        <div className="flex items-center gap-2 text-sm text-white/44">
-          <Loader2 className="size-4 animate-spin text-[rgb(var(--theme-color-rgb))]" />
-          Sivraj is retrieving memory and asking the model.
-        </div>
-      ) : null}
-      <div ref={messagesEndRef} />
-    </div>
-  );
+function useErrorNoticeToast(notice: Notice) {
+  useEffect(() => {
+    if (notice?.tone !== "error") {
+      return;
+    }
+
+    toast.error(notice.text);
+  }, [notice]);
 }
 
-function ChatNotice({ notice }: { notice: NonNullable<Notice> }) {
+function ChatMessageList({
+  messages,
+  status,
+  isSending,
+  messagesEndRef,
+  onOpenAttachment,
+}: {
+  messages: ChatMessage[];
+  status: ChatPageStatus;
+  isSending: boolean;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+  onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+}) {
+  const showPendingAssistant =
+    isSending &&
+    status !== "streaming" &&
+    !messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.content.trim().length === 0 &&
+        (message.status === "pending" || message.status === "streaming"),
+    );
+
   return (
-    <div
-      className={cn(
-        "mb-4 rounded-2xl border px-4 py-3 text-sm",
-        notice.tone === "error"
-          ? "border-red-300/20 bg-red-500/10 text-red-100/86"
-          : "border-white/10 bg-white/5 text-white/70",
-      )}
-    >
-      {notice.text}
+    <div className="mx-auto flex max-w-[820px] flex-col gap-7">
+      {messages.map((message) => (
+        <MessageBubble
+          key={message.id}
+          message={message}
+          onOpenAttachment={onOpenAttachment}
+        />
+      ))}
+      {showPendingAssistant ? <AssistantTypingIndicator /> : null}
+      <div ref={messagesEndRef} />
     </div>
   );
 }

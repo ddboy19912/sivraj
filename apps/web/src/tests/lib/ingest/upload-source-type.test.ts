@@ -13,4 +13,11 @@ describe('inferUploadSourceType', () => {
     expect(inferUploadSourceType({ name: 'README.md', type: '', size: 1 } as File))
       .toBe('markdown')
   })
+
+  it('detects PDF and image uploads before generic upload fallback', () => {
+    expect(inferUploadSourceType({ name: 'lecture.pdf', type: '', size: 1 } as File))
+      .toBe('pdf')
+    expect(inferUploadSourceType({ name: 'scan.bin', type: 'image/png', size: 1 } as File))
+      .toBe('image')
+  })
 })

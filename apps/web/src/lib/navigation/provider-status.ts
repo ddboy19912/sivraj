@@ -6,7 +6,7 @@ export function getProviderNavStatus(
   state: ProviderConfigResponse | null,
 ): ProviderNavStatus {
   if (state?.config?.status === 'connected') {
-    return state.config.providerKind === 'ollama' ? 'local' : 'connected'
+    return 'connected'
   }
 
   if (state?.fallback) {

@@ -1,61 +1,145 @@
 import {
+  completeOpenRouterOAuth,
+  createOpenRouterModelConfig,
   disconnectProviderConfig,
-  loadProviderConfig,
-  saveProviderConfig,
-  testProviderConfig,
-  type ProviderKind,
+  selectFallbackProviderConfig,
+  selectProviderConfig,
+  startOpenRouterOAuth,
+  updateProviderConfigModel,
+  type RuntimeCapability,
   type ProviderConfigResponse,
 } from "@/lib/chat/chat-api";
 import type { Session } from "@/lib/session";
 
-type ProviderFormValues = {
-  providerKind: ProviderKind;
-  displayName: string;
-  baseUrl: string;
-  model: string;
-  apiKey: string;
+const OPENROUTER_OAUTH_STORAGE_KEY = "sivraj.openrouter.oauth";
+
+type StoredOpenRouterOAuth = {
+  state: string;
+  codeVerifier: string;
 };
 
-export async function saveProviderConfigValues(
-  values: ProviderFormValues,
+export async function beginOpenRouterOAuth(
   session: Session,
   onSessionRefreshed: (session: Session) => void,
 ) {
-  return saveProviderConfig(
+  const callbackUrl = `${window.location.origin}${window.location.pathname}`;
+  const response = await startOpenRouterOAuth(callbackUrl, session, onSessionRefreshed);
+
+  writeStoredOpenRouterOAuth({
+    state: response.state,
+    codeVerifier: response.codeVerifier,
+  });
+  window.location.assign(response.authUrl);
+}
+
+export async function completeStoredOpenRouterOAuth(
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+): Promise<ProviderConfigResponse | null> {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const state = params.get("state");
+  const stored = readStoredOpenRouterOAuth();
+
+  if (!code || !state || !stored || stored.state !== state) {
+    return null;
+  }
+
+  const response = await completeOpenRouterOAuth(
     {
-      providerKind: values.providerKind,
-      displayName: values.displayName,
-      baseUrl: values.baseUrl,
-      model: values.model,
-      ...(values.apiKey.trim() ? { apiKey: values.apiKey.trim() } : {}),
+      code,
+      state,
+      codeVerifier: stored.codeVerifier,
     },
     session,
     onSessionRefreshed,
   );
+
+  clearStoredOpenRouterOAuth();
+  removeOpenRouterOAuthQueryParams();
+
+  return response;
 }
 
-export async function testProviderConfigValues(
-  values: ProviderFormValues,
+export function hasPendingOpenRouterOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+
+  return Boolean(params.get("code") && params.get("state") && readStoredOpenRouterOAuth());
+}
+
+export function selectSavedProviderConfig(
+  providerConfigId: string,
   session: Session,
   onSessionRefreshed: (session: Session) => void,
 ) {
-  return testProviderConfig(
-    {
-      providerKind: values.providerKind,
-      displayName: values.displayName,
-      baseUrl: values.baseUrl,
-      model: values.model,
-      ...(values.apiKey.trim() ? { apiKey: values.apiKey.trim() } : {}),
-    },
-    session,
-    onSessionRefreshed,
-  );
+  return selectProviderConfig(providerConfigId, session, onSessionRefreshed);
 }
 
-export async function disconnectAndReloadProviderConfig(
+export function createSavedOpenRouterModelConfig(
+  input: { displayName: string; model: string; capability: RuntimeCapability },
   session: Session,
   onSessionRefreshed: (session: Session) => void,
-): Promise<ProviderConfigResponse> {
-  await disconnectProviderConfig(session, onSessionRefreshed);
-  return loadProviderConfig(session, onSessionRefreshed);
+) {
+  return createOpenRouterModelConfig(input, session, onSessionRefreshed);
+}
+
+export function selectDefaultProviderConfig(
+  capability: RuntimeCapability,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+) {
+  return selectFallbackProviderConfig(capability, session, onSessionRefreshed);
+}
+
+export function deleteSavedProviderConfig(
+  providerConfigId: string,
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+) {
+  return disconnectProviderConfig(providerConfigId, session, onSessionRefreshed);
+}
+
+export function updateSavedProviderModel(
+  providerConfigId: string,
+  input: {
+    displayName: string;
+    model: string;
+    capability: RuntimeCapability;
+  },
+  session: Session,
+  onSessionRefreshed: (session: Session) => void,
+) {
+  return updateProviderConfigModel(providerConfigId, input, session, onSessionRefreshed);
+}
+
+function writeStoredOpenRouterOAuth(value: StoredOpenRouterOAuth) {
+  window.sessionStorage.setItem(OPENROUTER_OAUTH_STORAGE_KEY, JSON.stringify(value));
+}
+
+function readStoredOpenRouterOAuth(): StoredOpenRouterOAuth | null {
+  const raw = window.sessionStorage.getItem(OPENROUTER_OAUTH_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredOpenRouterOAuth>;
+
+    return typeof parsed.state === "string" && typeof parsed.codeVerifier === "string"
+      ? { state: parsed.state, codeVerifier: parsed.codeVerifier }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredOpenRouterOAuth() {
+  window.sessionStorage.removeItem(OPENROUTER_OAUTH_STORAGE_KEY);
+}
+
+function removeOpenRouterOAuthQueryParams() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("code");
+  url.searchParams.delete("state");
+  window.history.replaceState({}, "", url.toString());
 }

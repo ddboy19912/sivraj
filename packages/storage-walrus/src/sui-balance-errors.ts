@@ -34,3 +34,18 @@ export function isSuiBalanceSplitAbort(error: unknown): boolean {
   return message.includes("balance::split") &&
     (message.includes("abort code: 2") || abortCode === "2" || abortCode === 2);
 }
+
+export function isSuiInsufficientBalanceError(error: unknown): boolean {
+  const message = `${errorMessage(error)} ${readExecutionMessage(error)}`.toLowerCase();
+
+  return isSuiBalanceSplitAbort(error) ||
+    (
+      message.includes("insufficient sui balance") &&
+      (
+        message.includes("gas selection") ||
+        message.includes("required budget") ||
+        message.includes("address balance") ||
+        message.includes("coins")
+      )
+    );
+}

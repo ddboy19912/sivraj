@@ -22,12 +22,17 @@ describe("TwinSpeechPlayer", () => {
     expect(screen.queryByLabelText("Twin speech audio")).toBeNull();
   });
 
-  it("marks playback completed when speech ends", async () => {
+  it("marks playback completed when the final clip ends", async () => {
     const onPlaybackCompleted = vi.fn().mockResolvedValue(undefined);
 
     render(
       <TwinSpeechPlayer
-        command={{ eventId: "event-1", audioUrl: "blob:speech" }}
+        command={{
+          eventId: "event-1",
+          clipId: "event-1#0",
+          audioUrl: "blob:speech",
+          isFinalClip: true,
+        }}
         onRuntimeEvent={vi.fn()}
         onPlaybackCompleted={onPlaybackCompleted}
       />,
@@ -40,13 +45,44 @@ describe("TwinSpeechPlayer", () => {
     });
   });
 
+  it("advances to the next clip instead of completing on a non-final clip", () => {
+    const onRuntimeEvent = vi.fn();
+    const onPlaybackCompleted = vi.fn();
+
+    render(
+      <TwinSpeechPlayer
+        command={{
+          eventId: "event-1",
+          clipId: "event-1#0",
+          audioUrl: "blob:speech",
+          isFinalClip: false,
+        }}
+        onRuntimeEvent={onRuntimeEvent}
+        onPlaybackCompleted={onPlaybackCompleted}
+      />,
+    );
+
+    fireEvent.ended(screen.getByLabelText("Twin speech audio"));
+
+    expect(onRuntimeEvent).toHaveBeenCalledWith({
+      type: "speech.clip_advanced",
+      eventId: "event-1",
+    });
+    expect(onPlaybackCompleted).not.toHaveBeenCalled();
+  });
+
   it("reports failed playback without consuming the event", () => {
     const onRuntimeEvent = vi.fn();
     const onPlaybackCompleted = vi.fn();
 
     render(
       <TwinSpeechPlayer
-        command={{ eventId: "event-1", audioUrl: "blob:speech" }}
+        command={{
+          eventId: "event-1",
+          clipId: "event-1#0",
+          audioUrl: "blob:speech",
+          isFinalClip: true,
+        }}
         onRuntimeEvent={onRuntimeEvent}
         onPlaybackCompleted={onPlaybackCompleted}
       />,

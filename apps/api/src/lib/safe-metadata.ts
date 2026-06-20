@@ -118,7 +118,20 @@ export function metadataContainsPlaintextLikeFields(value: unknown): boolean {
 export function readProcessingMetadata(
   metadata: unknown,
 ): Record<string, unknown> {
-  return sanitizeSafeMetadata(recordMetadata(metadata)["processing"]);
+  const processing = recordMetadata(recordMetadata(metadata)["processing"]);
+  const safeProcessing = sanitizeSafeMetadata(processing);
+  const safeDocumentIndex = sanitizeSafeMetadata(processing["documentIndex"]);
+  const safeCandidateMemoryArchive = sanitizeSafeMetadata(processing["candidateMemoryArchive"]);
+
+  return {
+    ...safeProcessing,
+    ...(Object.keys(safeDocumentIndex).length > 0
+      ? { documentIndex: safeDocumentIndex }
+      : {}),
+    ...(Object.keys(safeCandidateMemoryArchive).length > 0
+      ? { candidateMemoryArchive: safeCandidateMemoryArchive }
+      : {}),
+  };
 }
 
 export function readIntelligenceMetadata(

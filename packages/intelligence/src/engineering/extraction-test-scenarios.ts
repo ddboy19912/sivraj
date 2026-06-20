@@ -23,7 +23,7 @@ function emptyExtractionGenerator() {
       async generateJson() {
         return {
           provider: "openrouter",
-          model: "google/gemini-3.1-flash-lite",
+          model: "google/gemini-2.5-flash-lite",
           json: { memories: [] },
         };
       },
@@ -53,7 +53,7 @@ export async function run_extracts_reusable_engineering_memories_with_safe_evide
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -102,7 +102,7 @@ export async function run_extracts_reusable_engineering_memories_with_safe_evide
     expect(result.metadata).toMatchObject({
       extractor: "llm_structured_engineering_memory_extractor",
       provider: "openrouter",
-      model: "google/gemini-3.1-flash-lite",
+      model: "google/gemini-2.5-flash-lite",
       sourceKind: "agent_instruction_file",
       candidateInstructionCount: 3,
       returnedMemories: 2,
@@ -125,7 +125,7 @@ export async function run_separates_project_conventions_from_global_user_prefere
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -177,7 +177,7 @@ export async function run_accepts_explicit_broad_user_preferences_as_global_user
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -219,7 +219,7 @@ export async function run_extracts_plain_text_engineering_instructions_without_r
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -270,7 +270,7 @@ export async function run_does_not_promote_normal_work_history_into_engineering_
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -313,7 +313,7 @@ export async function run_does_not_turn_engineering_skill_facts_into_coding_pref
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -355,7 +355,7 @@ export async function run_extracts_architecture_decisions_as_project_scoped_engi
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -416,7 +416,7 @@ export async function run_extracts_recurring_engineering_bugs_without_inventing_
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -474,7 +474,7 @@ export async function run_extracts_project_conventions_and_style_rules_as_projec
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -553,7 +553,7 @@ export async function run_extracts_deployment_environment_requirements_while_dro
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -617,7 +617,7 @@ export async function run_extracts_security_boundaries_as_scoped_implementation_
 
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   {
@@ -669,7 +669,7 @@ export async function run_rejects_malformed_or_non_engineering_extraction_rows()
           async generateJson() {
             return {
               provider: "openrouter",
-              model: "google/gemini-3.1-flash-lite",
+              model: "google/gemini-2.5-flash-lite",
               json: {
                 memories: [
                   { statement: "Missing evidence", type: "project_convention", confidence: 0.8 },

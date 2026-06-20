@@ -1,54 +1,104 @@
-import { createOpenAICompatibleChatGenerator, type ChatMessage } from "@sivraj/llm";
-import { retrieveRelevantMemories, type MemoryCandidate } from "@sivraj/retrieval";
-import {
-  auditEvents,
-  chatMessages,
-  chatThreads,
-  memoryFragments,
-} from "@sivraj/db";
+/**
+ * Thin Hono route handlers for chat threads and messages.
+ *
+ * HTTP-only layer: authorize, parse input, delegate to domain modules in `lib/chat/`,
+ * map results to JSON or SSE. Turn logic lives in streaming-turn, turn-generation,
+ * turn-persistence, and related modules — not here.
+ */
+import { chatMessages, chatThreads, sourceArtifacts } from "@sivraj/db";
 import { and, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
-import type { AppDependencies } from "../app.js";
+import { streamSSE } from "hono/streaming";
+import type { ApiDb } from "../app.js";
 import type { AuthEnv } from "../middleware/auth.js";
-import { optionalString, readRecord } from "../lib/http/route-helpers.js";
+import {
+  emptyMemoryIntakeForIntent,
+  type ChatMessageRow,
+  type ChatRouteDependencies,
+  type ChatTurnEventStream,
+  type MemoryIntakeResult,
+} from "../types/chat.types.js";
+import { optionalString } from "../lib/http/route-helpers.js";
 import {
   authorizeThread,
-  estimateSavedTokens,
-  errorMessage,
   loadThreadMessages,
   readPositiveInteger,
   recordValue,
-  titleFromMessage,
   toMessageResponse,
   toThreadResponse,
-  truncate,
-  type ProviderKind,
-  type ProviderRuntimeConfig,
 } from "../lib/chat/helpers.js";
-import { loadProviderConfig, resolveRuntimeProviderConfig } from "./chat-provider-config.js";
+import { runChatMemoryIntake } from "../lib/chat/memory-intake.js";
+import {
+  NORMAL_CHAT_THREAD_FILTER,
+  readChatSurface,
+} from "../lib/chat/chat-surface.js";
+import {
+  readPostAttachmentInput,
+  readPostMessageInput,
+} from "../lib/chat/input.js";
+import {
+  buildChatAttachmentMetadata,
+  hydrateChatMessageAttachmentMetadata,
+  loadChatAttachmentArtifactStatuses,
+} from "../lib/chat/attachments.js";
+import { publicChatFailureMessage } from "../lib/chat/chat-errors.js";
+import {
+  buildPostMessageResponse,
+  insertUserMessage,
+  persistChatTurn,
+  recordChatMemoryIntakeOutcome,
+} from "../lib/chat/turn-persistence.js";
+import { resolveConversationContext } from "../lib/chat/conversation-context.js";
+import {
+  loadTurnPlanningMemoryHints,
+  resolveUserMemorySubject,
+} from "../lib/chat/current-truth.js";
+import {
+  loadCachedCoreCommsContext,
+  loadCachedRuntimeProviderConfig,
+} from "../lib/chat/chat-cache.js";
+import { enqueueCompletedChatTurnLearning } from "../lib/chat/chat-learning-queue.js";
+import {
+  buildStaticAssistantTurn,
+  generateChatTurn,
+} from "../lib/chat/turn-generation.js";
+import { runStreamingChatTurn } from "../lib/chat/streaming-turn.js";
+import {
+  buildMemoryIntakeAcknowledgement,
+  memoryIntakeFailureMessage,
+  memoryIntakeIntentFromTurnPlan,
+  memoryIntakeMessageFromTurnPlan,
+  shouldFastAcknowledgeMemoryIntake,
+  shouldFastAcknowledgePrivateDisclosure,
+  shouldInterruptForMemoryIntakeFailure,
+  shouldRunChatMemoryIntake,
+  shouldUseLosslessMemoryFallback,
+} from "../lib/chat/turn-policy.js";
+import { generateSivrajVoiceReply } from "../lib/chat/voice-reply.js";
+import { loadProviderConfig } from "./chat-provider-config.js";
 
 export async function handleListThreads(
   c: Context<AuthEnv>,
-  db: AppDependencies["db"],
+  db: ApiDb,
   twinId: string,
 ) {
   const rows = await db
     .select()
     .from(chatThreads)
-    .where(eq(chatThreads.twinId, twinId))
+    .where(and(eq(chatThreads.twinId, twinId), NORMAL_CHAT_THREAD_FILTER))
     .orderBy(desc(chatThreads.updatedAt))
     .limit(50);
-
   return c.json({ threads: rows.map(toThreadResponse) });
 }
 
 export async function handleCreateThread(
   c: Context<AuthEnv>,
-  db: AppDependencies["db"],
+  db: ApiDb,
   twinId: string,
 ) {
   const body = await c.req.json().catch(() => ({}));
   const title = optionalString(recordValue(body, "title")) ?? "New chat";
+  const surface = readChatSurface(recordValue(body, "surface"));
   const providerConfig = await loadProviderConfig(db, twinId);
   const [thread] = await db
     .insert(chatThreads)
@@ -56,345 +106,349 @@ export async function handleCreateThread(
       twinId,
       title: title.slice(0, 120),
       llmProviderConfigId: providerConfig?.id ?? null,
-      metadata: { surface: "web_chat" },
+      metadata: { surface },
     })
     .returning();
-
   return c.json({ thread: toThreadResponse(thread) }, 201);
 }
 
-export async function handleGetThreadMessages(
+export async function handleDeleteThread(c: Context<AuthEnv>, db: ApiDb) {
+  const gate = await authorizeThread(c, db);
+  if ("response" in gate) {
+    return gate.response;
+  }
+  await db
+    .delete(chatThreads)
+    .where(
+      and(
+        eq(chatThreads.id, gate.thread.id),
+        eq(chatThreads.twinId, gate.twinId),
+      ),
+    );
+  const rows = await db
+    .select()
+    .from(chatThreads)
+    .where(and(eq(chatThreads.twinId, gate.twinId), NORMAL_CHAT_THREAD_FILTER))
+    .orderBy(desc(chatThreads.updatedAt))
+    .limit(50);
+  return c.json({ threads: rows.map(toThreadResponse) });
+}
+
+export async function handleGetThreadMessages(c: Context<AuthEnv>, db: ApiDb) {
+  const gate = await authorizeThread(c, db);
+  if ("response" in gate) {
+    return gate.response;
+  }
+  const rows = await loadThreadMessages(db, gate.twinId, gate.thread.id, 200);
+  const artifactStatuses = await loadChatAttachmentArtifactStatuses(
+    db,
+    gate.twinId,
+    rows,
+  );
+  return c.json({
+    thread: toThreadResponse(gate.thread),
+    messages: rows.map((row: ChatMessageRow) =>
+      toMessageResponse(
+        hydrateChatMessageAttachmentMetadata(row, artifactStatuses),
+      ),
+    ),
+  });
+}
+
+export async function handlePostThreadAttachment(
   c: Context<AuthEnv>,
-  db: AppDependencies["db"],
+  db: ApiDb,
 ) {
   const gate = await authorizeThread(c, db);
   if ("response" in gate) {
     return gate.response;
   }
-
-  const rows = await loadThreadMessages(db, gate.twinId, gate.thread.id, 200);
-  return c.json({
-    thread: toThreadResponse(gate.thread),
-    messages: rows.map(toMessageResponse),
+  const input = await readPostAttachmentInput(c);
+  if ("error" in input) {
+    return c.json({ error: input.error }, input.status);
+  }
+  const [artifact] = await db
+    .select()
+    .from(sourceArtifacts)
+    .where(
+      and(
+        eq(sourceArtifacts.id, input.artifactId),
+        eq(sourceArtifacts.twinId, gate.twinId),
+      ),
+    )
+    .limit(1);
+  if (!artifact) {
+    return c.json({ error: "attachment_artifact_not_found" }, 404);
+  }
+  const attachment = buildChatAttachmentMetadata({
+    artifact,
+    fileName: input.fileName,
+    fileType: input.fileType,
+    fileSize: input.fileSize,
   });
+  const [message] = await db
+    .insert(chatMessages)
+    .values({
+      twinId: gate.twinId,
+      threadId: gate.thread.id,
+      role: "user",
+      status: "completed",
+      content: "",
+      memoryFragmentIds: [],
+      metadata: {
+        surface: "web_chat",
+        messageKind: "attachment",
+        attachments: [attachment],
+      },
+    })
+    .returning();
+  await db
+    .update(chatThreads)
+    .set({ updatedAt: new Date() })
+    .where(
+      and(
+        eq(chatThreads.id, gate.thread.id),
+        eq(chatThreads.twinId, gate.twinId),
+      ),
+    );
+  return c.json(
+    {
+      message: toMessageResponse(message),
+    },
+    201,
+  );
 }
 
 export async function handlePostThreadMessage(
   c: Context<AuthEnv>,
-  db: AppDependencies["db"],
-  privateMemoryReader: AppDependencies["privateMemoryReader"],
-  llmFetch: AppDependencies["llmFetch"],
+  deps: ChatRouteDependencies,
 ) {
-  const gate = await authorizeThread(c, db);
+  const gate = await authorizeThread(c, deps.db);
   if ("response" in gate) {
     return gate.response;
   }
-
-  const content = await readPostMessageContent(c);
-  if (!content) {
+  const input = await readPostMessageInput(c);
+  if (!input.content) {
     return c.json({ error: "missing_chat_message" }, 400);
   }
-
-  const runtimeConfig = await resolveRuntimeProviderConfig(db, gate.twinId, process.env);
+  const { content, memoryIntent, surface } = input;
+  const runtimeConfig = await loadCachedRuntimeProviderConfig(
+    deps.db,
+    gate.twinId,
+  );
   if (!runtimeConfig) {
     return c.json({ error: "llm_provider_not_configured" }, 503);
   }
-
-  const userMessage = await insertUserMessage(db, gate.twinId, gate.thread.id, content);
+  const userMessage = await insertUserMessage(
+    deps.db,
+    gate.twinId,
+    gate.thread.id,
+    content,
+    memoryIntent,
+    surface,
+  );
+  const coreCommsContext = await loadCachedCoreCommsContext(
+    deps.db,
+    gate.twinId,
+  );
+  const planningMemoryHints = await loadTurnPlanningMemoryHints(
+    deps.db,
+    gate.twinId,
+  );
+  const recentMessages = await loadThreadMessages(
+    deps.db,
+    gate.twinId,
+    gate.thread.id,
+    readPositiveInteger(process.env["CHAT_RECENT_RAW_MESSAGE_LIMIT"], 48),
+  );
+  const contextResolution = await resolveConversationContext({
+    currentMessage: content,
+    recentMessages,
+    excludeMessageIds: new Set([userMessage.id]),
+    memoryIntent,
+    coreCommsContext,
+    memoryHints: planningMemoryHints,
+    runtimeConfig,
+    llmFetch: deps.llmFetch,
+  });
+  let memoryIntake: MemoryIntakeResult =
+    emptyMemoryIntakeForIntent(memoryIntent);
+  if (shouldRunChatMemoryIntake(contextResolution, memoryIntent)) {
+    const memoryIntakeMessage = memoryIntakeMessageFromTurnPlan(
+      content,
+      contextResolution,
+    );
+    memoryIntake = await runChatMemoryIntake({
+      db: deps.db,
+      twinId: gate.twinId,
+      userMessageId: userMessage.id,
+      turnId: userMessage.turnId,
+      subject: resolveUserMemorySubject(coreCommsContext),
+      message: memoryIntakeMessage,
+      intent: memoryIntakeIntentFromTurnPlan(contextResolution),
+      losslessFallback: shouldUseLosslessMemoryFallback(
+        contextResolution,
+        memoryIntent,
+      ),
+      runtimeConfig,
+      llmFetch: deps.llmFetch,
+    });
+  }
+  await recordChatMemoryIntakeOutcome({
+    db: deps.db,
+    turnId: userMessage.turnId,
+    userMessageId: userMessage.id,
+    memoryIntent,
+    memoryIntake,
+  });
+  if (
+    shouldInterruptForMemoryIntakeFailure(
+      contextResolution,
+      memoryIntent,
+      memoryIntake,
+    )
+  ) {
+    return c.json(
+      {
+        error: "chat_memory_intake_failed",
+        message: publicChatFailureMessage(
+          memoryIntakeFailureMessage(memoryIntake),
+        ),
+      },
+      503,
+    );
+  }
+  if (shouldFastAcknowledgePrivateDisclosure(contextResolution, memoryIntent)) {
+    const finalContent = await generateSivrajVoiceReply({
+      kind: "private_ack",
+      userMessage: content,
+      runtimeConfig,
+      llmFetch: deps.llmFetch,
+      assistantName: coreCommsContext.assistantName,
+    });
+    const turn = buildStaticAssistantTurn({
+      content: finalContent,
+      runtimeConfig,
+      contextResolution,
+    });
+    const assistantMessage = await persistChatTurn({
+      c,
+      db: deps.db,
+      gate,
+      llmFetch: deps.llmFetch,
+      content,
+      surface,
+      runtimeConfig,
+      turn,
+    });
+    return c.json(
+      buildPostMessageResponse(userMessage, assistantMessage, turn),
+      201,
+    );
+  }
+  if (
+    shouldFastAcknowledgeMemoryIntake(
+      contextResolution,
+      memoryIntake,
+      memoryIntent,
+    )
+  ) {
+    const turn = buildStaticAssistantTurn({
+      content: buildMemoryIntakeAcknowledgement(memoryIntake),
+      runtimeConfig,
+      contextResolution,
+    });
+    const assistantMessage = await persistChatTurn({
+      c,
+      db: deps.db,
+      gate,
+      llmFetch: deps.llmFetch,
+      content,
+      surface,
+      runtimeConfig,
+      turn,
+    });
+    return c.json(
+      buildPostMessageResponse(userMessage, assistantMessage, turn),
+      201,
+    );
+  }
   const turn = await generateChatTurn({
-    db,
-    privateMemoryReader,
-    llmFetch,
+    db: deps.db,
+    privateMemoryReader: deps.privateMemoryReader,
+    llmFetch: deps.llmFetch,
+    memorySearchConfig: deps.memorySearchConfig,
     twinId: gate.twinId,
     threadId: gate.thread.id,
     content,
     runtimeConfig,
+    memoryIntent,
+    coreCommsContext,
+    planningMemoryHints,
+    recentMessages,
+    contextResolution,
+    excludeMessageIds: new Set([userMessage.id]),
   });
   const assistantMessage = await persistChatTurn({
     c,
-    db,
+    db: deps.db,
     gate,
+    llmFetch: deps.llmFetch,
     content,
+    surface,
     runtimeConfig,
     turn,
   });
-
-  return c.json(buildPostMessageResponse(userMessage, assistantMessage, turn), 201);
-}
-
-async function readPostMessageContent(c: Context<AuthEnv>): Promise<string | null> {
-  const body = await c.req.json().catch(() => null);
-  return body && typeof body === "object"
-    ? optionalString((body as Record<string, unknown>)["content"])
-    : null;
-}
-
-async function insertUserMessage(
-  db: AppDependencies["db"],
-  twinId: string,
-  threadId: string,
-  content: string,
-) {
-  const [userMessage] = await db
-    .insert(chatMessages)
-    .values({
-      twinId,
-      threadId,
-      role: "user",
-      content,
-      metadata: { contextSaved: true, surface: "web_chat" },
-    })
-    .returning();
-
-  return userMessage;
-}
-
-async function generateChatTurn(input: {
-  db: AppDependencies["db"];
-  privateMemoryReader: AppDependencies["privateMemoryReader"];
-  llmFetch: AppDependencies["llmFetch"];
-  twinId: string;
-  threadId: string;
-  content: string;
-  runtimeConfig: ProviderRuntimeConfig;
-}) {
-  const memoryContext = await loadMemoryContext({
-    db: input.db,
-    privateMemoryReader: input.privateMemoryReader,
-    twinId: input.twinId,
-    query: input.content,
-  });
-  const recentMessages = await loadThreadMessages(input.db, input.twinId, input.threadId, 12);
-  const promptMessages = buildPromptMessages({
-    currentMessage: input.content,
-    memoryContext,
-    recentMessages,
-    providerLabel: input.runtimeConfig.displayName,
-  });
-  const output = await createOpenAICompatibleChatGenerator({
-    provider: input.runtimeConfig.providerKind,
-    apiKey: input.runtimeConfig.apiKey,
-    model: input.runtimeConfig.model,
-    baseUrl: input.runtimeConfig.baseUrl,
-    fetch: input.llmFetch,
-    timeoutMs: readPositiveInteger(process.env["LLM_REQUEST_TIMEOUT_MS"], 45_000),
-  }).generateChat({
-    messages: promptMessages,
-    temperature: 0.2,
-  });
-  const citations = memoryContext.results.map((result, index) => ({
-    id: result.memory.id,
-    label: `MEM_${index + 1}`,
-    sourceArtifactId: result.memory.sourceArtifactId,
-    score: result.score,
-    matchedTerms: result.matchedTerms,
-  }));
-  const usage = readRecord(output.metadata?.usage);
-  const estimatedSavedTokens = estimateSavedTokens(
-    memoryContext.results.map((result) => result.memory.content),
+  if (memoryIntent !== "private") {
+    void enqueueCompletedChatTurnLearning({
+      db: deps.db,
+      privateMemoryStorage: deps.privateMemoryStorage,
+      artifactProcessingQueue: deps.artifactProcessingQueue,
+      gate,
+      userMessage: content,
+      assistantMessage: assistantMessage.content,
+      userMessageId: userMessage.id,
+      assistantMessageId: assistantMessage.id,
+      turnId: assistantMessage.turnId,
+      model: assistantMessage.model,
+      providerKind: assistantMessage.providerKind,
+      memoryIntent,
+    });
+  }
+  return c.json(
+    buildPostMessageResponse(userMessage, assistantMessage, turn),
+    201,
   );
-
-  return {
-    output,
-    memoryContext,
-    citations,
-    usage,
-    estimatedSavedTokens,
-  };
 }
 
-type ChatTurnInput = {
-  c: Context<AuthEnv>;
-  db: AppDependencies["db"];
-  gate: { twinId: string; thread: typeof chatThreads.$inferSelect };
-  content: string;
-  runtimeConfig: ProviderRuntimeConfig;
-  turn: Awaited<ReturnType<typeof generateChatTurn>>;
-};
-
-async function persistChatTurn(input: ChatTurnInput) {
-  const assistantMessage = await insertAssistantMessage(input);
-  await recordChatTurnAudit(input);
-  return assistantMessage;
-}
-
-async function insertAssistantMessage(input: ChatTurnInput) {
-  const { output, memoryContext, citations, usage, estimatedSavedTokens } = input.turn;
-  const [assistantMessage] = await input.db
-    .insert(chatMessages)
-    .values({
-      twinId: input.gate.twinId,
-      threadId: input.gate.thread.id,
-      role: "assistant",
-      content: output.content,
-      providerKind: input.runtimeConfig.providerKind as ProviderKind,
-      model: output.model,
-      memoryFragmentIds: memoryContext.results.map((result) => result.memory.id),
-      citations,
-      usage,
-      metadata: {
-        providerSource: input.runtimeConfig.source,
-        tokenContextSaved: estimatedSavedTokens,
-        retrievedMemoryCount: memoryContext.results.length,
-        contextPacket: {
-          policy: "bounded_retrieved_memory",
-          rawArtifactsIncluded: false,
-        },
-      },
-    })
-    .returning();
-
-  return assistantMessage;
-}
-
-async function recordChatTurnAudit(input: ChatTurnInput) {
-  const auth = input.c.get("auth");
-  const { output, memoryContext, estimatedSavedTokens } = input.turn;
-
-  await input.db
-    .update(chatThreads)
-    .set({
-      title: input.gate.thread.title === "New chat"
-        ? titleFromMessage(input.content)
-        : input.gate.thread.title,
-      llmProviderConfigId: input.runtimeConfig.source === "user"
-        ? input.runtimeConfig.id
-        : input.gate.thread.llmProviderConfigId,
-      updatedAt: new Date(),
-    })
-    .where(and(
-      eq(chatThreads.id, input.gate.thread.id),
-      eq(chatThreads.twinId, input.gate.twinId),
-    ));
-
-  await input.db.insert(auditEvents).values({
-    twinId: input.gate.twinId,
-    actorType: auth.type,
-    actorId: auth.sub,
-    eventType: "chat.assistant_response_created",
-    resourceType: "chat_thread",
-    resourceId: input.gate.thread.id,
-    metadata: {
-      providerKind: input.runtimeConfig.providerKind,
-      providerSource: input.runtimeConfig.source,
-      model: output.model,
-      retrievedMemoryCount: memoryContext.results.length,
-      memoryFragmentIds: memoryContext.results.map((result) => result.memory.id),
-      tokenContextSaved: estimatedSavedTokens,
-    },
-  });
-}
-
-function buildPostMessageResponse(
-  userMessage: typeof chatMessages.$inferSelect,
-  assistantMessage: typeof chatMessages.$inferSelect,
-  turn: Awaited<ReturnType<typeof generateChatTurn>>,
+export async function handlePostThreadTurn(
+  c: Context<AuthEnv>,
+  deps: ChatRouteDependencies,
 ) {
-  return {
-    userMessage: toMessageResponse(userMessage),
-    assistantMessage: toMessageResponse(assistantMessage),
-    context: {
-      citations: turn.citations,
-      memoryCount: turn.memoryContext.results.length,
-      tokenContextSaved: turn.estimatedSavedTokens,
-      policy: {
-        rawArtifactsIncluded: false,
-        memory: "Sivraj retrieved durable memory instead of replaying full history.",
-      },
-    },
-  };
-}
-
-async function loadMemoryContext(input: {
-  db: AppDependencies["db"];
-  privateMemoryReader: AppDependencies["privateMemoryReader"];
-  twinId: string;
-  query: string;
-}) {
-  if (!input.privateMemoryReader) {
-    return { results: [] as ReturnType<typeof retrieveRelevantMemories> };
+  const gate = await authorizeThread(c, deps.db);
+  if ("response" in gate) {
+    return gate.response;
   }
-
-  const rows = await input.db
-    .select()
-    .from(memoryFragments)
-    .where(eq(memoryFragments.twinId, input.twinId))
-    .orderBy(desc(memoryFragments.createdAt))
-    .limit(50);
-  const candidates: MemoryCandidate[] = [];
-
-  for (const row of rows) {
-    if (!row.contentStorageRef) {
-      continue;
-    }
-
-    try {
-      const content = await input.privateMemoryReader.readPrivateMemory({
-        rawStorageRef: row.contentStorageRef,
-        artifactId: row.sourceArtifactId,
-        twinId: input.twinId,
-        expectedCiphertextSha256: row.contentSha256,
-      });
-
-      candidates.push({
-        id: row.id,
-        twinId: row.twinId,
-        sourceArtifactId: row.sourceArtifactId,
-        content,
-        importanceScore: row.importanceScore,
-        confidenceScore: row.confidenceScore,
-        occurredAt: row.occurredAt,
-        createdAt: row.createdAt,
-      });
-    } catch (error) {
-      console.warn("chat memory context fragment decrypt skipped", {
-        memoryFragmentId: row.id,
-        error: errorMessage(error),
-      });
-    }
+  const input = await readPostMessageInput(c);
+  if (!input.content) {
+    return c.json({ error: "missing_chat_message" }, 400);
   }
-
-  return {
-    results: retrieveRelevantMemories(candidates, { query: input.query, limit: 5 }),
-  };
-}
-
-function buildPromptMessages(input: {
-  currentMessage: string;
-  memoryContext: { results: ReturnType<typeof retrieveRelevantMemories> };
-  recentMessages: Array<typeof chatMessages.$inferSelect>;
-  providerLabel: string;
-}): ChatMessage[] {
-  const memoryBlock = input.memoryContext.results.length > 0
-    ? input.memoryContext.results
-        .map((result, index) =>
-          `[MEM_${index + 1}] ${truncate(result.memory.content, 900)}\nsourceArtifactId=${result.memory.sourceArtifactId}`,
-        )
-        .join("\n\n")
-    : "No durable Sivraj memories were retrieved for this turn.";
-  const recent = input.recentMessages
-    .filter((message) => message.role === "user" || message.role === "assistant")
-    .slice(-10)
-    .map((message) => ({
-      role: message.role as "user" | "assistant",
-      content: message.content,
-    }));
-
-  return [
-    {
-      role: "system",
-      content: [
-        "You are the response model for Sivraj, a persistent user-owned memory layer.",
-        "Sivraj is not the LLM. The LLM is replaceable; Sivraj supplies durable memory, citations, and compact context.",
-        "Use the Sivraj memory context when relevant, cite memory labels like [MEM_1], and be clear when no relevant memory is available.",
-        "Help the user feel the benefit: fewer repeated explanations, continuity across models, and no dependence on one model cutoff.",
-        `Current model provider: ${input.providerLabel}.`,
-        "",
-        "Sivraj memory context:",
-        memoryBlock,
-      ].join("\n"),
-    },
-    ...recent,
-    { role: "user", content: input.currentMessage },
-  ];
+  const { content, memoryIntent, surface, retryAttempt } = input;
+  return streamSSE(c, async (stream: ChatTurnEventStream) => {
+    const abortController = new AbortController();
+    c.req.raw.signal.addEventListener("abort", () => abortController.abort(), {
+      once: true,
+    });
+    await runStreamingChatTurn({
+      c,
+      deps,
+      gate,
+      stream,
+      content,
+      memoryIntent,
+      surface,
+      retryAttempt,
+      abortController,
+    });
+  });
 }

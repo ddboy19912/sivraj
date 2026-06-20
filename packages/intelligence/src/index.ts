@@ -478,6 +478,11 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
             "For unresolved follow-ups or next actions, use type commitment when the user committed, or project_update when it is an open project context.",
             "Set metadata.conversationSignal to one of goal, decision, preference, commitment, follow_up, relationship, project_update, or fact.",
             "Set metadata.requiresApproval to true for memories that would update the Twin from a conversation.",
+            "For a direct self-claim that should answer future profile questions, set metadata.currentTruth.",
+            "metadata.currentTruth must include kind, slot, value, valueType, and mutable.",
+            "Use a stable semantic slot name, not a category synonym. Examples: age, occupation, location, preferred_editor, relationship_status.",
+            "Use mutable true for facts that can change over time, such as age, location, occupation, preferences, and relationship status.",
+            "Use mutable false only for stable identity facts, such as legal name or birthday.",
           ]
         : []),
       ...(attributionAware
@@ -527,6 +532,13 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
               ? {
                   conversationSignal: "project_update",
                   requiresApproval: true,
+                  currentTruth: {
+                    kind: "mutable_profile",
+                    slot: "occupation",
+                    value: "Full Stack Developer",
+                    valueType: "string",
+                    mutable: true,
+                  },
                 }
               : {}),
           },
@@ -780,4 +792,3 @@ function isPersonalClaimMemory(memory: ExtractedMemory): boolean {
   return /\b(prefers?|wants?|likes?|dislikes?|believes?|plans?|hopes?|needs?|worked with|is working on)\b/i
     .test(memory.normalizedStatement);
 }
-

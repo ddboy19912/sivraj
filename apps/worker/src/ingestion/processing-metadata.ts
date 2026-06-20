@@ -24,3 +24,18 @@ export function withIntelligenceState(
     },
   };
 }
+
+export function withCandidateMemoryArchiveState(
+  metadata: Record<string, unknown>,
+  candidateMemoryArchive: Record<string, unknown>,
+): Record<string, unknown> {
+  const processing = asRecord(metadata["processing"]);
+
+  return {
+    ...metadata,
+    processing: {
+      ...processing,
+      candidateMemoryArchive,
+    },
+  };
+}

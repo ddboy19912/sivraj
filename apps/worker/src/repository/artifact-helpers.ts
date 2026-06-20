@@ -45,7 +45,7 @@ export async function claimArtifactWithStatuses(
 export async function markArtifact(
   db: Db,
   id: string,
-  status: "pending" | "completed" | "failed",
+  status: "pending" | "processing" | "completed" | "failed",
   metadata: Record<string, unknown>,
 ) {
   await db

@@ -11,6 +11,7 @@ const textEncoder = new TextEncoder();
 export type PrivateFragmentContentKind =
   | "memory_fragment"
   | "candidate_memory"
+  | "document_chunk"
   | "reflection";
 
 export type PrivateFragmentStorageOutput = {

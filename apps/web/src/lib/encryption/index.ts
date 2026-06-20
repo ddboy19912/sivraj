@@ -233,6 +233,7 @@ export async function buildClientEncryptedArtifactBody(input: {
 
   return {
     sourceType: input.sourceType,
+    contentSha256: await sha256Hex(new TextEncoder().encode(input.content)),
     metadata: publicArtifactMetadata(input.metadata),
     encryptedPayload: await buildClientEncryptedPayloadBody({
       plaintextBytes: payloadBytes,

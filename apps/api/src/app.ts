@@ -47,9 +47,17 @@ import {
   createConfiguredPrivateMemoryReader,
   type PrivateMemoryReader,
 } from "@sivraj/private-memory-reader";
+import {
+  createConfiguredSpeechToTextTranscriber,
+  type SpeechToTextTranscriber,
+} from "@sivraj/llm";
 import { createPrivateMemoryStorage } from "./services/private-memory-storage.js";
 import {
+  createConfiguredRealtimeTextToSpeechTokenIssuer,
+  createConfiguredRealtimeSpeechToTextTokenIssuer,
   createConfiguredVoiceSynthesizer,
+  type RealtimeTextToSpeechTokenIssuer,
+  type RealtimeSpeechToTextTokenIssuer,
   type VoiceSynthesizer,
 } from "./services/voice-service-client.js";
 
@@ -68,6 +76,9 @@ export type AppDependencies = {
   weeklyReflectionQueue?: WeeklyReflectionQueue;
   memorySearchConfig?: MemorySearchConfig;
   voiceSynthesizer?: VoiceSynthesizer;
+  speechToTextTranscriber?: SpeechToTextTranscriber | null;
+  realtimeSpeechToTextTokenIssuer?: RealtimeSpeechToTextTokenIssuer;
+  realtimeTextToSpeechTokenIssuer?: RealtimeTextToSpeechTokenIssuer;
   voicePreviewAssetDir?: string;
   llmFetch?: typeof fetch;
 };
@@ -144,6 +155,9 @@ function createApp(
     ),
     memorySearchConfig: loadMemorySearchConfig(process.env),
     voiceSynthesizer: createConfiguredVoiceSynthesizer(process.env),
+    speechToTextTranscriber: createConfiguredSpeechToTextTranscriber(process.env),
+    realtimeSpeechToTextTokenIssuer: createConfiguredRealtimeSpeechToTextTokenIssuer(process.env),
+    realtimeTextToSpeechTokenIssuer: createConfiguredRealtimeTextToSpeechTokenIssuer(process.env),
     voicePreviewAssetDir: process.env["VOICE_PREVIEW_ASSET_DIR"],
   },
 ) {

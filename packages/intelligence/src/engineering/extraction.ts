@@ -153,10 +153,12 @@ function buildEngineeringMemoryExtractionPrompt(input: {
       "Return a JSON object with a memories array.",
       "Each memory must include statement, type, scope, subject, confidence, evidence, and metadata.",
       `Use at most ${input.maxMemories} high-signal engineering memories.`,
-      "Allowed types: coding_preference, architecture_decision, project_convention, style_rule, testing_practice, deployment_environment, security_boundary, recurring_bug, tool_preference, agent_instruction.",
+      "Allowed types: user_skill, coding_preference, architecture_decision, project_convention, style_rule, testing_practice, deployment_environment, security_boundary, recurring_bug, tool_preference, agent_instruction.",
       "Allowed scopes: global_user, project, organization, agent_specific, temporary.",
       "Evidence must be a short exact snippet from the source text.",
       "Prefer durable engineering rules, preferences, decisions, conventions, boundaries, and recurring failures.",
+      "Use user_skill when the source explicitly says the user knows, uses, is learning, is comfortable with, is weak at, is strong in, or has experience with a programming language, framework, tool, platform, domain, or engineering practice.",
+      "Do not infer user_skill from generic docs about a technology unless the source attributes the skill, level, learning goal, or experience to the user.",
       "Use architecture_decision when the source says a team/user chose, decided, adopted, rejected, replaced, or standardized on a framework, storage layer, API pattern, architecture, security boundary, or deployment approach.",
       "Architecture decisions should preserve the chosen option, rejected option when present, and the project/system subject when available.",
       "Use recurring_bug when the source describes repeated failures, flaky behavior, regression loops, frequent breakages, repeated error messages, or failure conditions the user/team keeps encountering.",
@@ -189,6 +191,17 @@ function buildEngineeringMemoryExtractionPrompt(input: {
     },
     outputShape: {
       memories: [
+        {
+          statement: "The user is comfortable with React and TypeScript.",
+          type: "user_skill",
+          scope: "global_user",
+          subject: "React and TypeScript",
+          confidence: 0.86,
+          evidence: "I am comfortable with React and TypeScript.",
+          metadata: {
+            category: "frontend_skill",
+          },
+        },
         {
           statement: "The user prefers rg for repository search before slower alternatives.",
           type: "tool_preference",
@@ -679,11 +692,12 @@ function normalizeInstructionLine(value: string): string {
 }
 
 function looksLikeEngineeringInstruction(value: string): boolean {
-  return /\b(use|prefer|avoid|never|always|must|should|run|test|build|deploy|deployment|runtime|service|local stack|lint|format|commit|branch|revert|decide|decided|decision|choose|chose|chosen|adopt|adopted|select|selected|standardize|standardized|replace|replaced|instead of|convention|conventions|style|styling|naming|folder|directory|layout|structure|component|route|routes|handler|schema|migration|fail|fails|failed|failing|failure|flaky|break|breaks|broken|regression|bug|error|exception|timeout|slow|bottleneck|retry|rpc|fetch failed|api|database|postgres|redis|docker|compose|vite|react|next\.?js|hono|drizzle|pnpm|npm|yarn|bun|typescript|javascript|rust|go|python|walrus|seal|sui|testnet|mainnet|package id|policy id|key server|wallet|funded|openrouter|llm|token_issuer|jwt_secret|database_url|redis_url|vite_api_url|encrypt|encrypted|encryption|decrypt|decrypted|ciphertext|plaintext|no-plaintext|auth|permission|access control|policy|secrets?|logging|logs?|security|privacy|private memory|candidate memory|storage boundary|codex|claude|cursor|agent|architecture|repo|monorepo|workspace|environment|env)\b/i
+  return /\b(use|uses|using|know|knows|learning|learn|comfortable|familiar|experienced|experience|proficient|expert|beginner|weak at|strong in|prefer|avoid|never|always|must|should|run|test|build|deploy|deployment|runtime|service|local stack|lint|format|commit|branch|revert|decide|decided|decision|choose|chose|chosen|adopt|adopted|select|selected|standardize|standardized|replace|replaced|instead of|convention|conventions|style|styling|naming|folder|directory|layout|structure|component|route|routes|handler|schema|migration|fail|fails|failed|failing|failure|flaky|break|breaks|broken|regression|bug|error|exception|timeout|slow|bottleneck|retry|rpc|fetch failed|api|database|postgres|redis|docker|compose|vite|react|next\.?js|hono|drizzle|pnpm|npm|yarn|bun|typescript|javascript|rust|go|python|solidity|walrus|seal|sui|testnet|mainnet|package id|policy id|key server|wallet|funded|openrouter|llm|token_issuer|jwt_secret|database_url|redis_url|vite_api_url|encrypt|encrypted|encryption|decrypt|decrypted|ciphertext|plaintext|no-plaintext|auth|permission|access control|policy|secrets?|logging|logs?|security|privacy|private memory|candidate memory|storage boundary|codex|claude|cursor|agent|architecture|repo|monorepo|workspace|environment|env)\b/i
     .test(value);
 }
 
 const ENGINEERING_SIGNAL_PATTERNS: Partial<Record<EngineeringMemoryType, RegExp>> = {
+  user_skill: /\b(i know|i use|i work with|i build with|i am learning|i'm learning|learning|i am comfortable|i'm comfortable|comfortable with|familiar with|have experience|experienced with|proficient|expert|beginner|new to|weak at|strong in|my skill|my stack|react|next\.?js|typescript|javascript|python|rust|go|solidity|sui|walrus|hono|drizzle|vite|postgres|redis)\b/i,
   architecture_decision: /\b(decide|decided|decision|choose|chose|chosen|adopt|adopted|select|selected|standardize|standardized|replace|replaced|instead of|architecture|api|database|storage|framework|stack)\b/i,
   project_convention: /\b(this repo|this project|repo uses|project uses|we use|uses pnpm|workspace|monorepo|convention|conventions|folder|directory|layout|structure|route modules?|schema|migration|package scripts?)\b/i,
   style_rule: /\b(style|styling|naming|format|formatting|component|ui|copy|tone|review|keep|avoid|use|prefer|must|should)\b/i,

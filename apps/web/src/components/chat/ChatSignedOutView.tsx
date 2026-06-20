@@ -9,7 +9,7 @@ export function ChatSignedOutView() {
         <MessageCircle className="mx-auto mb-4 size-8 text-[rgb(var(--theme-color-rgb))]" />
         <h2 className="text-xl font-semibold text-white">Chat unlocks after sign in</h2>
         <p className="mx-auto mt-3 max-w-[440px] text-sm leading-6 text-white/58">
-          Connect your wallet so Sivraj can retrieve only your scoped memory for chat.
+          Connect your wallet so your twin can retrieve only your scoped memory for chat.
         </p>
       </div>
     </section>

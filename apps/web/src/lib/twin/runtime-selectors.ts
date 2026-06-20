@@ -64,7 +64,21 @@ export function getStatusHud(
 export function getSpeechPlaybackCommand(
   runtimeState: TwinRuntimeState,
 ): SpeechPlaybackCommand {
-  return runtimeState.status === "speaking"
-    ? { eventId: runtimeState.eventId, audioUrl: runtimeState.audioUrl }
-    : null;
+  if (runtimeState.status !== "speaking") {
+    return null;
+  }
+
+  const { clips, clipCursor, streamClosed, eventId } = runtimeState;
+  const audioUrl = clips[clipCursor];
+  if (!audioUrl) {
+    // Buffering: the next clip in the stream has not arrived yet.
+    return null;
+  }
+
+  return {
+    eventId,
+    clipId: `${eventId}#${clipCursor}`,
+    audioUrl,
+    isFinalClip: streamClosed && clipCursor === clips.length - 1,
+  };
 }

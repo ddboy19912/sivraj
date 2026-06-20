@@ -38,8 +38,3 @@ vi.mock('@mysten/seal', () => ({
     }
   },
 }))
-
-vi.mock('pdfjs-dist', () => ({
-  GlobalWorkerOptions: {},
-  getDocument: vi.fn(),
-}))

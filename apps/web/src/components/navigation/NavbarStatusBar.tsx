@@ -1,13 +1,14 @@
-import { IoRadioSharp } from "react-icons/io5";
-import { FaMicrochip } from "react-icons/fa6";
 import { FaRegClock } from "react-icons/fa";
+import { FaMicrochip } from "react-icons/fa6";
+import { IoRadioSharp } from "react-icons/io5";
+import { useOnlineStatus } from "@/hooks/common/use-online-status";
 
-type NavbarStatusBarProps = {
+interface NavbarStatusBarProps {
   color: string;
   localTime: string;
   providerStatus: "default" | "connected" | "local" | "missing";
   onProviderClick?: () => void;
-};
+}
 
 export function NavbarStatusBar({
   color,
@@ -15,15 +16,8 @@ export function NavbarStatusBar({
   providerStatus,
   onProviderClick,
 }: NavbarStatusBarProps) {
-  const isOnline = navigator.onLine;
-  const providerTitle =
-    providerStatus === "local"
-      ? "Local Ollama model connected"
-      : providerStatus === "connected"
-        ? "User LLM connected"
-        : providerStatus === "default"
-          ? "Using Sivraj default model"
-          : "Connect an LLM";
+  const isOnline = useOnlineStatus();
+  const providerTitle = getProviderTitle(providerStatus);
 
   return (
     <div className="hidden md:flex items-center gap-4 px-5 py-2 bg-gray-200/8 rounded-full border border-white/5">
@@ -59,3 +53,16 @@ export function NavbarStatusBar({
     </div>
   );
 }
+
+const getProviderTitle = (status: string) => {
+  switch (status) {
+    case "local":
+      return "Local Ollama model connected";
+    case "connected":
+      return "User LLM connected";
+    case "default":
+      return "Using Sivraj default model";
+    default:
+      return "Connect an LLM";
+  }
+};

@@ -208,6 +208,9 @@ export function repoNameFromFingerprint(
 const FALLBACK_AGENT_CONTEXT_LINE_BUILDERS: Partial<
   Record<CodingAgentContextPacketItem["type"], (subject: string | null) => string | null>
 > = {
+  user_skill: (subject) => (
+    subject ? `Account for the user's skill level in ${subject}.` : "Account for the user's source-backed engineering skill level."
+  ),
   tool_preference: (subject) => (
     subject ? `Use ${subject} when this project or task calls for that tool.` : null
   ),
@@ -261,4 +264,3 @@ function formatContextIssueLine(issue: EngineeringInstructionIssue): string {
 function formatDetailedEvidenceLine(ref: EngineeringProfileEvidenceRef): string {
   return `- ${ref.candidateMemoryId}: artifact ${ref.sourceArtifactId}; fragment ${ref.memoryFragmentId}; evidence ${ref.evidenceHash}`;
 }
-

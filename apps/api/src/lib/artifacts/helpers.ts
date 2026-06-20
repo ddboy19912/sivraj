@@ -30,6 +30,7 @@ import {
   loadPrimaryMemoryFragment,
   optionalString,
   readBodyEncryptedPayload,
+  sha256Hex,
   type StoredPrivateMemory,
 } from "../http/route-helpers.js";
 import type { AuthorizedTwin } from "../http/route-auth.js";
@@ -46,6 +47,7 @@ export type ArtifactUploadValidationError = {
 export type ParsedArtifactUploadInput = ReturnType<typeof readArtifactUploadFields> & {
   sourceType: SupportedArtifactSourceType;
   storageMetadata: ReturnType<typeof buildArtifactStorageMetadata>;
+  contentFingerprint: ReturnType<typeof buildManualArtifactContentFingerprint>;
   aiChatImportMetadata: Record<string, unknown>;
   aiChatImportFingerprint: ReturnType<typeof computeAiChatImportFingerprint>;
 };
@@ -72,6 +74,11 @@ export function parseArtifactUploadInput(
   }
 
   const sourceType = fields.sourceType as SupportedArtifactSourceType;
+  const contentFingerprint = buildManualArtifactContentFingerprint({
+    sourceType,
+    content: fields.content,
+    contentSha256: fields.contentSha256,
+  });
   const aiChatImportMetadata = sourceType === "chat_export"
     ? detectAiChatImportMetadata({
         content: fields.content ?? "",
@@ -96,8 +103,29 @@ export function parseArtifactUploadInput(
       aiChatImportFingerprint,
       encryptedPayload: fields.encryptedPayload,
     }),
+    contentFingerprint,
     aiChatImportMetadata,
     aiChatImportFingerprint,
+  };
+}
+
+export function buildManualArtifactContentFingerprint(input: {
+  sourceType: SupportedArtifactSourceType;
+  content: string | null;
+  contentSha256: string | null;
+}) {
+  const contentSha256 = input.content
+    ? sha256Hex(input.content)
+    : input.contentSha256;
+
+  if (!contentSha256) {
+    return null;
+  }
+
+  return {
+    hash: sha256Hex(`manual-artifact:v1:${input.sourceType}:${contentSha256}`),
+    contentSha256,
+    version: 1,
   };
 }
 
@@ -376,9 +404,10 @@ function errorMessage(error: unknown): string {
 
 function storageFailureResponse(error: unknown) {
   if (error instanceof WalrusStorageError && error.code === "walrus_insufficient_balance") {
+    const coinSymbol = error.storageWallet?.coinSymbol ?? "SUI/WAL";
     return {
       error: "storage_wallet_insufficient_balance",
-      message: "Private memory storage needs more SUI before it can save this memory.",
+      message: `Private memory storage needs more ${coinSymbol} before it can save this memory.`,
       ...(error.storageWallet ? { storageWallet: error.storageWallet } : {}),
     };
   }

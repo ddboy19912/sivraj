@@ -87,6 +87,26 @@ Exit criteria:
 
 - User can see a useful graph of projects, people, goals, and decisions.
 
+## Phase 2.1: Sovereign Memory Experience
+
+Goal: Make Sivraj's memory feel visible, inspectable, correctable, and meaningfully sovereign.
+
+- Build Memory Brain View: a graph and timeline of people, skills, documents, projects, preferences, and remembered facts.
+- Let users click memory nodes to inspect evidence, confidence, source, storage state, and connected memories.
+- Add memory correction and deletion flows from the Brain view.
+- Add Memory Receipts after memory intake, e.g. saved category, confidence, archive state, and whether the turn was private.
+- Show Walrus archive status separately from hot operational memory, e.g. archived, pending archive, retrying, or failed.
+- Add Memory Diff and Corrections: show when Sivraj updates a prior truth, such as changing age, workplace, preference, or project status.
+- Add Memory Confidence language for chat and inspection surfaces: certain, likely, unclear, or not saved.
+- Add Ask Across Your Life mode for broad self-queries such as work patterns, learning history, uploaded documents, recurring themes, and personal context.
+- Add Token Savings Dashboard to show estimated tokens saved by using memory instead of replaying raw history or documents.
+- Add Private Document Navigator for uploaded PDFs/books/docs with document list, pages, sections, summaries, extracted entities, search, and evidence links.
+- Preserve Voice Twin Continuity: same selected Cartesia voice, Twin name, memory, and personality across chat and voice surfaces.
+
+Exit criteria:
+
+- A user can see what Sivraj knows, why it knows it, correct it, delete it, and understand when memory saved model tokens.
+
 ## Phase 2.5: Voice Conversation Memory
 
 Goal: Let users talk to Sivraj and turn meaningful conversation into Twin updates.
@@ -122,6 +142,7 @@ Exit criteria:
 Goal: Make Sivraj the persistent engineering memory layer for Codex, Claude Code, Cursor, and custom coding agents.
 
 - Build repo/project engineering profiles from instruction files, docs, package configs, GitHub imports, chats, PR notes, and voice conversations.
+- Add Sovereign Context Packet export/API for Codex, Cursor, Claude Code, OpenClaw, and custom agents.
 - Add approved-only coding-agent handoff packets for production use.
 - Add review-mode packets for testing candidate rules.
 - Add a Sivraj MCP server with tools for context, source registry, retrieval, project profile, and writeback.
@@ -136,6 +157,21 @@ Goal: Make Sivraj the persistent engineering memory layer for Codex, Claude Code
 Exit criteria:
 
 - A coding agent can start with Sivraj context, complete a task, write back what happened, and a future coding agent can use that history without the user repeating themselves.
+
+## Phase 3.6: App Memory Permissions
+
+Goal: Make scoped memory access concrete for every connected app and agent.
+
+- Define app classes and default scopes, such as coding agent, health app, personal assistant, research agent, and strategy agent.
+- Add per-app permission profiles for memory categories, documents, graph nodes, and context packets.
+- Let users grant a coding agent skills, repo conventions, tools, and project context without exposing private life memories.
+- Let users grant a personal assistant schedules, preferences, and relationship context without exposing repo or strategy memories.
+- Add per-app audit logs showing exactly which memories were read, written, exported, or denied.
+- Add revoke, pause, and expire controls for every app connection.
+
+Exit criteria:
+
+- A user can connect an app, grant scoped memory access, inspect every access, and revoke it without deleting the underlying Twin memory.
 
 ## Phase 4: Synthesis Engine
 
@@ -173,6 +209,7 @@ Goal: Make Sivraj portable, verifiable, and sovereign.
 - Add identity state snapshots.
 - Add portable export.
 - Add verifiable memory references.
+- Future, not current priority: design scalable gas and storage payment management so private memory writes do not rely forever on one subsidized server wallet. Evaluate user-paid Walrus writes, prepaid credits, quotas/free tiers, bring-your-own storage wallet, and sponsored onboarding limits.
 
 Exit criteria:
 

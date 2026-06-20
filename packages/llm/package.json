@@ -13,7 +13,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@sivraj/core": "workspace:*"
+    "@ai-sdk/openai-compatible": "^2.0.50",
+    "@sivraj/core": "workspace:*",
+    "ai": "^6.0.204"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

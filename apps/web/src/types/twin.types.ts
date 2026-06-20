@@ -16,6 +16,15 @@ export type TwinRuntimeEvent =
       voiceStyle: "energetic";
       sourceEventId?: string;
     }
+  | {
+      type: "speech.audio_chunk";
+      eventId: string;
+      dedupeKey: string;
+      audioUrl: string;
+      sourceEventId?: string;
+    }
+  | { type: "speech.stream_closed"; eventId: string }
+  | { type: "speech.clip_advanced"; eventId: string }
   | { type: "speech.started"; eventId: string }
   | { type: "speech.completed"; eventId: string }
   | { type: "speech.failed"; eventId: string; reason: string }
@@ -41,7 +50,9 @@ export type TwinRuntimeState =
       eventId: string;
       dedupeKey: string;
       text: string;
-      audioUrl: string;
+      clips: string[];
+      clipCursor: number;
+      streamClosed: boolean;
       sourceEventId?: string;
       processedEventIds: string[];
     }
@@ -65,7 +76,9 @@ export type TwinRuntimeState =
 
 export type SpeechPlaybackCommand = {
   eventId: string;
+  clipId: string;
   audioUrl: string;
+  isFinalClip: boolean;
 } | null;
 
 export type TwinRuntimeInput = {

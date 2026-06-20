@@ -3,7 +3,7 @@ import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { walrus } from "@mysten/walrus";
 import { createHash } from "node:crypto";
 import { isRetryableNetworkError } from "@sivraj/core";
-import { isSuiBalanceSplitAbort } from "./sui-balance-errors.js";
+import { isSuiInsufficientBalanceError } from "./sui-balance-errors.js";
 
 export type WalrusStorageConfig = {
   network: "mainnet" | "testnet" | "devnet" | "localnet";
@@ -41,14 +41,15 @@ export type WalrusStorageErrorCode =
 export type WalrusStorageWalletDiagnostics = {
   network: WalrusStorageConfig["network"];
   address: string;
-  coinType: "0x2::sui::SUI";
+  coinType: string;
+  coinSymbol: "SUI" | "WAL";
   balanceMist: string;
   balanceSui: string;
   requiredMist: string;
   requiredSui: string;
   shortfallMist: string;
   shortfallSui: string;
-  requiredAmountSource: "configured_minimum";
+  requiredAmountSource: "configured_minimum" | "sdk_error";
 };
 
 export class WalrusStorageError extends Error {
@@ -193,7 +194,7 @@ export function createWalrusReader(params: {
         assertExpectedSha256(bytes, input.expectedSha256);
         return bytes;
       } catch (sdkError) {
-        if (!aggregatorUrl || !isRetryableNetworkError(sdkError, "Unknown Walrus read error")) {
+        if (!aggregatorUrl || !shouldTryAggregatorFallback(sdkError)) {
           throw sdkError;
         }
 
@@ -214,6 +215,19 @@ export function createWalrusReader(params: {
       }
     },
   };
+}
+
+function shouldTryAggregatorFallback(error: unknown): boolean {
+  return isRetryableNetworkError(error, "Unknown Walrus read error") ||
+    isWalrusAvailabilityError(error);
+}
+
+function isWalrusAvailabilityError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+
+  return message.includes("unable to retrieve enough slivers") ||
+    message.includes("not enough slivers") ||
+    message.includes("failed to decode blob");
 }
 
 export function assertWalrusStorageConfig(config: WalrusStorageConfig): void {
@@ -308,6 +322,7 @@ function sha256Hex(bytes: Uint8Array): string {
 }
 
 const SUI_COIN_TYPE = "0x2::sui::SUI" as const;
+const WAL_COIN_TYPE = "0x8270feb7375eee355e64fdb69c50abb6b5f9393a722883c1cf45f8e26048810a::wal::WAL" as const;
 const MIST_PER_SUI = 1_000_000_000n;
 const DEFAULT_MIN_WRITE_BALANCE_MIST = "200000000";
 
@@ -317,7 +332,7 @@ async function toWalrusStorageError(params: {
   signer: Ed25519Keypair;
   balanceClient: SuiBalanceClientLike;
 }): Promise<WalrusStorageError> {
-  if (!isSuiBalanceSplitAbort(params.error)) {
+  if (!isSuiInsufficientBalanceError(params.error) && !isWalInsufficientBalanceError(params.error)) {
     return new WalrusStorageError({
       code: "walrus_write_failed",
       message: `Walrus write failed: ${errorMessage(params.error)}`,
@@ -325,25 +340,66 @@ async function toWalrusStorageError(params: {
     });
   }
 
-  const storageWallet = await readStorageWalletDiagnostics(params).catch(() => undefined);
+  const storageWallet = await readStorageWalletDiagnostics(params).catch((error: unknown) => {
+    console.warn("walrus storage wallet diagnostics skipped", {
+      error: errorMessage(error),
+    });
+
+    return undefined;
+  });
 
   return new WalrusStorageError({
     code: "walrus_insufficient_balance",
-    message: "Walrus storage wallet has insufficient SUI for this write",
+    message: isWalInsufficientBalanceError(params.error)
+      ? "Walrus storage wallet has insufficient WAL for this write"
+      : "Walrus storage wallet has insufficient SUI for this write",
     cause: params.error,
     storageWallet,
   });
 }
 
 async function readStorageWalletDiagnostics(params: {
+  error: unknown;
   config: WalrusStorageConfig;
   signer: Ed25519Keypair;
   balanceClient: SuiBalanceClientLike;
 }): Promise<WalrusStorageWalletDiagnostics> {
+  if (isWalInsufficientBalanceError(params.error)) {
+    return readCoinWalletDiagnostics({
+      config: params.config,
+      signer: params.signer,
+      balanceClient: params.balanceClient,
+      coinType: WAL_COIN_TYPE,
+      coinSymbol: "WAL",
+      requiredMist: readWalRequiredAmount(params.error) ?? 0n,
+      requiredAmountSource: "sdk_error",
+    });
+  }
+
+  return readCoinWalletDiagnostics({
+    config: params.config,
+    signer: params.signer,
+    balanceClient: params.balanceClient,
+    coinType: SUI_COIN_TYPE,
+    coinSymbol: "SUI",
+    requiredMist: parseMist(params.config.minWriteBalanceMist ?? DEFAULT_MIN_WRITE_BALANCE_MIST),
+    requiredAmountSource: "configured_minimum",
+  });
+}
+
+async function readCoinWalletDiagnostics(params: {
+  config: WalrusStorageConfig;
+  signer: Ed25519Keypair;
+  balanceClient: SuiBalanceClientLike;
+  coinType: string;
+  coinSymbol: "SUI" | "WAL";
+  requiredMist: bigint;
+  requiredAmountSource: WalrusStorageWalletDiagnostics["requiredAmountSource"];
+}): Promise<WalrusStorageWalletDiagnostics> {
   const address = params.signer.getPublicKey().toSuiAddress();
   const balance = await params.balanceClient.core.getBalance({
     owner: address,
-    coinType: SUI_COIN_TYPE,
+    coinType: params.coinType,
   });
   const balanceMist = parseMist(
     balance.balance.balance ??
@@ -351,21 +407,40 @@ async function readStorageWalletDiagnostics(params: {
       balance.balance.addressBalance ??
       "0",
   );
-  const requiredMist = parseMist(params.config.minWriteBalanceMist ?? DEFAULT_MIN_WRITE_BALANCE_MIST);
+  const requiredMist = params.requiredMist;
   const shortfallMist = requiredMist > balanceMist ? requiredMist - balanceMist : 0n;
 
   return {
     network: params.config.network,
     address,
-    coinType: SUI_COIN_TYPE,
+    coinType: params.coinType,
+    coinSymbol: params.coinSymbol,
     balanceMist: balanceMist.toString(),
     balanceSui: formatMistAsSui(balanceMist),
     requiredMist: requiredMist.toString(),
     requiredSui: formatMistAsSui(requiredMist),
     shortfallMist: shortfallMist.toString(),
     shortfallSui: formatMistAsSui(shortfallMist),
-    requiredAmountSource: "configured_minimum",
+    requiredAmountSource: params.requiredAmountSource,
   };
+}
+
+function isWalInsufficientBalanceError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+
+  return message.includes("insufficient balance") &&
+    (
+      message.includes("::wal::wal") ||
+      message.includes("wal token") ||
+      message.includes(" wal ")
+    );
+}
+
+function readWalRequiredAmount(error: unknown): bigint | null {
+  const message = errorMessage(error);
+  const match = message.match(/Required:\s*(\d+)/i);
+
+  return match ? BigInt(match[1]) : null;
 }
 
 function parseMist(value: string): bigint {

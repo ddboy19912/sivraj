@@ -10,7 +10,19 @@ export type ParserMetadata = {
   parsedLength: number;
   warnings: string[];
   speakers?: string[];
+  document?: ParsedDocumentMetadata;
   chatExport?: ChatExportParserMetadata;
+};
+
+export type ParsedDocumentMetadata = {
+  title?: string;
+  pageCount?: number;
+  pages?: Array<{
+    pageNumber: number;
+    charStart: number;
+    charEnd: number;
+    textLength: number;
+  }>;
 };
 
 export type ChatExportParserMetadata = {

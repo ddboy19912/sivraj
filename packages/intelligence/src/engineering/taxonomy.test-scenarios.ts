@@ -14,6 +14,7 @@ import {
 
 export async function run_engineering_taxonomy_defines_stable_engineering_memory_categories() {
   expect(ENGINEERING_MEMORY_TYPES).toEqual([
+      "user_skill",
       "coding_preference",
       "architecture_decision",
       "project_convention",

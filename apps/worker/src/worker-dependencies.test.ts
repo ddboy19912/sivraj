@@ -26,6 +26,7 @@ vi.mock("./private-source-storage.js", () => ({
 vi.mock("@sivraj/llm", () => ({
   createConfiguredSpeechToTextTranscriber: () => null,
   createConfiguredStructuredGenerator: () => null,
+  createConfiguredTextEmbedder: () => null,
 }));
 
 vi.mock("@sivraj/queue", () => ({
