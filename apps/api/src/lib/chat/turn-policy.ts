@@ -7,7 +7,14 @@
  */
 import { retrieveRelevantMemories } from "@sivraj/retrieval";
 import type { ChatMemoryIntent, MemoryIntakeResult } from "./memory-intake.js";
-import type { ConversationContextResolution, CoreCommsContext, DocumentContext } from "./turn-types.js";
+import type {
+  ChatRetrievalDegradationReason,
+  ChatRetrievalStatus,
+  ChatRetrievalTarget,
+  ConversationContextResolution,
+  CoreCommsContext,
+  DocumentContext,
+} from "./turn-types.js";
 
 type PolicyMemoryContext = {
   results: ReturnType<typeof retrieveRelevantMemories>;
@@ -142,4 +149,63 @@ export function shouldFastReplyMissingMemory(input: {
   return input.contextResolution?.retrieval === "hot_memory" ||
     input.contextResolution?.answerTarget === "memory" ||
     input.contextResolution?.intent === "memory_qa";
+}
+
+export function shouldFallbackForRetrievalDegradation(
+  contextResolution: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent">,
+  retrievalStatus: ChatRetrievalStatus,
+): boolean {
+  if (retrievalStatus.state !== "degraded") {
+    return false;
+  }
+
+  if (retrievalStatus.target === "memory") {
+    return contextResolution.retrieval === "hot_memory" ||
+      contextResolution.answerTarget === "memory" ||
+      contextResolution.intent === "memory_qa";
+  }
+
+  if (retrievalStatus.target === "document") {
+    return contextResolution.retrieval === "document" ||
+      contextResolution.answerTarget === "document" ||
+      contextResolution.intent === "document_qa";
+  }
+
+  return false;
+}
+
+export function shouldProceedWithPartialRetrieval(input: {
+  retrievalStatus: ChatRetrievalStatus;
+  memoryContext: PolicyMemoryContext;
+  documentContext?: DocumentContext;
+}): boolean {
+  if (input.retrievalStatus.state !== "degraded") {
+    return true;
+  }
+
+  if (input.retrievalStatus.target === "memory") {
+    return input.memoryContext.results.length > 0;
+  }
+
+  if (input.retrievalStatus.target === "document") {
+    return (input.documentContext?.passages.length ?? 0) > 0 ||
+      (input.documentContext?.inspectionSources.length ?? 0) > 0;
+  }
+
+  return false;
+}
+
+export function buildRetrievalFallbackReply(
+  target: ChatRetrievalTarget,
+  _reason: ChatRetrievalDegradationReason | null = null,
+): string {
+  return target === "document"
+    ? "I couldn’t retrieve that document right now, so I can’t answer it safely."
+    : "I couldn’t retrieve that memory right now, so I can’t answer it safely.";
+}
+
+export function buildEmptyRetrievalFallbackReply(target: ChatRetrievalTarget): string {
+  return target === "document"
+    ? "I don’t have enough document context to answer that safely."
+    : "I don’t have that memory saved yet.";
 }

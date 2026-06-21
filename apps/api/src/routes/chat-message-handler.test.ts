@@ -41,11 +41,15 @@ import {
 } from "../lib/chat/memory-ranking.js";
 import { sanitizeAssistantContent, sanitizeSivrajVoiceReply } from "../lib/chat/chat-sanitize.js";
 import {
+  buildEmptyRetrievalFallbackReply,
+  buildRetrievalFallbackReply,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
   shouldFastReplyMissingMemory,
+  shouldFallbackForRetrievalDegradation,
   shouldInterruptForMemoryIntakeFailure,
   shouldLoadMemoryContext,
+  shouldProceedWithPartialRetrieval,
   shouldRunChatMemoryIntake,
   shouldUseLosslessMemoryFallback,
 } from "../lib/chat/turn-policy.js";
@@ -262,16 +266,37 @@ describe("chat prompt identity context", () => {
     });
   });
 
-  it("does not use keyword routing when the LLM resolver is unavailable", () => {
+  it("uses conservative retrieval fallback when the LLM resolver is unavailable", () => {
     expect(
       fallbackConversationContextResolution("Do you remember the Oliver Twist PDF I uploaded?"),
     ).toMatchObject({
       source: "fallback",
       standaloneQuery: "Do you remember the Oliver Twist PDF I uploaded?",
+      intent: "document_qa",
+      answerTarget: "document",
+      retrieval: "document",
+      reason: "resolver_unavailable_explicit_document_request",
+    });
+
+    expect(
+      fallbackConversationContextResolution("What did I tell you about my deploy checklist?"),
+    ).toMatchObject({
+      source: "fallback",
+      standaloneQuery: "What did I tell you about my deploy checklist?",
+      intent: "memory_qa",
+      answerTarget: "memory",
+      retrieval: "hot_memory",
+      reason: "resolver_unavailable_explicit_memory_request",
+    });
+
+    expect(
+      fallbackConversationContextResolution("What is JavaScript?"),
+    ).toMatchObject({
+      source: "fallback",
+      standaloneQuery: "What is JavaScript?",
       intent: "ambiguous",
       answerTarget: "general",
       retrieval: "none",
-      reason: "resolver_unavailable_no_semantic_fallback",
     });
   });
 
@@ -576,7 +601,17 @@ describe("chat candidate memory retrieval helpers", () => {
     }))).toBe(false);
   });
 
-  it("uses a cheeky missing-memory reply only when hot memory cannot answer", () => {
+  it("uses deterministic fallback replies for missing or unavailable retrieval", () => {
+    expect(buildEmptyRetrievalFallbackReply("memory")).toBe("I don’t have that memory saved yet.");
+    expect(buildRetrievalFallbackReply("memory", "timeout")).toBe(
+      "I couldn’t retrieve that memory right now, so I can’t answer it safely.",
+    );
+    expect(buildRetrievalFallbackReply("document", "read_failed")).toBe(
+      "I couldn’t retrieve that document right now, so I can’t answer it safely.",
+    );
+  });
+
+  it("uses a deterministic missing-memory reply only when hot memory cannot answer", () => {
     const memoryContext = { results: [], tokenAccountingByMemoryId: new Map() } as never;
     const coreCommsContext = {
       assistantName: "Jarvis",
@@ -611,18 +646,52 @@ describe("chat candidate memory retrieval helpers", () => {
     })).toBe(false);
   });
 
-  it("builds a model-owned voice prompt for missing memory replies", () => {
+  it("falls back for degraded required retrieval but permits partial context", () => {
+    const memoryPlan = turnPlan({
+      standaloneQuery: "What did I tell you about deploys?",
+      intent: "memory_qa",
+      answerTarget: "memory",
+      retrieval: "hot_memory",
+    });
+    const degradedMemory = {
+      state: "degraded" as const,
+      target: "memory" as const,
+      reason: "timeout" as const,
+      message: "I couldn’t retrieve that memory right now, so I can’t answer it safely.",
+    };
+    const emptyMemoryContext = { results: [], tokenAccountingByMemoryId: new Map() } as never;
+    const partialMemoryContext = {
+      results: [{ memory: { id: "memory-1", content: "Use pnpm." } }],
+      tokenAccountingByMemoryId: new Map(),
+    } as never;
+
+    expect(shouldFallbackForRetrievalDegradation(memoryPlan, degradedMemory)).toBe(true);
+    expect(shouldProceedWithPartialRetrieval({
+      retrievalStatus: degradedMemory,
+      memoryContext: emptyMemoryContext,
+    })).toBe(false);
+    expect(shouldProceedWithPartialRetrieval({
+      retrievalStatus: degradedMemory,
+      memoryContext: partialMemoryContext,
+    })).toBe(true);
+    expect(shouldFallbackForRetrievalDegradation(turnPlan({
+      intent: "general_chat",
+      answerTarget: "general",
+      retrieval: "none",
+    }), degradedMemory)).toBe(false);
+  });
+
+  it("builds a model-owned voice prompt for private acknowledgements", () => {
     const prompt = buildSivrajVoiceReplyPrompt({
-      kind: "missing_memory",
-      userMessage: "What is my private test phrase?",
+      kind: "private_ack",
+      userMessage: "Private: this stays here.",
       assistantName: "Jarvis",
     });
 
     expect(prompt[0]?.role).toBe("system");
     expect(prompt[0]?.content).toContain("The backend already decided the truth");
-    expect(prompt[0]?.content).toContain("Do not quote or repeat the user's exact wording");
-    expect(prompt[0]?.content).toContain("Sivraj does not have that fact saved yet");
-    expect(prompt[1]?.content).toContain("What is my private test phrase?");
+    expect(prompt[0]?.content).toContain("Private mode");
+    expect(prompt[1]?.content).toContain("Private: this stays here.");
   });
 
   it("uses lossless fallback only for teaching turns and explicit remember mode", () => {

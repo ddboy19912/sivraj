@@ -35,6 +35,12 @@ describe("streamChatTurn", () => {
               matchedTerms: ["hello"],
             }],
             tokenContextSaved: 12,
+            retrievalStatus: {
+              state: "degraded",
+              target: "memory",
+              reason: "timeout",
+              message: "I couldn’t retrieve that memory right now, so I can’t answer it safely.",
+            },
           })}`,
           "",
           "event: assistant.delta",
@@ -80,6 +86,14 @@ describe("streamChatTurn", () => {
     expect(events[2]).toMatchObject({
       type: "assistant.delta",
       delta: "Hi",
+    });
+    expect(events[1]).toMatchObject({
+      type: "context.ready",
+      retrievalStatus: {
+        state: "degraded",
+        target: "memory",
+        reason: "timeout",
+      },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:3000/v1/twins/twin-1/chat/threads/thread-1/turns",

@@ -953,7 +953,7 @@ async function loadThreadForDocumentFocus(input: any) {
         .limit(1);
     return thread ?? null;
 }
-export function emptyDocumentContext() {
+export function emptyDocumentContext(): DocumentContext {
     return {
         results: [],
         retrievalPlan: {

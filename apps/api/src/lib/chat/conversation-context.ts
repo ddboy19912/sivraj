@@ -241,6 +241,37 @@ function readRetrievalDecision(
 export function fallbackConversationContextResolution(
   currentMessage: string,
 ): ConversationContextResolution {
+  const explicitFallback = resolveExplicitFallbackRetrieval(currentMessage);
+  if (explicitFallback === "memory") {
+    return {
+      source: "fallback",
+      standaloneQuery: truncate(currentMessage, 2_000),
+      intent: "memory_qa",
+      turnKind: "question",
+      answerTarget: "memory",
+      memoryWrite: "skip",
+      retrieval: "hot_memory",
+      confidence: 0,
+      referencedMessageIds: [],
+      reason: "resolver_unavailable_explicit_memory_request",
+    };
+  }
+
+  if (explicitFallback === "document") {
+    return {
+      source: "fallback",
+      standaloneQuery: truncate(currentMessage, 2_000),
+      intent: "document_qa",
+      turnKind: "question",
+      answerTarget: "document",
+      memoryWrite: "skip",
+      retrieval: "document",
+      confidence: 0,
+      referencedMessageIds: [],
+      reason: "resolver_unavailable_explicit_document_request",
+    };
+  }
+
   return {
     source: "fallback",
     standaloneQuery: truncate(currentMessage, 2_000),
@@ -253,6 +284,34 @@ export function fallbackConversationContextResolution(
     referencedMessageIds: [],
     reason: "resolver_unavailable_no_semantic_fallback",
   };
+}
+
+function resolveExplicitFallbackRetrieval(currentMessage: string): "memory" | "document" | null {
+  const normalized = currentMessage.toLowerCase();
+  const asksQuestion =
+    /(^|\b)(what|who|where|when|why|how|which|do|did|does|can|could|would|should|tell|show|find|recall|remember)\b/u
+      .test(normalized) ||
+    normalized.includes("?");
+
+  if (!asksQuestion) {
+    return null;
+  }
+
+  if (
+    /\b(uploaded|upload|pdf|document|file|doc|page|chapter|passage)\b/u.test(normalized) &&
+    /\b(my|the|this|that|uploaded|saved)\b/u.test(normalized)
+  ) {
+    return "document";
+  }
+
+  if (
+    /\b(memory|memories|remember|saved|stored|told you|tell you|my saved|private note|project note)\b/u
+      .test(normalized)
+  ) {
+    return "memory";
+  }
+
+  return null;
 }
 
 export function selectMeaningfulConversationMessages(

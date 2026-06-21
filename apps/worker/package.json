@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck",
     "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
     "lint": "echo \"worker lint not configured yet\"",
     "memory:renew": "node scripts/renew-memory.mjs",
     "test": "vitest run src",
@@ -26,11 +27,11 @@
     "@sivraj/storage-walrus": "workspace:*",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "tsx": "^4.22.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
-    "tsx": "^4.22.0",
     "typescript": "~6.0.3",
     "vitest": "^4.1.6"
   }

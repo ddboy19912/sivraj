@@ -115,6 +115,7 @@ export async function persistChatTurn(input: ChatPersistTurnInput): Promise<Chat
 
 async function insertAssistantMessage(input: ChatPersistTurnInput): Promise<ChatMessageRow> {
   const { output, memoryContext, documentContext, contextResolution, citations, usage, tokenSavings } = input.turn;
+  const retrievalStatus = input.turn.retrievalStatus;
   const surface = input.surface ?? "web_chat";
   const [assistantMessage] = await input.db
     .insert(chatMessages)
@@ -138,6 +139,7 @@ async function insertAssistantMessage(input: ChatPersistTurnInput): Promise<Chat
         documentPassageCount: documentContext?.passages?.length ?? 0,
         documentRetrievalPlan: documentContext?.retrievalPlan,
         contextResolution,
+        ...(retrievalStatus ? { retrievalStatus } : {}),
         contextPacket: {
           policy: (documentContext?.passages?.length ?? 0) > 0
             ? "bounded_retrieved_memory_with_document_passages"
@@ -213,6 +215,7 @@ export async function completeStreamingTurn(
         documentPassageCount: input.documentContext.passages.length,
         documentRetrievalPlan: input.documentContext.retrievalPlan,
         contextResolution: input.contextResolution,
+        ...(input.retrievalStatus ? { retrievalStatus: input.retrievalStatus } : {}),
         timings: input.timings,
         contextPacket: {
           policy: input.documentContext.passages.length
@@ -235,6 +238,7 @@ export async function completeStreamingTurn(
       metadata: {
         surface,
         contextResolution: input.contextResolution,
+        ...(input.retrievalStatus ? { retrievalStatus: input.retrievalStatus } : {}),
         timings: input.timings,
       },
       updatedAt: new Date(),
@@ -281,6 +285,7 @@ export async function recordCompletedStreamingTurnAudit(
         tokenSavings: input.tokenSavings,
         title,
         timings,
+        retrievalStatus: input.retrievalStatus,
       },
     });
   } catch (error) {
@@ -438,6 +443,7 @@ export async function recordChatTurnAudit(input: ChatPersistTurnInput): Promise<
       documentPassageCount: documentContext?.passages?.length ?? 0,
       memoryFragmentIds: memoryFragmentIdsFromMemoryContext(memoryContext, documentContext),
       contextResolution: input.turn.contextResolution,
+      ...(input.turn.retrievalStatus ? { retrievalStatus: input.turn.retrievalStatus } : {}),
       tokenContextSaved: tokenSavings.estimatedTokensSaved,
       tokenSavings,
       title: titleUpdate.auditMetadata,
@@ -460,6 +466,7 @@ export function buildPostMessageResponse(
       documentPassageCount: turn.documentContext?.passages?.length ?? 0,
       documentRetrievalPlan: turn.documentContext?.retrievalPlan,
       contextResolution: turn.contextResolution,
+      ...(turn.retrievalStatus ? { retrievalStatus: turn.retrievalStatus } : {}),
       tokenContextSaved: (turn.tokenSavings as { estimatedTokensSaved?: number }).estimatedTokensSaved ?? 0,
       tokenSavings: turn.tokenSavings,
       policy: {

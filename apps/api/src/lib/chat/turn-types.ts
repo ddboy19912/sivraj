@@ -59,6 +59,22 @@ export type ConversationContextResolution = {
   reason?: string;
 };
 
+export type ChatRetrievalTarget = "memory" | "document";
+
+export type ChatRetrievalDegradationReason =
+  | "timeout"
+  | "read_failed"
+  | "storage_unavailable"
+  | "planner_unavailable"
+  | "unknown";
+
+export type ChatRetrievalStatus = {
+  state: "not_requested" | "retrieved" | "empty" | "degraded";
+  target: ChatRetrievalTarget | null;
+  reason: ChatRetrievalDegradationReason | null;
+  message: string | null;
+};
+
 export type TurnPlanningMemoryHint = {
   id: string;
   label: string;

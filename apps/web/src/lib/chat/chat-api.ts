@@ -115,6 +115,13 @@ export type TokenSavingsEstimate = {
   compressionRatio: number | null;
 };
 
+export type ChatRetrievalStatus = {
+  state: "not_requested" | "retrieved" | "empty" | "degraded";
+  target: "memory" | "document" | null;
+  reason: "timeout" | "read_failed" | "storage_unavailable" | "planner_unavailable" | "unknown" | null;
+  message: string | null;
+};
+
 export type ArtifactUploadReceipt = {
   artifactId: string;
   memoryFragmentId: string | null;
@@ -167,7 +174,10 @@ export type ChatTurnStreamEvent =
       type: "context.ready";
       turnId: string;
       memoryCount: number;
+      documentPassageCount?: number;
       citations: NonNullable<ChatMessage["citations"]>;
+      contextResolution?: unknown;
+      retrievalStatus?: ChatRetrievalStatus;
       tokenContextSaved: number;
       tokenSavings?: TokenSavingsEstimate;
       timings?: Record<string, number>;
@@ -206,12 +216,16 @@ export type ChatTurnStreamEvent =
 type SendMessageResponse = {
   userMessage: ChatMessage;
   assistantMessage: ChatMessage;
-  context: {
-    citations: NonNullable<ChatMessage["citations"]>;
-    memoryCount: number;
-    tokenContextSaved: number;
-    tokenSavings?: TokenSavingsEstimate;
-    timings?: Record<string, number>;
+    context: {
+      citations: NonNullable<ChatMessage["citations"]>;
+      memoryCount: number;
+      documentPassageCount?: number;
+      documentRetrievalPlan?: unknown;
+      contextResolution?: unknown;
+      retrievalStatus?: ChatRetrievalStatus;
+      tokenContextSaved: number;
+      tokenSavings?: TokenSavingsEstimate;
+      timings?: Record<string, number>;
     policy: {
       rawArtifactsIncluded: boolean;
       memory: string;

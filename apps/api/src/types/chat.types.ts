@@ -14,6 +14,7 @@ import type { ProviderRuntimeConfig } from "../lib/chat/helpers.js";
 import type { ChatMemoryIntent, MemoryIntakeResult } from "../lib/chat/memory-intake.js";
 import type { ChatSurface } from "../lib/chat/chat-surface.js";
 import type {
+  ChatRetrievalStatus,
   ConversationContextResolution,
   CoreCommsContext,
   DocumentContext,
@@ -23,6 +24,7 @@ import type {
 } from "../lib/chat/turn-types.js";
 
 export type {
+  ChatRetrievalStatus,
   ConversationContextResolution,
   CoreCommsContext,
   DocumentContext,
@@ -166,6 +168,7 @@ export type ChatTurnAuditPayload = {
   tokenSavings: TokenSavingsEstimate | Record<string, unknown>;
   title?: GeneratedChatTitle | Record<string, unknown>;
   timings?: ChatTurnTimings;
+  retrievalStatus?: ChatRetrievalStatus;
 };
 
 export type ChatPersistTurnInput = {
@@ -203,6 +206,7 @@ export type CompleteStreamingTurnInput = {
   usage: Record<string, unknown>;
   tokenSavings: TokenSavingsEstimate | Record<string, unknown>;
   timings: ChatTurnTimings;
+  retrievalStatus?: ChatRetrievalStatus;
   surface?: ChatSurface;
 };
 
@@ -222,6 +226,7 @@ export type RecordCompletedStreamingTurnAuditInput = {
   usage: Record<string, unknown>;
   tokenSavings: TokenSavingsEstimate | Record<string, unknown>;
   timings: ChatTurnTimings;
+  retrievalStatus?: ChatRetrievalStatus;
 };
 
 export type RecordChatMemoryIntakeOutcomeInput = {

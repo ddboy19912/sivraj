@@ -9,8 +9,11 @@ import { createOpenAICompatibleChatGenerator } from "@sivraj/llm";
 import type { Context } from "hono";
 import type { AuthEnv } from "../../middleware/auth.js";
 import type {
+  ChatMemoryContext,
   ChatMemoryIntent,
+  ChatRetrievalStatus,
   ChatRouteDependencies,
+  ChatRuntimeConfig,
   ChatSurface,
   ChatThreadGate,
   ChatTurnEventStream,
@@ -47,14 +50,18 @@ import { estimateMemoryTokenSavings } from "./token-accounting.js";
 import { sanitizeAssistantContent } from "./chat-sanitize.js";
 import {
   buildMemoryIntakeAcknowledgement,
+  buildEmptyRetrievalFallbackReply,
+  buildRetrievalFallbackReply,
   memoryIntakeFailureMessage,
   memoryIntakeIntentFromTurnPlan,
   memoryIntakeMessageFromTurnPlan,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
   shouldFastReplyMissingMemory,
+  shouldFallbackForRetrievalDegradation,
   shouldInterruptForMemoryIntakeFailure,
   shouldLoadMemoryContext,
+  shouldProceedWithPartialRetrieval,
   shouldRunChatMemoryIntake,
   shouldUseLosslessMemoryFallback,
 } from "./turn-policy.js";
@@ -83,6 +90,12 @@ import {
   toTurnResponse,
   writeChatTurnEvent,
 } from "./turn-events.js";
+import type {
+  ChatRetrievalDegradationReason,
+  ChatRetrievalTarget,
+  ConversationContextResolution,
+  DocumentContext,
+} from "./turn-types.js";
 
 export type RunStreamingChatTurnInput = {
   c: Context<AuthEnv>;
@@ -175,6 +188,7 @@ try {
     if (runtimeConfig && shouldFastAcknowledgePrivateDisclosure(contextResolution, memoryIntent)) {
         const memoryContext = emptyMemoryContext();
         const documentContext = emptyDocumentContext();
+        const retrievalStatus = notRequestedRetrievalStatus();
         const citations = buildCitations(memoryContext, documentContext);
         const tokenSavings = estimateMemoryTokenSavings(memoryContext);
         const finalContent = await timedPromise(timings, "voiceReplyMs", generateSivrajVoiceReply({
@@ -191,6 +205,7 @@ try {
             citations,
             documentPassageCount: 0,
             contextResolution,
+            retrievalStatus,
             tokenContextSaved: 0,
             tokenSavings,
             timings: readPublicChatTimings(timings),
@@ -214,6 +229,7 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus,
             surface,
         }));
         timings.totalCompletedMs = Date.now() - turnStartedAt;
@@ -226,6 +242,7 @@ try {
                 documentPassageCount: 0,
                 documentRetrievalPlan: documentContext.retrievalPlan,
                 contextResolution,
+                retrievalStatus,
                 tokenContextSaved: 0,
                 tokenSavings,
                 timings: readPublicChatTimings(timings),
@@ -251,12 +268,14 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus,
         });
         return;
     }
     if (runtimeConfig && shouldFastAcknowledgeMemoryIntake(contextResolution, memoryIntake, memoryIntent)) {
         const memoryContext = emptyMemoryContext();
         const documentContext = emptyDocumentContext();
+        const retrievalStatus = notRequestedRetrievalStatus();
         const citations = buildCitations(memoryContext, documentContext);
         const tokenSavings = estimateMemoryTokenSavings(memoryContext);
         const finalContent = buildMemoryIntakeAcknowledgement(memoryIntake);
@@ -267,6 +286,7 @@ try {
             citations,
             documentPassageCount: 0,
             contextResolution,
+            retrievalStatus,
             tokenContextSaved: 0,
             tokenSavings,
             timings: readPublicChatTimings(timings),
@@ -290,6 +310,7 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus,
             surface,
         }));
         timings.totalCompletedMs = Date.now() - turnStartedAt;
@@ -302,6 +323,7 @@ try {
                 documentPassageCount: 0,
                 documentRetrievalPlan: documentContext.retrievalPlan,
                 contextResolution,
+                retrievalStatus,
                 tokenContextSaved: 0,
                 tokenSavings,
                 timings: readPublicChatTimings(timings),
@@ -329,37 +351,46 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus,
         });
         return;
     }
     const retrievalQuery = contextResolution.standaloneQuery;
     const shouldLoadMemory = shouldLoadMemoryContext(contextResolution, retrievalQuery);
     const shouldLoadDocument = shouldLoadDocumentContext(contextResolution);
-    const memoryContext = shouldLoadMemory && runtimeConfig
-        ? await timedPromise(timings, "memoryContextMs", loadMemoryContext({
-            db: deps.db,
-            privateMemoryReader: deps.privateMemoryReader,
-            memorySearchConfig: deps.memorySearchConfig,
+    const loadedMemory = shouldLoadMemory && runtimeConfig
+        ? await loadMemoryContextForTurn({
+            deps,
+            timings,
             twinId: gate.twinId,
             query: retrievalQuery,
             contextResolution,
             runtimeConfig,
-            llmFetch: deps.llmFetch,
-        }))
-        : emptyMemoryContext();
-    const documentContext = shouldLoadDocument && runtimeConfig
-        ? await timedPromise(timings, "documentContextMs", loadDocumentContextForIntent({
-            db: deps.db,
-            privateMemoryReader: deps.privateMemoryReader,
-            twinId: gate.twinId,
-            thread: gate.thread,
+        })
+        : {
+            memoryContext: emptyMemoryContext(),
+            retrievalStatus: notRequestedRetrievalStatus(),
+        };
+    const memoryContext = loadedMemory.memoryContext;
+    const loadedDocument = shouldLoadDocument && runtimeConfig
+        ? await loadDocumentContextForTurn({
+            deps,
+            timings,
+            gate,
             query: retrievalQuery,
             contextResolution,
             runtimeConfig,
-            llmFetch: deps.llmFetch,
-            documentReadTimeoutMs: retryTimeoutMs,
-        }))
-        : emptyDocumentContext();
+            retryTimeoutMs,
+        })
+        : {
+            documentContext: emptyDocumentContext(),
+            retrievalStatus: notRequestedRetrievalStatus(),
+        };
+    const documentContext = loadedDocument.documentContext;
+    const retrievalStatus = resolveTurnRetrievalStatus([
+        loadedMemory.retrievalStatus,
+        loadedDocument.retrievalStatus,
+    ]);
     if (shouldLoadDocument) {
         await timedPromise(timings, "documentFocusMs", updateThreadDocumentFocusFromContext({
             db: deps.db,
@@ -376,6 +407,38 @@ try {
     const citations = buildCitations(memoryContext, documentContext);
     const tokenSavings = estimateMemoryTokenSavings(memoryContext);
     const estimatedSavedTokens = tokenSavings.estimatedTokensSaved;
+    if (
+        shouldFallbackForRetrievalDegradation(contextResolution, retrievalStatus) &&
+        !shouldProceedWithPartialRetrieval({ retrievalStatus, memoryContext, documentContext })
+    ) {
+        const finalContent = retrievalStatus.message ??
+            buildRetrievalFallbackReply(retrievalStatus.target ?? "memory", retrievalStatus.reason);
+        await completeFallbackStreamingTurn({
+            c,
+            deps,
+            gate,
+            stream,
+            turnId: turnSeed.turn.id,
+            assistantMessageId: turnSeed.assistantMessage.id,
+            content,
+            finalContent,
+            runtimeConfig,
+            memoryContext,
+            documentContext,
+            contextResolution,
+            citations,
+            tokenSavings,
+            timings,
+            surface,
+            retrievalStatus,
+            turnStartedAt,
+            policyMemory:
+                retrievalStatus.target === "document"
+                    ? "Sivraj could not retrieve document context for this turn, so it returned a safe fallback."
+                    : "Sivraj could not retrieve durable memory for this turn, so it returned a safe fallback.",
+        });
+        return;
+    }
     if (runtimeConfig && shouldFastReplyMissingMemory({
         query: retrievalQuery,
         contextResolution,
@@ -383,19 +446,17 @@ try {
         memoryContext,
         documentContext,
     })) {
-        const finalContent = await timedPromise(timings, "voiceReplyMs", generateSivrajVoiceReply({
-            kind: "missing_memory",
-            userMessage: retrievalQuery,
-            runtimeConfig,
-            llmFetch: deps.llmFetch,
-            assistantName: coreCommsContext.assistantName,
-        }));
+        const missingMemoryStatus = retrievalStatus.state === "not_requested"
+            ? emptyRetrievalStatus("memory")
+            : retrievalStatus;
+        const finalContent = buildEmptyRetrievalFallbackReply("memory");
         await writeChatTurnEvent(stream, "context.ready", {
             turnId: turnSeed.turn.id,
             memoryCount: 0,
             citations,
             documentPassageCount: documentContext.passages.length,
             contextResolution,
+            retrievalStatus: missingMemoryStatus,
             tokenContextSaved: estimatedSavedTokens,
             tokenSavings,
             timings: readPublicChatTimings(timings),
@@ -419,6 +480,7 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus: missingMemoryStatus,
             surface,
         }));
         timings.totalCompletedMs = Date.now() - turnStartedAt;
@@ -431,6 +493,7 @@ try {
                 documentPassageCount: documentContext.passages.length,
                 documentRetrievalPlan: documentContext.retrievalPlan,
                 contextResolution,
+                retrievalStatus: missingMemoryStatus,
                 tokenContextSaved: estimatedSavedTokens,
                 tokenSavings,
                 timings: readPublicChatTimings(timings),
@@ -456,6 +519,7 @@ try {
             usage: {},
             tokenSavings,
             timings: readPublicChatTimings(timings),
+            retrievalStatus: missingMemoryStatus,
         });
         return;
     }
@@ -465,6 +529,7 @@ try {
         citations,
         documentPassageCount: documentContext.passages.length,
         contextResolution,
+        retrievalStatus,
         tokenContextSaved: estimatedSavedTokens,
         tokenSavings,
         timings: readPublicChatTimings(timings),
@@ -545,6 +610,7 @@ try {
         usage,
         tokenSavings,
         timings: readPublicChatTimings(timings),
+        retrievalStatus,
         surface,
     }));
     timings.totalCompletedMs = Date.now() - turnStartedAt;
@@ -557,6 +623,7 @@ try {
             documentPassageCount: documentContext.passages.length,
             documentRetrievalPlan: documentContext.retrievalPlan,
             contextResolution,
+            retrievalStatus,
             tokenContextSaved: estimatedSavedTokens,
             tokenSavings,
             timings: readPublicChatTimings(timings),
@@ -582,6 +649,7 @@ try {
         usage,
         tokenSavings,
         timings: readPublicChatTimings(timings),
+        retrievalStatus,
     });
     if (memoryIntent !== "private") {
         void enqueueCompletedChatTurnLearning({
@@ -625,6 +693,263 @@ catch (error) {
     });
     await markTurnFailed(deps.db, turnSeed.turn.id, turnSeed.assistantMessage.id, message, surface);
 }
+}
+
+async function loadMemoryContextForTurn(input: {
+    deps: ChatRouteDependencies;
+    timings: Record<string, number>;
+    twinId: string;
+    query: string;
+    contextResolution: ConversationContextResolution;
+    runtimeConfig: ChatRuntimeConfig;
+}): Promise<{ memoryContext: ChatMemoryContext; retrievalStatus: ChatRetrievalStatus }> {
+    try {
+        const memoryContext = await timedPromise(input.timings, "memoryContextMs", loadMemoryContext({
+            db: input.deps.db,
+            privateMemoryReader: input.deps.privateMemoryReader,
+            memorySearchConfig: input.deps.memorySearchConfig,
+            twinId: input.twinId,
+            query: input.query,
+            contextResolution: input.contextResolution,
+            runtimeConfig: input.runtimeConfig,
+            llmFetch: input.deps.llmFetch,
+        }));
+        return {
+            memoryContext,
+            retrievalStatus: memoryContext.results.length > 0
+                ? retrievedRetrievalStatus("memory")
+                : emptyRetrievalStatus("memory"),
+        };
+    } catch (error) {
+        const reason = readRetrievalFailureReason(error);
+        console.warn("chat memory retrieval degraded", {
+            error: errorMessage(error),
+            reason,
+        });
+        return {
+            memoryContext: emptyMemoryContext(),
+            retrievalStatus: degradedRetrievalStatus("memory", reason),
+        };
+    }
+}
+
+async function loadDocumentContextForTurn(input: {
+    deps: ChatRouteDependencies;
+    timings: Record<string, number>;
+    gate: ChatThreadGate;
+    query: string;
+    contextResolution: ConversationContextResolution;
+    runtimeConfig: ChatRuntimeConfig;
+    retryTimeoutMs: number;
+}): Promise<{ documentContext: DocumentContext; retrievalStatus: ChatRetrievalStatus }> {
+    try {
+        const documentContext = await timedPromise(input.timings, "documentContextMs", loadDocumentContextForIntent({
+            db: input.deps.db,
+            privateMemoryReader: input.deps.privateMemoryReader,
+            twinId: input.gate.twinId,
+            thread: input.gate.thread,
+            query: input.query,
+            contextResolution: input.contextResolution,
+            runtimeConfig: input.runtimeConfig,
+            llmFetch: input.deps.llmFetch,
+            documentReadTimeoutMs: input.retryTimeoutMs,
+        }));
+        return {
+            documentContext,
+            retrievalStatus: documentContext.passages.length > 0 || documentContext.inspectionSources.length > 0
+                ? retrievedRetrievalStatus("document")
+                : emptyRetrievalStatus("document"),
+        };
+    } catch (error) {
+        const reason = readRetrievalFailureReason(error);
+        console.warn("chat document retrieval degraded", {
+            error: errorMessage(error),
+            reason,
+        });
+        return {
+            documentContext: emptyDocumentContext(),
+            retrievalStatus: degradedRetrievalStatus("document", reason),
+        };
+    }
+}
+
+async function completeFallbackStreamingTurn(input: {
+    c: Context<AuthEnv>;
+    deps: ChatRouteDependencies;
+    gate: ChatThreadGate;
+    stream: ChatTurnEventStream;
+    turnId: string;
+    assistantMessageId: string;
+    content: string;
+    finalContent: string;
+    runtimeConfig: ChatRuntimeConfig;
+    memoryContext: ChatMemoryContext;
+    documentContext: DocumentContext;
+    contextResolution: ConversationContextResolution;
+    citations: ReturnType<typeof buildCitations>;
+    tokenSavings: ReturnType<typeof estimateMemoryTokenSavings>;
+    timings: Record<string, number>;
+    surface: ChatSurface;
+    retrievalStatus: ChatRetrievalStatus;
+    turnStartedAt: number;
+    policyMemory: string;
+}) {
+    await writeChatTurnEvent(input.stream, "context.ready", {
+        turnId: input.turnId,
+        memoryCount: input.memoryContext.results.length,
+        citations: input.citations,
+        documentPassageCount: input.documentContext.passages.length,
+        contextResolution: input.contextResolution,
+        retrievalStatus: input.retrievalStatus,
+        tokenContextSaved: input.tokenSavings.estimatedTokensSaved,
+        tokenSavings: input.tokenSavings,
+        timings: readPublicChatTimings(input.timings),
+    });
+    await writeChatTurnEvent(input.stream, "assistant.delta", {
+        turnId: input.turnId,
+        assistantMessageId: input.assistantMessageId,
+        delta: input.finalContent,
+    });
+    const completedAssistant = await timedPromise(input.timings, "completionPersistMs", completeStreamingTurn({
+        db: input.deps.db,
+        turnId: input.turnId,
+        assistantMessageId: input.assistantMessageId,
+        finalContent: input.finalContent,
+        runtimeConfig: input.runtimeConfig,
+        model: input.runtimeConfig.model,
+        memoryContext: input.memoryContext,
+        documentContext: input.documentContext,
+        contextResolution: input.contextResolution,
+        citations: input.citations,
+        usage: {},
+        tokenSavings: input.tokenSavings,
+        timings: readPublicChatTimings(input.timings),
+        retrievalStatus: input.retrievalStatus,
+        surface: input.surface,
+    }));
+    input.timings.totalCompletedMs = Date.now() - input.turnStartedAt;
+    await writeChatTurnEvent(input.stream, "assistant.completed", {
+        turnId: input.turnId,
+        assistantMessage: toMessageResponse(completedAssistant),
+        context: {
+            citations: input.citations,
+            memoryCount: input.memoryContext.results.length,
+            documentPassageCount: input.documentContext.passages.length,
+            documentRetrievalPlan: input.documentContext.retrievalPlan,
+            contextResolution: input.contextResolution,
+            retrievalStatus: input.retrievalStatus,
+            tokenContextSaved: input.tokenSavings.estimatedTokensSaved,
+            tokenSavings: input.tokenSavings,
+            timings: readPublicChatTimings(input.timings),
+            policy: {
+                rawArtifactsIncluded: false,
+                memory: input.policyMemory,
+            },
+        },
+    });
+    void recordCompletedStreamingTurnAudit({
+        c: input.c,
+        db: input.deps.db,
+        gate: input.gate,
+        llmFetch: input.deps.llmFetch,
+        content: input.content,
+        finalContent: input.finalContent,
+        runtimeConfig: input.runtimeConfig,
+        model: input.runtimeConfig.model,
+        memoryContext: input.memoryContext,
+        documentContext: input.documentContext,
+        contextResolution: input.contextResolution,
+        citations: input.citations,
+        usage: {},
+        tokenSavings: input.tokenSavings,
+        timings: readPublicChatTimings(input.timings),
+        retrievalStatus: input.retrievalStatus,
+    });
+}
+
+function resolveTurnRetrievalStatus(statuses: ChatRetrievalStatus[]): ChatRetrievalStatus {
+    const requested = statuses.filter((status) => status.state !== "not_requested");
+    if (requested.length === 0) {
+        return notRequestedRetrievalStatus();
+    }
+    return requested.find((status) => status.state === "degraded") ??
+        requested.find((status) => status.state === "retrieved") ??
+        requested[0] ??
+        notRequestedRetrievalStatus();
+}
+
+function notRequestedRetrievalStatus(): ChatRetrievalStatus {
+    return {
+        state: "not_requested",
+        target: null,
+        reason: null,
+        message: null,
+    };
+}
+
+function retrievedRetrievalStatus(target: ChatRetrievalTarget): ChatRetrievalStatus {
+    return {
+        state: "retrieved",
+        target,
+        reason: null,
+        message: null,
+    };
+}
+
+function emptyRetrievalStatus(target: ChatRetrievalTarget): ChatRetrievalStatus {
+    return {
+        state: "empty",
+        target,
+        reason: null,
+        message: buildEmptyRetrievalFallbackReply(target),
+    };
+}
+
+function degradedRetrievalStatus(
+    target: ChatRetrievalTarget,
+    reason: ChatRetrievalDegradationReason,
+): ChatRetrievalStatus {
+    return {
+        state: "degraded",
+        target,
+        reason,
+        message: buildRetrievalFallbackReply(target, reason),
+    };
+}
+
+function readRetrievalFailureReason(error: unknown): ChatRetrievalDegradationReason {
+    const message = errorMessage(error).toLowerCase();
+    if (
+        message.includes("timeout") ||
+        message.includes("timed out") ||
+        message.includes("aborted")
+    ) {
+        return "timeout";
+    }
+    if (
+        message.includes("not_configured") ||
+        message.includes("unavailable") ||
+        message.includes("cannot connect") ||
+        message.includes("connect timeout") ||
+        message.includes("fetch failed")
+    ) {
+        return "storage_unavailable";
+    }
+    if (
+        message.includes("read") ||
+        message.includes("decrypt") ||
+        message.includes("seal") ||
+        message.includes("blob") ||
+        message.includes("walrus") ||
+        message.includes("sha") ||
+        message.includes("sliver")
+    ) {
+        return "read_failed";
+    }
+    if (message.includes("planner")) {
+        return "planner_unavailable";
+    }
+    return "unknown";
 }
 
 function chatTimeoutMsForRetryAttempt(retryAttempt: number) {

@@ -124,7 +124,10 @@ export function AgentsSettingsSection({
   } = viewState;
   const contextQuery = useAgentContext({ session, preset, onSessionRefreshed });
   const clientsQuery = useAgentClients({ session, onSessionRefreshed });
-  const createTokenMutation = useCreateAgentToken({ session, onSessionRefreshed });
+  const createTokenMutation = useCreateAgentToken({
+    session,
+    onSessionRefreshed,
+  });
   const revokeMutation = useRevokeAgentClient({ session, onSessionRefreshed });
   const context = contextQuery.data ?? null;
   const contextExport = context?.contextExport ?? null;
@@ -138,7 +141,8 @@ export function AgentsSettingsSection({
         includeWriteback: writebackEnabled,
       })
     : null;
-  const selectedPreset = AGENT_CONTEXT_PRESETS.find((option) => option.id === preset) ??
+  const selectedPreset =
+    AGENT_CONTEXT_PRESETS.find((option) => option.id === preset) ??
     AGENT_CONTEXT_PRESETS[0];
 
   async function createToken() {
@@ -160,7 +164,9 @@ export function AgentsSettingsSection({
       dispatchView({ type: "TOKEN_CREATED", token });
       toast.success("Agent token created");
     } catch (error) {
-      toast.error("Token creation failed", { description: errorMessage(error) });
+      toast.error("Token creation failed", {
+        description: errorMessage(error),
+      });
     }
   }
 
@@ -233,10 +239,12 @@ export function AgentsSettingsSection({
           selectedPreset={selectedPreset}
           onDownloadContextPacket={downloadContextPacket}
           onDownloadMcpConfig={downloadMcpConfig}
-          onPresetChange={(nextPreset) => dispatchView({
-            type: "SET_PRESET",
-            preset: nextPreset,
-          })}
+          onPresetChange={(nextPreset) =>
+            dispatchView({
+              type: "SET_PRESET",
+              preset: nextPreset,
+            })
+          }
         />
 
         <div className="grid content-start gap-4">
@@ -247,23 +255,31 @@ export function AgentsSettingsSection({
             latestToken={latestToken}
             memorySearchEnabled={memorySearchEnabled}
             writebackEnabled={writebackEnabled}
-            onAgentNameChange={(nextAgentName) => dispatchView({
-              type: "SET_AGENT_NAME",
-              agentName: nextAgentName,
-            })}
+            onAgentNameChange={(nextAgentName) =>
+              dispatchView({
+                type: "SET_AGENT_NAME",
+                agentName: nextAgentName,
+              })
+            }
             onCreateToken={() => void createToken()}
-            onExpiryChange={(nextExpiry) => dispatchView({
-              type: "SET_EXPIRY",
-              expiresInMinutes: nextExpiry,
-            })}
-            onMemorySearchChange={(enabled) => dispatchView({
-              type: "SET_MEMORY_SEARCH",
-              enabled,
-            })}
-            onWritebackChange={(enabled) => dispatchView({
-              type: "SET_WRITEBACK",
-              enabled,
-            })}
+            onExpiryChange={(nextExpiry) =>
+              dispatchView({
+                type: "SET_EXPIRY",
+                expiresInMinutes: nextExpiry,
+              })
+            }
+            onMemorySearchChange={(enabled) =>
+              dispatchView({
+                type: "SET_MEMORY_SEARCH",
+                enabled,
+              })
+            }
+            onWritebackChange={(enabled) =>
+              dispatchView({
+                type: "SET_WRITEBACK",
+                enabled,
+              })
+            }
           />
 
           <AgentClientsList
@@ -282,17 +298,15 @@ export function AgentsSettingsSection({
 type AgentPresetOption = (typeof AGENT_CONTEXT_PRESETS)[number];
 type AgentContextDownload = ReturnType<typeof createMcpConfigDownload>;
 
-function HeaderStat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function HeaderStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-[14px] border border-white/8 bg-black/18 px-3 py-2">
-      <span className="block text-[11px] font-semibold text-white/38">{label}</span>
-      <span className="block truncate text-sm font-semibold text-white/82">{value}</span>
+      <span className="block text-[11px] font-semibold text-white/38">
+        {label}
+      </span>
+      <span className="block truncate text-sm font-semibold text-white/82">
+        {value}
+      </span>
     </div>
   );
 }
@@ -338,7 +352,9 @@ function AgentPacketPanel({
             <span className="text-xs font-semibold text-white/44">Preset</span>
             <Select
               value={preset}
-              onValueChange={(value) => onPresetChange(resolveAgentContextPreset(value))}
+              onValueChange={(value) =>
+                onPresetChange(resolveAgentContextPreset(value))
+              }
             >
               <SelectTrigger
                 size="sm"
@@ -427,8 +443,8 @@ function SourceInventoryNotice({
 
   return (
     <div className="rounded-[14px] border border-amber-200/18 bg-amber-300/8 px-3 py-2 text-xs font-semibold leading-5 text-amber-100/74">
-      {sourceCount} engineering source{sourceCount === 1 ? "" : "s"} found;
-      no approved or active packet items yet.
+      {sourceCount} engineering source{sourceCount === 1 ? "" : "s"} found; no
+      approved or active packet items yet.
     </div>
   );
 }
@@ -466,7 +482,9 @@ function AgentTokenPanel({
         </span>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-white/88">Agent token</h3>
-          <p className="text-[11px] font-medium text-white/42">Read-only default</p>
+          <p className="text-[11px] font-medium text-white/42">
+            Read-only default
+          </p>
         </div>
       </div>
 
@@ -502,7 +520,10 @@ function AgentTokenPanel({
           className="mt-4 h-9 w-full rounded-[12px]"
         >
           {isCreatingToken ? (
-            <LoaderCircle className="size-3.5 animate-spin" data-icon="inline-start" />
+            <LoaderCircle
+              className="size-3.5 animate-spin"
+              data-icon="inline-start"
+            />
           ) : (
             <KeyRound className="size-3.5" data-icon="inline-start" />
           )}

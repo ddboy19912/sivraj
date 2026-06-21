@@ -4,7 +4,12 @@ import {
   sendStreamingChatPageMessage,
 } from "@/lib/chat/chat-page-actions";
 import { createOptimisticUserMessage } from "@/lib/chat/chat-formatters";
-import type { ChatMemoryIntent, ChatMessage, ChatTurnStreamEvent } from "@/lib/chat/chat-api";
+import type {
+  ChatMemoryIntent,
+  ChatMessage,
+  ChatRetrievalStatus,
+  ChatTurnStreamEvent,
+} from "@/lib/chat/chat-api";
 import type { Session } from "@/lib/session";
 import type { ChatPageStatus } from "@/types/chat.types";
 
@@ -166,6 +171,10 @@ export function useChatMessageActions(input: ChatMessageActionsInput) {
 
     if (event.type === "context.ready") {
       input.setStatus("retrieving_context");
+      const retrievalNotice = retrievalDegradationNotice(event.retrievalStatus);
+      if (retrievalNotice) {
+        input.setNotice({ tone: "error", text: retrievalNotice });
+      }
       return null;
     }
 
@@ -313,4 +322,16 @@ function publicChatFailureMessage(message: string) {
   }
 
   return message;
+}
+
+function retrievalDegradationNotice(status: ChatRetrievalStatus | undefined) {
+  if (status?.state !== "degraded") {
+    return null;
+  }
+
+  const target = status.target === "document" ? "Document" : "Memory";
+  if (status.reason === "timeout") {
+    return `${target} retrieval timed out. I replied with a safe fallback.`;
+  }
+  return `${target} retrieval failed. I replied with a safe fallback.`;
 }

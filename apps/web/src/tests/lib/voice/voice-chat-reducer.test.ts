@@ -90,6 +90,38 @@ describe("homepage voice reducer", () => {
     expect(ended.activeEventId).toBeNull();
   });
 
+  it("treats retrieval fallback text as a normal assistant response", () => {
+    const eventId = "voice-1";
+    const fallbackText = "I couldn’t retrieve that memory right now, so I can’t answer it safely.";
+    const thinking = homepageVoiceReducer(
+      {
+        ...createInitialHomepageVoiceState(),
+        phase: "thinking",
+        activeEventId: eventId,
+      },
+      { type: "ASSISTANT_DELTA", eventId, delta: fallbackText },
+    );
+    const ready = homepageVoiceReducer(thinking, {
+      type: "ASSISTANT_READY",
+      eventId,
+      text: fallbackText,
+      threadId: "thread-1",
+    });
+    const speaking = homepageVoiceReducer(ready, {
+      type: "SPEAKING",
+      eventId,
+    });
+
+    expect(thinking.partialAssistantTranscript).toBe(fallbackText);
+    expect(ready).toMatchObject({
+      phase: "thinking",
+      assistantTranscript: fallbackText,
+      partialAssistantTranscript: "",
+      error: null,
+    });
+    expect(speaking.phase).toBe("speaking");
+  });
+
   it("models interruption as a named state before the next recording starts", () => {
     const speaking = homepageVoiceReducer(
       {

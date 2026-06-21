@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
     "memory:diagnose": "node scripts/diagnose-memory.mjs",
     "onboarding:reset": "tsx scripts/reset-onboarding.mjs",
     "test": "vitest run src",
@@ -28,11 +29,11 @@
     "@sivraj/storage-walrus": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.18",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "tsx": "^4.22.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
-    "tsx": "^4.22.0",
     "typescript": "~6.0.3",
     "vitest": "^4.1.6"
   }
