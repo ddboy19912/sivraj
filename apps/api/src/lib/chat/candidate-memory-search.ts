@@ -1,6 +1,6 @@
 import { candidateMemories, canonicalMemories } from "@sivraj/db";
 import type { MemorySearchConfig } from "@sivraj/config";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { MemoryCandidate } from "@sivraj/retrieval";
 import type { ApiDb, AppDependencies } from "../../app.js";
 import { withTimeout } from "./chat-promise-timeout.js";
@@ -8,11 +8,11 @@ import { readCurrentTruthContext } from "./current-truth.js";
 import { readCandidateMemoryTokenAccounting } from "./token-accounting.js";
 import { errorMessage, readPositiveInteger } from "./helpers.js";
 import { optionalString, readRecord } from "../http/route-helpers.js";
-import { collectDecryptedCandidates } from "../memory-search/helpers.js";
+import { collectDecryptedCandidates, escapeLike } from "../memory-search/helpers.js";
 import { mapSettledWithConcurrency } from "../memory-search/decrypt.js";
 
 const CHAT_CANDIDATE_MEMORY_DECRYPT_TIMEOUT_DEFAULT_MS = 30_000;
-const CHAT_CANDIDATE_MEMORY_DECRYPT_LIMIT_DEFAULT = 1;
+const CHAT_CANDIDATE_MEMORY_DECRYPT_LIMIT_DEFAULT = 8;
 const CHAT_MEMORY_PLAINTEXT_CACHE_TTL_DEFAULT_MS = 10 * 60 * 1000;
 
 type PrivateMemoryReader = NonNullable<AppDependencies["privateMemoryReader"]>;
@@ -29,6 +29,7 @@ export async function loadCandidateMemorySearchCandidates(input: {
   memorySearchConfig: MemorySearchConfig;
   twinId: string;
   query: string;
+  queryTerms?: string[];
 }) {
   if (!input.privateMemoryReader) {
     return emptyCandidateMemoryContext();
@@ -73,6 +74,7 @@ async function loadCandidateMemoryRows(input: {
   db: ApiDb;
   twinId: string;
   memorySearchConfig: MemorySearchConfig;
+  queryTerms?: string[];
 }) {
   const decryptLimit = readPositiveInteger(
     process.env["CHAT_CANDIDATE_MEMORY_DECRYPT_LIMIT"],
@@ -88,13 +90,25 @@ async function loadCandidateMemoryRows(input: {
     ne(candidateMemories.status, "superseded"),
     archivedCandidateMemoryFilter(),
   ];
+  const queryTerms = input.queryTerms?.slice(0, 8) ?? [];
+  const matchedRows = queryTerms.length > 0
+    ? await input.db
+      .select()
+      .from(candidateMemories)
+      .where(and(...baseFilters, or(...queryTerms.map((term) => candidateMemoryMatchesTerm(term)))))
+      .orderBy(desc(candidateMemories.createdAt))
+      .limit(rowLimit)
+    : [];
   const fallbackRows = await input.db
     .select()
     .from(candidateMemories)
     .where(and(...baseFilters))
     .orderBy(desc(candidateMemories.createdAt))
     .limit(Math.min(rowLimit, input.memorySearchConfig.fallbackLimit));
-  return filterActiveCanonicalCandidateRows(input.db, fallbackRows);
+  return filterActiveCanonicalCandidateRows(
+    input.db,
+    uniqueRowsById([...matchedRows, ...fallbackRows]).slice(0, rowLimit),
+  );
 }
 
 async function filterActiveCanonicalCandidateRows(
@@ -133,6 +147,34 @@ async function filterActiveCanonicalCandidateRows(
 
 function archivedCandidateMemoryFilter() {
   return sql`${candidateMemories.statementStorageRef} not like 'pending://%'`;
+}
+
+function candidateMemoryMatchesTerm(term: string) {
+  const pattern = `%${escapeLike(term)}%`;
+
+  return sql`
+    lower(coalesce(${candidateMemories.memoryType}::text, '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->>'subject', '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->>'sourceType', '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->'memoryMetadata'->>'category', '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->'conversationUnderstanding'->>'sourceType', '')) like ${pattern} escape '\\'
+  `;
+}
+
+function uniqueRowsById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const uniqueRows: T[] = [];
+
+  for (const row of rows) {
+    if (seen.has(row.id)) {
+      continue;
+    }
+
+    seen.add(row.id);
+    uniqueRows.push(row);
+  }
+
+  return uniqueRows;
 }
 
 function toCandidateMemorySearchCandidateWithTimeout(

@@ -45,7 +45,6 @@ import {
   buildRetrievalFallbackReply,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
-  shouldFastReplyMissingMemory,
   shouldFallbackForRetrievalDegradation,
   shouldInterruptForMemoryIntakeFailure,
   shouldLoadMemoryContext,
@@ -609,41 +608,6 @@ describe("chat candidate memory retrieval helpers", () => {
     expect(buildRetrievalFallbackReply("document", "read_failed")).toBe(
       "I couldn’t retrieve that document right now, so I can’t answer it safely.",
     );
-  });
-
-  it("uses a deterministic missing-memory reply only when hot memory cannot answer", () => {
-    const memoryContext = { results: [], tokenAccountingByMemoryId: new Map() } as never;
-    const coreCommsContext = {
-      assistantName: "Jarvis",
-      displayName: "Fortune Ogunsusi",
-      aliases: [],
-      emails: [],
-      phones: [],
-      handles: {},
-    };
-
-    expect(shouldFastReplyMissingMemory({
-      query: "What is my private test phrase?",
-      contextResolution: turnPlan({
-        standaloneQuery: "What is my private test phrase?",
-        intent: "memory_qa",
-        answerTarget: "memory",
-        retrieval: "hot_memory",
-      }),
-      coreCommsContext,
-      memoryContext,
-    })).toBe(true);
-    expect(shouldFastReplyMissingMemory({
-      query: "What is my name?",
-      contextResolution: turnPlan({
-        standaloneQuery: "What is my name?",
-        intent: "general_chat",
-        answerTarget: "general",
-        retrieval: "none",
-      }),
-      coreCommsContext,
-      memoryContext,
-    })).toBe(false);
   });
 
   it("falls back for degraded required retrieval but permits partial context", () => {

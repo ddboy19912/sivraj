@@ -176,34 +176,6 @@ export function resolveCoreCommsAnswer(
   return null;
 }
 
-/** Short-circuit with a voice reply when memory QA finds no matching hot memory. */
-export function shouldFastReplyMissingMemory(input: {
-  query: string;
-  contextResolution?: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent"> | null;
-  coreCommsContext: CoreCommsContext;
-  memoryContext: PolicyMemoryContext;
-  documentContext?: DocumentContext;
-}): boolean {
-  if (input.memoryContext.results.length > 0) {
-    return false;
-  }
-
-  if (
-    (input.documentContext?.passages.length ?? 0) > 0 ||
-    (input.documentContext?.inspectionSources.length ?? 0) > 0
-  ) {
-    return false;
-  }
-
-  if (resolveCoreCommsAnswerTarget(input.query, input.coreCommsContext)) {
-    return false;
-  }
-
-  return input.contextResolution?.retrieval === "hot_memory" ||
-    input.contextResolution?.answerTarget === "memory" ||
-    input.contextResolution?.intent === "memory_qa";
-}
-
 function normalizeIdentityQuery(query: string): string {
   return query
     .toLowerCase()

@@ -3,7 +3,6 @@ import type { CoreCommsContext } from "./turn-types.js";
 import {
   resolveCoreCommsAnswer,
   resolveCoreCommsAnswerTarget,
-  shouldFastReplyMissingMemory,
 } from "./turn-policy.js";
 
 describe("resolveCoreCommsAnswerTarget", () => {
@@ -55,34 +54,6 @@ describe("resolveCoreCommsAnswer", () => {
       target: "assistant_name",
       content: "My name is Hulk.",
     });
-  });
-});
-
-describe("shouldFastReplyMissingMemory", () => {
-  it("does not fast-reply missing memory when core comms can answer the user's name", () => {
-    expect(shouldFastReplyMissingMemory({
-      query: "What is my name?",
-      contextResolution: {
-        retrieval: "hot_memory",
-        answerTarget: "memory",
-        intent: "memory_qa",
-      },
-      coreCommsContext: coreCommsContext({ displayName: "Fortune" }),
-      memoryContext: { results: [] },
-    })).toBe(false);
-  });
-
-  it("keeps the missing-memory fallback when no core comms fact can answer", () => {
-    expect(shouldFastReplyMissingMemory({
-      query: "What did I tell you about the launch checklist?",
-      contextResolution: {
-        retrieval: "hot_memory",
-        answerTarget: "memory",
-        intent: "memory_qa",
-      },
-      coreCommsContext: coreCommsContext({ displayName: "Fortune" }),
-      memoryContext: { results: [] },
-    })).toBe(true);
   });
 });
 

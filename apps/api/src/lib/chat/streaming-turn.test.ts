@@ -241,6 +241,66 @@ describe("runStreamingChatTurn retrieval fallback", () => {
     expect(parseEventData(events[2]).delta).toBe("Your name is Fortune.");
     expect(parseEventData(events[3]).assistantMessage.content).toBe("Your name is Fortune.");
   });
+
+  it("passes empty memory QA context to the model instead of using the missing-memory fallback", async () => {
+    mockChatTurn.resolveConversationContext.mockResolvedValue({
+      ...memoryQaResolution(),
+      standaloneQuery: "What is my private test phrase?",
+    });
+    mockChatTurn.createOpenAICompatibleChatGenerator.mockReturnValue({
+      generateChat: vi.fn(),
+      streamChat: vi.fn(() => chatStream("I searched your saved memory and did not find that phrase yet.")),
+    });
+    const events: Array<{ event: string; data: string }> = [];
+
+    await runStreamingChatTurn({
+      c: {} as any,
+      deps: {
+        db: {} as any,
+        privateMemoryReader: {} as any,
+        privateMemoryStorage: undefined,
+        artifactProcessingQueue: undefined,
+        llmFetch: vi.fn() as any,
+        memorySearchConfig: {} as any,
+      },
+      gate: {
+        twinId: "twin-1",
+        thread: chatThreadRow(),
+      },
+      stream: {
+        writeSSE: vi.fn(async (event) => {
+          events.push(event);
+        }),
+      },
+      content: "What is my private test phrase?",
+      memoryIntent: "auto",
+      surface: "web_chat",
+      retryAttempt: 0,
+      abortController: new AbortController(),
+    });
+
+    expect(mockChatTurn.loadMemoryContext).toHaveBeenCalled();
+    expect(mockChatTurn.markTurnGenerating).toHaveBeenCalled();
+    expect(mockChatTurn.createOpenAICompatibleChatGenerator).toHaveBeenCalled();
+    expect(mockChatTurn.completeStreamingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        finalContent: "I searched your saved memory and did not find that phrase yet.",
+        memoryContext: expect.objectContaining({ results: [] }),
+      }),
+    );
+    expect(events.map((event) => event.event)).toEqual([
+      "turn.created",
+      "context.ready",
+      "assistant.delta",
+      "assistant.completed",
+    ]);
+    expect(parseEventData(events[2]).delta).toBe(
+      "I searched your saved memory and did not find that phrase yet.",
+    );
+    expect(parseEventData(events[3]).assistantMessage.content).toBe(
+      "I searched your saved memory and did not find that phrase yet.",
+    );
+  });
 });
 
 function runtimeConfig(): ChatRuntimeConfig {

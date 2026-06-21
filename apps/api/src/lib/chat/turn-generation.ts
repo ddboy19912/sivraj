@@ -30,10 +30,8 @@ import { sanitizeAssistantContent } from "./chat-sanitize.js";
 import { generateSemanticChatTitle } from "./thread-title.js";
 import {
   resolveCoreCommsAnswer,
-  shouldFastReplyMissingMemory,
   shouldLoadMemoryContext,
 } from "./turn-policy.js";
-import { generateSivrajVoiceReply } from "./voice-reply.js";
 import { loadCachedCoreCommsContext } from "./chat-cache.js";
 import type { ConversationContextResolution, DocumentContext } from "./turn-types.js";
 import type { MemorySearchConfig } from "@sivraj/config";
@@ -125,27 +123,6 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     memoryContextPromise,
     documentContextPromise,
   ]);
-  if (
-    shouldFastReplyMissingMemory({
-      query: retrievalQuery,
-      contextResolution,
-      coreCommsContext,
-      memoryContext,
-      documentContext,
-    })
-  ) {
-    return buildStaticAssistantTurn({
-      content: await generateSivrajVoiceReply({
-        kind: "missing_memory",
-        userMessage: retrievalQuery,
-        runtimeConfig: input.runtimeConfig,
-        llmFetch: input.llmFetch,
-        assistantName: coreCommsContext.assistantName,
-      }),
-      runtimeConfig: input.runtimeConfig,
-      contextResolution,
-    });
-  }
   const promptMessages = buildPromptMessages({
     currentMessage: input.content,
     contextResolution,

@@ -58,7 +58,6 @@ import {
   resolveCoreCommsAnswer,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
-  shouldFastReplyMissingMemory,
   shouldFallbackForRetrievalDegradation,
   shouldInterruptForMemoryIntakeFailure,
   shouldLoadMemoryContext,
@@ -471,90 +470,6 @@ try {
                 retrievalStatus.target === "document"
                     ? "Sivraj could not retrieve document context for this turn, so it returned a safe fallback."
                     : "Sivraj could not retrieve durable memory for this turn, so it returned a safe fallback.",
-        });
-        return;
-    }
-    if (runtimeConfig && shouldFastReplyMissingMemory({
-        query: retrievalQuery,
-        contextResolution,
-        coreCommsContext,
-        memoryContext,
-        documentContext,
-    })) {
-        const missingMemoryStatus = retrievalStatus.state === "not_requested"
-            ? emptyRetrievalStatus("memory")
-            : retrievalStatus;
-        const finalContent = buildEmptyRetrievalFallbackReply("memory");
-        await writeChatTurnEvent(stream, "context.ready", {
-            turnId: turnSeed.turn.id,
-            memoryCount: 0,
-            citations,
-            documentPassageCount: documentContext.passages.length,
-            contextResolution,
-            retrievalStatus: missingMemoryStatus,
-            tokenContextSaved: estimatedSavedTokens,
-            tokenSavings,
-            timings: readPublicChatTimings(timings),
-        });
-        await writeChatTurnEvent(stream, "assistant.delta", {
-            turnId: turnSeed.turn.id,
-            assistantMessageId: turnSeed.assistantMessage.id,
-            delta: finalContent,
-        });
-        const completedAssistant = await timedPromise(timings, "completionPersistMs", completeStreamingTurn({
-            db: deps.db,
-            turnId: turnSeed.turn.id,
-            assistantMessageId: turnSeed.assistantMessage.id,
-            finalContent,
-            runtimeConfig,
-            model: runtimeConfig.model,
-            memoryContext,
-            documentContext,
-            contextResolution,
-            citations,
-            usage: {},
-            tokenSavings,
-            timings: readPublicChatTimings(timings),
-            retrievalStatus: missingMemoryStatus,
-            surface,
-        }));
-        timings.totalCompletedMs = Date.now() - turnStartedAt;
-        await writeChatTurnEvent(stream, "assistant.completed", {
-            turnId: turnSeed.turn.id,
-            assistantMessage: toMessageResponse(completedAssistant),
-            context: {
-                citations,
-                memoryCount: 0,
-                documentPassageCount: documentContext.passages.length,
-                documentRetrievalPlan: documentContext.retrievalPlan,
-                contextResolution,
-                retrievalStatus: missingMemoryStatus,
-                tokenContextSaved: estimatedSavedTokens,
-                tokenSavings,
-                timings: readPublicChatTimings(timings),
-                policy: {
-                    rawArtifactsIncluded: false,
-                    memory: "Sivraj checked hot memory and did not find a matching current truth.",
-                },
-            },
-        });
-        void recordCompletedStreamingTurnAudit({
-            c,
-            db: deps.db,
-            gate,
-            llmFetch: deps.llmFetch,
-            content,
-            finalContent,
-            runtimeConfig,
-            model: runtimeConfig.model,
-            memoryContext,
-            documentContext,
-            contextResolution,
-            citations,
-            usage: {},
-            tokenSavings,
-            timings: readPublicChatTimings(timings),
-            retrievalStatus: missingMemoryStatus,
         });
         return;
     }

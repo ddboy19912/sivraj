@@ -5,6 +5,7 @@
  * with bounded concurrency and fragment decrypt caching.
  */
 import type { MemorySearchConfig } from "@sivraj/config";
+import { tokenize } from "@sivraj/retrieval";
 import { memoryFragments } from "@sivraj/db";
 import { eq } from "drizzle-orm";
 import type { ApiDb, AppDependencies } from "../../app.js";
@@ -65,51 +66,27 @@ export async function loadMemoryContext(input: {
     runtimeConfig: input.runtimeConfig,
     llmFetch: input.llmFetch,
   });
-  if (hotCurrentTruthResults.length > 0) {
-    return {
-      results: dedupeRetrievalResults(
-        hotCurrentTruthResults,
-        5,
-        canonicalCurrentTruthContext.canonicalMemoryIdsByCandidateId,
-      ).results,
-      tokenAccountingByMemoryId: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
-    };
-  }
-  if (shouldUseHotCurrentTruthFallback(input.query, input.contextResolution as ConversationContextResolution)) {
-    const currentTruthResults = selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates);
-    if (currentTruthResults.length > 0) {
-      return {
-        results: dedupeRetrievalResults(
-          currentTruthResults,
-          5,
-          canonicalCurrentTruthContext.canonicalMemoryIdsByCandidateId,
-        ).results,
-        tokenAccountingByMemoryId: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
-      };
-    }
-  }
+  const currentTruthFallbackResults = shouldUseHotCurrentTruthFallback(
+    input.query,
+    input.contextResolution as ConversationContextResolution,
+  )
+    ? selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates)
+    : [];
   if (!input.privateMemoryReader) {
-    const currentTruthResults = selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates);
-    const rawResults = await rankChatMemoryResults({
-      candidates: canonicalCurrentTruthContext.candidates,
-      query: input.query,
-      limit: 5,
-      runtimeConfig: input.runtimeConfig,
-      llmFetch: input.llmFetch,
-    });
     return {
       results: dedupeRetrievalResults(
-        [...currentTruthResults, ...rawResults],
+        [...hotCurrentTruthResults, ...currentTruthFallbackResults],
         5,
         canonicalCurrentTruthContext.canonicalMemoryIdsByCandidateId,
       ).results,
       tokenAccountingByMemoryId: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
     };
   }
+  const queryTerms = memoryQueryTerms(input.query);
   const { rows } = await loadSearchRows({
     db: input.db,
     twinId: input.twinId,
-    queryTerms: [],
+    queryTerms,
     config: input.memorySearchConfig,
   });
   const candidateMemoryContext = await loadCandidateMemorySearchCandidates({
@@ -118,6 +95,7 @@ export async function loadMemoryContext(input: {
     memorySearchConfig: input.memorySearchConfig,
     twinId: input.twinId,
     query: input.query,
+    queryTerms,
   });
   const readableRows = rows.filter(isChatMemoryReadableRow);
   const canonicalMemoryIdsByFragmentId = await loadCanonicalMemoryIdsByFragmentId({
@@ -154,7 +132,6 @@ export async function loadMemoryContext(input: {
     ...candidateMemoryContext.canonicalMemoryIdsByCandidateId,
     ...canonicalMemoryIdsByFragmentId,
   ]);
-  const currentTruthResults = selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates);
   const rawResults = await rankChatMemoryResults({
     candidates: combinedCandidates,
     query: input.query,
@@ -163,7 +140,7 @@ export async function loadMemoryContext(input: {
     llmFetch: input.llmFetch,
   });
   const { results } = dedupeRetrievalResults(
-    [...currentTruthResults, ...rawResults],
+    [...hotCurrentTruthResults, ...rawResults, ...currentTruthFallbackResults],
     5,
     canonicalMemoryIdsByMemoryId,
   );
@@ -193,6 +170,34 @@ export async function loadMemoryContext(input: {
 function isChatMemoryReadableRow(row: { storageStatus: string; storageLastReadErrorCode?: string | null }) {
   return CHAT_MEMORY_READABLE_STATUSES.includes(row.storageStatus as typeof CHAT_MEMORY_READABLE_STATUSES[number])
     || (row.storageStatus === "read_failed" && row.storageLastReadErrorCode === "read_timeout");
+}
+
+const MEMORY_QUERY_STOP_WORDS = new Set([
+  "about",
+  "any",
+  "are",
+  "did",
+  "do",
+  "does",
+  "have",
+  "is",
+  "know",
+  "me",
+  "memory",
+  "memories",
+  "mine",
+  "my",
+  "other",
+  "saved",
+  "tell",
+  "what",
+  "you",
+]);
+
+export function memoryQueryTerms(query: string): string[] {
+  return tokenize(query)
+    .filter((term) => !MEMORY_QUERY_STOP_WORDS.has(term))
+    .slice(0, 8);
 }
 
 function toMemorySearchCandidateWithTimeout(
