@@ -2,6 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { buildClientEncryptedArtifactBody } from "@/lib/encryption";
 import {
+  buildAgentInstructionMetadata,
+  type AgentInstructionOrigin,
+  inferAgentInstructionTargetFile,
+  isAgentInstructionFileName,
+  isMarkdownSourceFileName,
+  normalizeSourceFileName,
+  sourceDisplayMetadataForFileName,
+} from "@/lib/ingest/agent-instruction-source";
+import {
   attachLocalPreviewUrlToMessage,
   buildChatAttachmentArtifact,
   readChatMessageAttachments,
@@ -200,6 +209,130 @@ export function useChatAttachmentUpload(input: ChatAttachmentUploadInput) {
     setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
   }
 
+  async function saveSourceContent(inputValue: {
+    content: string;
+    fileName: string;
+    origin: AgentInstructionOrigin;
+  }) {
+    const content = inputValue.content;
+
+    if (!input.session || attachmentUploadStatus.phase !== "idle" || !content.trim()) {
+      return false;
+    }
+
+    statusStreamAbortRef.current?.abort();
+    statusStreamAbortRef.current = null;
+    let statusWatchTimeout: number | null = null;
+    let statusWatchTimedOut = false;
+    let reachedSearchableReadiness = false;
+    let persistedMessageId: string | null = null;
+    const fileName = normalizeSourceFileName(inputValue.fileName);
+    const sourceType = isMarkdownSourceFileName(fileName) ? "markdown" : "upload";
+
+    try {
+      setAttachmentUploadStatus({ phase: "encrypting", fileName });
+      const threadId = await ensureAttachmentThread({
+        activeThreadId: input.activeThreadId,
+        fileName,
+        session: input.session,
+        onSessionRefreshed: input.onSessionRefreshed,
+        setActiveThreadId: input.setActiveThreadId,
+        setThreads: input.setThreads,
+      });
+      input.setNotice({ tone: "info", text: `Securing ${fileName}...` });
+      const body = await buildClientEncryptedArtifactBody({
+        sourceType,
+        title: fileName,
+        content,
+        metadata: buildSavedSourceMetadata({
+          fileName,
+          origin: inputValue.origin,
+        }),
+      });
+
+      setAttachmentUploadStatus({ phase: "uploading", fileName });
+      input.setNotice({ tone: "info", text: `Saving ${fileName}...` });
+      const receipt = await uploadArtifact(body, input.session, input.onSessionRefreshed);
+      const { message } = await createThreadAttachmentMessage({
+        threadId,
+        artifactId: receipt.artifactId,
+        fileName,
+        fileType: contentTypeForSourceFileName(fileName),
+        fileSize: new Blob([content]).size,
+      }, input.session, input.onSessionRefreshed);
+      persistedMessageId = message.id;
+      input.setMessages((current) => [...current, message]);
+
+      setAttachmentUploadStatus({ phase: "processing", fileName });
+      input.setNotice({ tone: "info", text: `Indexing ${fileName}...` });
+
+      const abortController = new AbortController();
+      statusStreamAbortRef.current = abortController;
+      let terminalEvent: ArtifactStatusEvent | null = null;
+      statusWatchTimeout = window.setTimeout(() => {
+        statusWatchTimedOut = true;
+        abortController.abort();
+      }, ARTIFACT_STATUS_TIMEOUT_MS);
+
+      await streamArtifactStatus({
+        artifactId: receipt.artifactId,
+        session: input.session,
+        onSessionRefreshed: input.onSessionRefreshed,
+        signal: abortController.signal,
+        onEvent: (event) => {
+          terminalEvent = event;
+          input.setMessages((current) =>
+            current.map((currentMessage) =>
+              currentMessage.id === persistedMessageId
+                ? updateAttachmentMessageStatus(currentMessage, event, null)
+                : currentMessage,
+            ),
+          );
+          applyArtifactStatusEvent(event, fileName, input.setNotice);
+          if (event.status === "completed") {
+            reachedSearchableReadiness = true;
+            abortController.abort();
+          }
+        },
+      });
+      window.clearTimeout(statusWatchTimeout);
+      statusWatchTimeout = null;
+
+      if (!terminalEvent || reachedSearchableReadiness || isSuccessfulArtifactEvent(terminalEvent)) {
+        input.setNotice({ tone: "info", text: `${fileName} is saved as an exact source.` });
+      } else if (!isFailedArtifactEvent(terminalEvent)) {
+        input.setNotice({
+          tone: "info",
+          text: `${fileName} is queued for source indexing.`,
+        });
+      }
+    } catch (error) {
+      if (statusWatchTimeout != null) {
+        window.clearTimeout(statusWatchTimeout);
+      }
+      if (isAbortError(error) && reachedSearchableReadiness) {
+        input.setNotice({ tone: "info", text: `${fileName} is saved as an exact source.` });
+      } else if (isAbortError(error) && statusWatchTimedOut) {
+        input.setNotice({
+          tone: "info",
+          text: `${fileName} is still indexing. You can keep chatting while it finishes.`,
+        });
+      } else if (!isAbortError(error)) {
+        input.setNotice(chatErrorNotice(error, "Agent skill save failed."));
+        statusStreamAbortRef.current = null;
+        setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
+        return false;
+      }
+      statusStreamAbortRef.current = null;
+      setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
+      return true;
+    }
+
+    statusStreamAbortRef.current = null;
+    setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
+    return true;
+  }
+
   async function openAttachment(attachment: ChatMessageAttachment) {
     if (attachment.localPreviewUrl) {
       openPreviewUrl(attachment.localPreviewUrl);
@@ -234,9 +367,45 @@ export function useChatAttachmentUpload(input: ChatAttachmentUploadInput) {
 
   return {
     attachFiles,
+    saveSourceContent,
     openAttachment,
     attachmentUploadStatus,
   };
+}
+
+function buildSavedSourceMetadata(input: {
+  fileName: string;
+  origin: AgentInstructionOrigin;
+}): Record<string, unknown> {
+  const agentInstructionTarget = isAgentInstructionFileName(input.fileName)
+    ? inferAgentInstructionTargetFile(input.fileName) ?? "AGENTS.md"
+    : null;
+
+  return {
+    uploadSurface: "chat",
+    savedSourceOrigin: input.origin,
+    ...sourceDisplayMetadataForFileName(input.fileName),
+    ...(agentInstructionTarget
+      ? buildAgentInstructionMetadata({
+          targetFile: agentInstructionTarget,
+          origin: input.origin,
+          fileName: input.fileName,
+          uploadSurface: "chat",
+        })
+      : {}),
+  };
+}
+
+function contentTypeForSourceFileName(fileName: string) {
+  if (isMarkdownSourceFileName(fileName)) {
+    return "text/markdown";
+  }
+
+  if (fileName.toLowerCase().endsWith(".json")) {
+    return "application/json";
+  }
+
+  return "text/plain";
 }
 
 function messageHasAttachment(message: ChatMessage, artifactId: string) {

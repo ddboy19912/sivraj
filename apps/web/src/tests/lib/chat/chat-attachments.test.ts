@@ -23,6 +23,7 @@ describe("buildChatAttachmentArtifact", () => {
       uploadSurface: "chat",
       fileName: "playbook.pdf",
       fileType: "application/pdf",
+      sourceDisplayName: "playbook.pdf",
     });
   });
 
@@ -35,6 +36,23 @@ describe("buildChatAttachmentArtifact", () => {
 
     expect(artifact.sourceType).toBe("upload");
     expect(artifact.content).toBe("Remember that the launch date is June 30.");
+  });
+
+  it("tags uploaded agent instruction files for exact source retrieval", async () => {
+    const file = new File(["# Project agent instructions"], "AGENTS.md", {
+      type: "text/markdown",
+    });
+
+    const artifact = await buildChatAttachmentArtifact(file);
+
+    expect(artifact.sourceType).toBe("markdown");
+    expect(artifact.metadata).toMatchObject({
+      artifactPurpose: "agent_skill_source",
+      engineeringSourceKind: "agent_instruction_file",
+      targetInstructionFile: "AGENTS.md",
+      agentInstructionOrigin: "upload",
+      agentInstructionFileName: "AGENTS.md",
+    });
   });
 
   it("reads hydrated chat attachment metadata", () => {

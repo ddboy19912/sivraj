@@ -12,7 +12,11 @@ function isBrowserHistoryFile(file: File) {
 
 function isMarkdownFile(file: File) {
   const name = file.name.toLowerCase()
-  return name.endsWith('.md') || name.endsWith('.markdown') || file.type.includes('markdown')
+  return name.endsWith('.md') ||
+    name.endsWith('.markdown') ||
+    name.endsWith('.mdx') ||
+    name.endsWith('.mdc') ||
+    file.type.includes('markdown')
 }
 
 function isPdfFile(file: File) {

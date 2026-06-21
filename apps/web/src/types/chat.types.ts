@@ -66,4 +66,11 @@ export type ChatConversationPanelProps = {
   onRetryLastMessage: () => void;
   onAttachFiles: (files: FileList | null) => void;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+  onSaveDraftAsSource: (fileName: string) => void;
+  onSaveMessageAsSource: (
+    content: string,
+    fileName: string,
+    role: ChatMessage["role"],
+  ) => void;
+  onSaveCodeBlockAsSource: (content: string, fileName: string) => void;
 };

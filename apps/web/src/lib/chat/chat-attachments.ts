@@ -1,5 +1,9 @@
 import type { SourceType } from "@/lib/encryption";
 import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/chat-api";
+import {
+  agentInstructionMetadataForFile,
+  sourceDisplayMetadataForFileName,
+} from "@/lib/ingest/agent-instruction-source";
 import { inferUploadSourceType } from "@/lib/ingest/upload-source-type";
 
 const BINARY_SOURCE_TYPES = new Set<SourceType>(["pdf", "ocr_pdf", "image"]);
@@ -34,6 +38,8 @@ export async function buildChatAttachmentArtifact(
       fileSize: file.size,
       fileType: file.type || "application/octet-stream",
       lastModified: new Date(file.lastModified).toISOString(),
+      ...sourceDisplayMetadataForFileName(file.name),
+      ...agentInstructionMetadataForFile(file),
     },
   };
 }

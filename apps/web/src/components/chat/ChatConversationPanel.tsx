@@ -28,6 +28,9 @@ export function ChatConversationPanel({
   onRetryLastMessage,
   onAttachFiles,
   onOpenAttachment,
+  onSaveDraftAsSource,
+  onSaveMessageAsSource,
+  onSaveCodeBlockAsSource,
 }: ChatConversationPanelProps) {
   return (
     <div className={cn(liquidGlass, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[24px]")}>
@@ -46,6 +49,8 @@ export function ChatConversationPanel({
         messages={messages}
         messagesEndRef={messagesEndRef}
         onOpenAttachment={onOpenAttachment}
+        onSaveMessageAsSource={onSaveMessageAsSource}
+        onSaveCodeBlockAsSource={onSaveCodeBlockAsSource}
       />
       <ChatComposer
         draft={draft}
@@ -62,6 +67,7 @@ export function ChatConversationPanel({
         onStopStreaming={onStopStreaming}
         onRetryLastMessage={onRetryLastMessage}
         onAttachFiles={onAttachFiles}
+        onSaveDraftAsSource={onSaveDraftAsSource}
       />
     </div>
   );

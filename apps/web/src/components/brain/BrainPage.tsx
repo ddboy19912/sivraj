@@ -1,7 +1,8 @@
-import { LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { Archive, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useReducer } from "react";
 import { BrainGraphScene } from "@/components/brain/BrainGraphScene";
+import { BrainSourcesDialog } from "@/components/brain/BrainSourcesDialog";
 import { Button } from "@/components/ui/button";
 import { ClipboardActionButton } from "@/components/ui/clipboard-action-button";
 import {
@@ -74,7 +75,9 @@ export function BrainPage({
   return (
     <BrainGraphStage
       graph={viewState.graph}
+      session={session}
       twinName={twinName}
+      onSessionRefreshed={onSessionRefreshed}
       onRefresh={() => void refetch()}
     />
   );
@@ -82,30 +85,32 @@ export function BrainPage({
 
 function BrainGraphStage({
   graph,
+  session,
   twinName,
+  onSessionRefreshed,
   onRefresh,
 }: {
   graph: BrainGraphResponse;
+  session: Session;
   twinName: string;
+  onSessionRefreshed: (session: Session) => void;
   onRefresh: () => void;
 }) {
-  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<BrainClusterKey | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [stageState, dispatchStageState] = useReducer(
+    brainGraphStageReducer,
+    INITIAL_BRAIN_GRAPH_STAGE_STATE,
+  );
   const layout = buildBrainGraphLayout(graph);
-  const selectedNode = layout.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedNode = layout.nodes.find((node) => node.id === stageState.selectedNodeId) ?? null;
   const visibleMemoryCount = resolveVisibleBrainLayoutNodes(layout.nodes, {
-    clusterId: selectedCategoryId,
-    searchQuery,
+    clusterId: stageState.selectedCategoryId,
+    searchQuery: stageState.searchQuery,
   }).length;
   const handleSearchQueryChange = (value: string) => {
-    setActiveNodeId(null);
-    setSearchQuery(value);
+    dispatchStageState({ type: "search_query_changed", value });
   };
   const handleSelectedCategoryChange = (clusterId: BrainClusterKey | null) => {
-    setActiveNodeId(null);
-    setSelectedCategoryId(clusterId);
+    dispatchStageState({ type: "selected_category_changed", clusterId });
   };
 
   return (
@@ -134,11 +139,23 @@ function BrainGraphStage({
           >
             <RefreshCw className="size-3.5" />
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            aria-label="Open brain sources"
+            onClick={() =>
+              dispatchStageState({ type: "sources_open_changed", open: true })}
+            className="mb-0.5 h-9 rounded-[12px] px-3 text-xs"
+          >
+            <Archive className="size-3.5" />
+            Sources
+          </Button>
         </div>
         <BrainGraphHeaderControls
           groups={layout.groups}
-          searchQuery={searchQuery}
-          selectedClusterId={selectedCategoryId}
+          searchQuery={stageState.searchQuery}
+          selectedClusterId={stageState.selectedCategoryId}
           onSearchQueryChange={handleSearchQueryChange}
           onSelectedClusterChange={handleSelectedCategoryChange}
         />
@@ -147,11 +164,13 @@ function BrainGraphStage({
       <div className="relative mt-5 min-h-0 flex-1 overflow-hidden">
         <BrainGraphScene
           layout={layout}
-          activeNodeId={activeNodeId}
-          searchQuery={searchQuery}
-          selectedClusterId={selectedCategoryId}
-          onActiveNodeChange={setActiveNodeId}
-          onSelectNode={setSelectedNodeId}
+          activeNodeId={stageState.activeNodeId}
+          searchQuery={stageState.searchQuery}
+          selectedClusterId={stageState.selectedCategoryId}
+          onActiveNodeChange={(nodeId) =>
+            dispatchStageState({ type: "active_node_changed", nodeId })}
+          onSelectNode={(nodeId) =>
+            dispatchStageState({ type: "selected_node_changed", nodeId })}
         />
       </div>
 
@@ -160,12 +179,68 @@ function BrainGraphStage({
         open={Boolean(selectedNode)}
         onOpenChange={(open) => {
           if (!open) {
-            setSelectedNodeId(null);
+            dispatchStageState({ type: "selected_node_changed", nodeId: null });
           }
         }}
       />
+      <BrainSourcesDialog
+        open={stageState.sourcesOpen}
+        session={session}
+        onOpenChange={(open) =>
+          dispatchStageState({ type: "sources_open_changed", open })}
+        onSessionRefreshed={onSessionRefreshed}
+      />
     </section>
   );
+}
+
+type BrainGraphStageState = {
+  activeNodeId: string | null;
+  selectedNodeId: string | null;
+  selectedCategoryId: BrainClusterKey | null;
+  searchQuery: string;
+  sourcesOpen: boolean;
+};
+
+type BrainGraphStageAction =
+  | { type: "active_node_changed"; nodeId: string | null }
+  | { type: "selected_node_changed"; nodeId: string | null }
+  | { type: "selected_category_changed"; clusterId: BrainClusterKey | null }
+  | { type: "search_query_changed"; value: string }
+  | { type: "sources_open_changed"; open: boolean };
+
+const INITIAL_BRAIN_GRAPH_STAGE_STATE: BrainGraphStageState = {
+  activeNodeId: null,
+  selectedNodeId: null,
+  selectedCategoryId: null,
+  searchQuery: "",
+  sourcesOpen: false,
+};
+
+function brainGraphStageReducer(
+  state: BrainGraphStageState,
+  action: BrainGraphStageAction,
+): BrainGraphStageState {
+  switch (action.type) {
+    case "active_node_changed":
+      return { ...state, activeNodeId: action.nodeId };
+    case "selected_node_changed":
+      return { ...state, selectedNodeId: action.nodeId };
+    case "selected_category_changed":
+      return {
+        ...state,
+        activeNodeId: null,
+        selectedCategoryId: action.clusterId,
+      };
+    case "search_query_changed":
+      return {
+        ...state,
+        activeNodeId: null,
+        searchQuery: action.value,
+      };
+    case "sources_open_changed":
+      return { ...state, sourcesOpen: action.open };
+  }
 }
 
 function BrainGraphHeaderControls({

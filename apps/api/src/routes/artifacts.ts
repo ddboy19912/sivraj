@@ -3,11 +3,14 @@ import type { AppDependencies } from "../app.js";
 import { requireAuth, type AuthEnv } from "../middleware/auth.js";
 import {
   authorizeTwinArtifactRoute,
+  authorizeTwinRoute,
   authorizeTwinScopedJsonBody,
 } from "../lib/http/route-auth.js";
 import {
   handleArtifactEvents,
+  handleArtifactContent,
   handleArtifactGet,
+  handleArtifactList,
   handleArtifactPreview,
   handleArtifactPrivacyCheck,
   handleArtifactRetry,
@@ -28,6 +31,16 @@ export function createArtifactRoutes(deps: AppDependencies) {
     return handleArtifactUpload(c, deps, gate.value);
   });
 
+  artifactRoutes.get("/", requireAuth, async (c) => {
+    const gate = authorizeTwinRoute(c, "memory:read");
+
+    if (!gate.ok) {
+      return gate.response;
+    }
+
+    return handleArtifactList(c, deps, gate.value);
+  });
+
   artifactRoutes.post("/:artifactId/retry", requireAuth, async (c) => {
     const gate = await authorizeTwinArtifactRoute(c, db, "artifact:upload");
 
@@ -46,6 +59,16 @@ export function createArtifactRoutes(deps: AppDependencies) {
     }
 
     return handleArtifactPreview(c, deps, gate.value);
+  });
+
+  artifactRoutes.get("/:artifactId/content", requireAuth, async (c) => {
+    const gate = await authorizeTwinArtifactRoute(c, db, "memory:read");
+
+    if (!gate.ok) {
+      return gate.response;
+    }
+
+    return handleArtifactContent(c, deps, gate.value);
   });
 
   artifactRoutes.get("/:artifactId", requireAuth, async (c) => {

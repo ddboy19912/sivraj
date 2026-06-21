@@ -12,6 +12,10 @@ describe('inferUploadSourceType', () => {
   it('detects markdown uploads', () => {
     expect(inferUploadSourceType({ name: 'README.md', type: '', size: 1 } as File))
       .toBe('markdown')
+    expect(inferUploadSourceType({ name: 'docs.mdx', type: '', size: 1 } as File))
+      .toBe('markdown')
+    expect(inferUploadSourceType({ name: 'sivraj.mdc', type: '', size: 1 } as File))
+      .toBe('markdown')
   })
 
   it('detects PDF and image uploads before generic upload fallback', () => {

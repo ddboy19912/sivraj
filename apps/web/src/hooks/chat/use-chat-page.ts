@@ -79,6 +79,44 @@ export function useChatPage(input: UseChatPageInput) {
     messagesEndRef: pageState.messagesEndRef,
   });
 
+  async function saveDraftAsSource(fileName: string) {
+    const content = pageState.draft;
+
+    if (!content.trim()) {
+      pageState.setNotice({ tone: "error", text: "Paste or write source content first." });
+      return;
+    }
+
+    const saved = await attachmentUpload.saveSourceContent({
+      content,
+      fileName,
+      origin: "draft",
+    });
+    if (saved) {
+      pageState.clearActiveDraft(pageState.activeThreadId);
+    }
+  }
+
+  async function saveMessageAsSource(
+    content: string,
+    fileName: string,
+    role: "system" | "user" | "assistant",
+  ) {
+    await attachmentUpload.saveSourceContent({
+      content,
+      fileName,
+      origin: role === "assistant" ? "assistant_message" : "chat_message",
+    });
+  }
+
+  async function saveCodeBlockAsSource(content: string, fileName: string) {
+    await attachmentUpload.saveSourceContent({
+      content,
+      fileName,
+      origin: "code_block",
+    });
+  }
+
   return {
     activeThread,
     activeThreadId: pageState.activeThreadId,
@@ -97,6 +135,9 @@ export function useChatPage(input: UseChatPageInput) {
     notice: pageState.notice,
     providerPresentation: pageState.providerPresentation,
     retryLastMessage: messageActions.retryLastMessage,
+    saveCodeBlockAsSource,
+    saveDraftAsSource,
+    saveMessageAsSource,
     sendMessage: messageActions.sendMessage,
     setDraft: pageState.setDraft,
     setMemoryIntent: pageState.setMemoryIntent,

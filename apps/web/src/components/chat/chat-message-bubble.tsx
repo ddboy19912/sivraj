@@ -7,6 +7,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useState } from "react";
+import { AgentSkillSaveMenu } from "@/components/chat/AgentSkillSaveMenu";
 import { ChatMessageContent } from "@/components/chat/ChatMessageContent";
 import { TypingText } from "@/components/chat/TypingText";
 import { ClipboardActionButton } from "@/components/ui/clipboard-action-button";
@@ -25,9 +26,17 @@ import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/chat-api";
 export function MessageBubble({
   message,
   onOpenAttachment,
+  onSaveAsSource,
+  onSaveCodeBlockAsSource,
 }: {
   message: ChatMessage;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+  onSaveAsSource: (
+    content: string,
+    fileName: string,
+    role: ChatMessage["role"],
+  ) => void;
+  onSaveCodeBlockAsSource: (content: string, fileName: string) => void;
 }) {
   const isUser = message.role === "user";
   const isFailed = message.status === "failed";
@@ -80,7 +89,10 @@ export function MessageBubble({
             {isStreamingAssistant ? (
               <TypingText text={message.content} />
             ) : (
-              <ChatMessageContent content={message.content} />
+              <ChatMessageContent
+                content={message.content}
+                onSaveCodeBlock={(code, fileName) => onSaveCodeBlockAsSource(code, fileName)}
+              />
             )}
           </div>
         ) : null}
@@ -88,7 +100,10 @@ export function MessageBubble({
           <MessageActions
             isUser={isUser}
             content={message.content}
+            canSaveAsSource={message.status === "completed"}
             estimatedTokensSaved={estimatedTokensSaved}
+            onSaveAsSource={(fileName) =>
+              onSaveAsSource(message.content, fileName, message.role)}
           />
         ) : null}
       </div>
@@ -215,11 +230,15 @@ function formatFileSize(bytes: number) {
 function MessageActions({
   isUser,
   content,
+  canSaveAsSource,
   estimatedTokensSaved,
+  onSaveAsSource,
 }: {
   isUser: boolean;
   content: string;
+  canSaveAsSource: boolean;
   estimatedTokensSaved: number;
+  onSaveAsSource: (fileName: string) => void;
 }) {
   const showTokenSavings = !isUser && estimatedTokensSaved > 0;
 
@@ -234,6 +253,12 @@ function MessageActions({
         action="copy"
         value={content}
         aria-label="Copy message"
+      />
+      <AgentSkillSaveMenu
+        ariaLabel="Save message as source file"
+        disabled={!canSaveAsSource}
+        defaultFileName="message.md"
+        onSelect={onSaveAsSource}
       />
       {showTokenSavings ? (
         <TokenSavingsIcon estimatedTokensSaved={estimatedTokensSaved} />

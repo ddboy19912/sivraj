@@ -56,6 +56,11 @@ export function ChatPage(props: ChatPageProps) {
           onRetryLastMessage={() => void chat.retryLastMessage()}
           onAttachFiles={(files) => void chat.attachFiles(files)}
           onOpenAttachment={(attachment) => void chat.openAttachment(attachment)}
+          onSaveDraftAsSource={(fileName) => void chat.saveDraftAsSource(fileName)}
+          onSaveMessageAsSource={(content, fileName, role) =>
+            void chat.saveMessageAsSource(content, fileName, role)}
+          onSaveCodeBlockAsSource={(content, fileName) =>
+            void chat.saveCodeBlockAsSource(content, fileName)}
         />
       </div>
     </section>

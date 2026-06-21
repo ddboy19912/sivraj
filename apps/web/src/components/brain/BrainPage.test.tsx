@@ -1,15 +1,26 @@
 import userEvent from "@testing-library/user-event";
 import { render, screen, within } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainPage } from "@/components/brain/BrainPage";
 import { useBrainGraph } from "@/hooks/brain/use-brain-graph";
+import {
+  useBrainArtifactContent,
+  useBrainSources,
+} from "@/hooks/brain/use-brain-sources";
 import type { BrainGraphResponse } from "@/types/brain.types";
 
 vi.mock("@/hooks/brain/use-brain-graph", () => ({
   useBrainGraph: vi.fn(),
 }));
 
+vi.mock("@/hooks/brain/use-brain-sources", () => ({
+  useBrainSources: vi.fn(),
+  useBrainArtifactContent: vi.fn(),
+}));
+
 const useBrainGraphMock = vi.mocked(useBrainGraph);
+const useBrainSourcesMock = vi.mocked(useBrainSources);
+const useBrainArtifactContentMock = vi.mocked(useBrainArtifactContent);
 
 beforeAll(() => {
   if (!("hasPointerCapture" in HTMLElement.prototype)) {
@@ -27,6 +38,35 @@ beforeAll(() => {
 });
 
 describe("BrainPage", () => {
+  beforeEach(() => {
+    useBrainGraphMock.mockReset();
+    useBrainSourcesMock.mockReturnValue({
+      data: {
+        policy: {
+          rawArtifactsIncluded: false,
+          exactContentEndpoint: true,
+          scope: "memory:read",
+        },
+        kind: "agent_instructions",
+        sources: [],
+        summary: {
+          sourceCount: 0,
+          agentInstructionSourceCount: 0,
+          exactContentAvailableCount: 0,
+        },
+      },
+      error: null,
+      isFetching: false,
+      isLoading: false,
+    } as never);
+    useBrainArtifactContentMock.mockReturnValue({
+      data: null,
+      error: null,
+      isFetching: false,
+      isLoading: false,
+    } as never);
+  });
+
   it("opens a memory details modal when a node is clicked", async () => {
     const user = userEvent.setup();
     useBrainGraphMock.mockReturnValue({
@@ -237,6 +277,108 @@ describe("BrainPage", () => {
     await user.click(screen.getByRole("combobox", { name: /Filter brain memories by category/u }));
     await user.keyboard("{ArrowDown}{Enter}");
     expect(screen.getByText("1 memory")).toBeInTheDocument();
+  });
+
+  it("opens exact agent skill source content from the Brain source library", async () => {
+    const user = userEvent.setup();
+    const agentSkillContent = "# AGENTS.md\n\n- Keep exact content retrievable.";
+    useBrainGraphMock.mockReturnValue({
+      data: graph,
+      error: null,
+      isFetching: false,
+      isLoading: false,
+      refetch: vi.fn(),
+      viewState: { status: "ready", graph },
+    });
+    useBrainSourcesMock.mockReturnValue({
+      data: {
+        policy: {
+          rawArtifactsIncluded: false,
+          exactContentEndpoint: true,
+          scope: "memory:read",
+        },
+        kind: "agent_instructions",
+        sources: [{
+          artifactId: "artifact-agent-1",
+          sourceType: "markdown",
+          sourceKind: "agent_instruction_file",
+          displayName: "AGENTS.md",
+          targetInstructionFile: "AGENTS.md",
+          agentInstructionFileName: "AGENTS.md",
+          ingestionStatus: "completed",
+          intelligenceStatus: "completed",
+          processing: null,
+          exactContentAvailable: true,
+          candidateMemoryCount: 3,
+          engineeringMemoryCount: 3,
+          metadata: {
+            engineeringSourceKind: "agent_instruction_file",
+            targetInstructionFile: "AGENTS.md",
+          },
+          createdAt: "2026-06-21T10:00:00.000Z",
+          updatedAt: "2026-06-21T10:00:00.000Z",
+        }],
+        summary: {
+          sourceCount: 1,
+          agentInstructionSourceCount: 1,
+          exactContentAvailableCount: 1,
+        },
+      },
+      error: null,
+      isFetching: false,
+      isLoading: false,
+    } as never);
+    useBrainArtifactContentMock.mockReturnValue({
+      data: {
+        policy: {
+          rawArtifactsIncluded: true,
+          decryptedSourceIncluded: true,
+          scope: "memory:read",
+        },
+        artifact: {
+          id: "artifact-agent-1",
+          sourceType: "markdown",
+          ingestionStatus: "completed",
+          fileName: "AGENTS.md",
+          title: "AGENTS.md",
+          contentType: "text/markdown; charset=utf-8",
+          encoding: "text",
+          byteLength: agentSkillContent.length,
+          metadata: {
+            engineeringSourceKind: "agent_instruction_file",
+            targetInstructionFile: "AGENTS.md",
+          },
+          createdAt: "2026-06-21T10:00:00.000Z",
+          updatedAt: "2026-06-21T10:00:00.000Z",
+        },
+        content: agentSkillContent,
+      },
+      error: null,
+      isFetching: false,
+      isLoading: false,
+    } as never);
+
+    render(
+      <BrainPage
+        session={{
+          token: "token",
+          refreshToken: "refresh",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          twinId: "twin-1",
+          walletAddress: "0x1",
+        }}
+        twinName="Sivraj"
+        onSessionRefreshed={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Open brain sources/u }));
+
+    const dialog = screen.getByRole("dialog", { name: /Brain sources/u });
+    expect(within(dialog).getAllByText("AGENTS.md").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(/Keep exact content retrievable/u)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Copy AGENTS.md/u })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Download AGENTS.md/u })).toBeInTheDocument();
   });
 });
 

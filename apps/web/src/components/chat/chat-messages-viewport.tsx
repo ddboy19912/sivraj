@@ -22,6 +22,8 @@ export function ChatMessagesViewport({
   messages,
   messagesEndRef,
   onOpenAttachment,
+  onSaveMessageAsSource,
+  onSaveCodeBlockAsSource,
 }: {
   status: ChatPageStatus;
   notice: Notice;
@@ -30,6 +32,12 @@ export function ChatMessagesViewport({
   messages: ChatMessage[];
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+  onSaveMessageAsSource: (
+    content: string,
+    fileName: string,
+    role: ChatMessage["role"],
+  ) => void;
+  onSaveCodeBlockAsSource: (content: string, fileName: string) => void;
 }) {
   useErrorNoticeToast(notice);
 
@@ -50,6 +58,8 @@ export function ChatMessagesViewport({
           isSending={isSending}
           messagesEndRef={messagesEndRef}
           onOpenAttachment={onOpenAttachment}
+          onSaveMessageAsSource={onSaveMessageAsSource}
+          onSaveCodeBlockAsSource={onSaveCodeBlockAsSource}
         />
       )}
     </div>
@@ -72,12 +82,20 @@ function ChatMessageList({
   isSending,
   messagesEndRef,
   onOpenAttachment,
+  onSaveMessageAsSource,
+  onSaveCodeBlockAsSource,
 }: {
   messages: ChatMessage[];
   status: ChatPageStatus;
   isSending: boolean;
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
+  onSaveMessageAsSource: (
+    content: string,
+    fileName: string,
+    role: ChatMessage["role"],
+  ) => void;
+  onSaveCodeBlockAsSource: (content: string, fileName: string) => void;
 }) {
   const showPendingAssistant =
     isSending &&
@@ -96,6 +114,8 @@ function ChatMessageList({
           key={message.id}
           message={message}
           onOpenAttachment={onOpenAttachment}
+          onSaveAsSource={onSaveMessageAsSource}
+          onSaveCodeBlockAsSource={onSaveCodeBlockAsSource}
         />
       ))}
       {showPendingAssistant ? <AssistantTypingIndicator /> : null}

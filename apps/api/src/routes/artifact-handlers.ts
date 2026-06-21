@@ -3,7 +3,7 @@ import {
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
 import { auditEvents, candidateMemories, chatThreads, sourceArtifacts } from "@sivraj/db";
-import { and, count, desc, eq, ne } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppDependencies } from "../app.js";
@@ -225,6 +225,74 @@ export async function handleArtifactGet(
   });
 }
 
+export async function handleArtifactList(
+  c: Context<AuthEnv>,
+  deps: AppDependencies,
+  { auth, twinId }: { auth: AuthorizedTwin["auth"]; twinId: string },
+) {
+  const { db } = deps;
+  const kind = readArtifactListKind(c.req.query("kind"));
+  const limit = readArtifactListLimit(c.req.query("limit"));
+  const filters = [
+    eq(sourceArtifacts.twinId, twinId),
+    ...(kind === "agent_instructions"
+      ? [sql`${sourceArtifacts.metadata}->>'engineeringSourceKind' = 'agent_instruction_file'`]
+      : []),
+  ];
+  const artifactRows = await db
+    .select()
+    .from(sourceArtifacts)
+    .where(and(...filters))
+    .orderBy(desc(sourceArtifacts.createdAt))
+    .limit(limit);
+  const candidateRows = artifactRows.length === 0
+    ? []
+    : await db
+      .select({
+        id: candidateMemories.id,
+        sourceArtifactId: candidateMemories.sourceArtifactId,
+        metadata: candidateMemories.metadata,
+      })
+      .from(candidateMemories)
+      .where(and(
+        eq(candidateMemories.twinId, twinId),
+        inArray(candidateMemories.sourceArtifactId, artifactRows.map((artifact) => artifact.id)),
+      ));
+  const candidatesByArtifact = groupCandidateRowsByArtifact(candidateRows);
+
+  await db.insert(auditEvents).values({
+    twinId,
+    actorType: auth.type,
+    actorId: auth.sub,
+    eventType: "artifact.sources_listed",
+    resourceType: "twin",
+    resourceId: twinId,
+    metadata: {
+      kind,
+      limit,
+      resultCount: artifactRows.length,
+      rawArtifactsIncluded: false,
+    },
+  });
+
+  return c.json({
+    policy: {
+      rawArtifactsIncluded: false,
+      exactContentEndpoint: true,
+      scope: "memory:read",
+    },
+    kind,
+    sources: artifactRows.map((artifact) =>
+      formatArtifactSourceSummary(artifact, candidatesByArtifact.get(artifact.id) ?? []),
+    ),
+    summary: {
+      sourceCount: artifactRows.length,
+      agentInstructionSourceCount: artifactRows.filter(isAgentInstructionArtifact).length,
+      exactContentAvailableCount: artifactRows.filter((artifact) => Boolean(artifact.rawStorageRef)).length,
+    },
+  });
+}
+
 export async function handleArtifactPreview(
   c: Context<AuthEnv>,
   deps: AppDependencies,
@@ -278,6 +346,45 @@ export async function handleArtifactPreview(
       "cache-control": "private, max-age=60",
     },
   });
+}
+
+export async function handleArtifactContent(
+  c: Context<AuthEnv>,
+  deps: AppDependencies,
+  { auth, twinId, artifact }: { auth: AuthorizedTwin["auth"]; twinId: string; artifact: typeof sourceArtifacts.$inferSelect },
+) {
+  if (!deps.privateMemoryReader) {
+    return c.json({ error: "encrypted_storage_reader_not_configured" }, 503);
+  }
+
+  if (!artifact.rawStorageRef) {
+    return c.json({ error: "artifact_content_unavailable" }, 404);
+  }
+
+  const payload = await readArtifactPrivateSourcePayload(deps, {
+    artifact,
+    twinId,
+  });
+
+  if (!payload) {
+    return c.json({ error: "artifact_content_unavailable" }, 503);
+  }
+
+  await deps.db.insert(auditEvents).values({
+    twinId,
+    actorType: auth.type,
+    actorId: auth.sub,
+    eventType: "artifact.content_read",
+    resourceType: "source_artifact",
+    resourceId: artifact.id,
+    metadata: {
+      sourceType: artifact.sourceType,
+      rawArtifactsIncluded: true,
+      contentLength: payload.content.length,
+    },
+  });
+
+  return c.json(buildArtifactContentResponse(artifact, payload));
 }
 
 export async function handleArtifactPrivacyCheck(
@@ -537,6 +644,37 @@ function isDocumentSourceType(sourceType: string) {
     sourceType === "upload";
 }
 
+async function readArtifactPrivateSourcePayload(
+  deps: AppDependencies,
+  input: {
+    artifact: typeof sourceArtifacts.$inferSelect;
+    twinId: string;
+  },
+): Promise<{
+  title: string | null;
+  content: string;
+  metadata: Record<string, unknown>;
+} | null> {
+  if (!deps.privateMemoryReader || !input.artifact.rawStorageRef) {
+    return null;
+  }
+
+  const metadata = recordMetadata(input.artifact.metadata);
+
+  return deps.privateMemoryReader.readPrivateMemory({
+    rawStorageRef: input.artifact.rawStorageRef,
+    artifactId: input.artifact.id,
+    twinId: input.twinId,
+    expectedCiphertextSha256: optionalString(metadata["ciphertextSha256"]),
+  }).then(readPrivateSourcePayload).catch((error: unknown) => {
+    console.warn("artifact source decrypt failed", {
+      artifactId: input.artifact.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+}
+
 function readPrivateSourcePayload(value: string): {
   title: string | null;
   content: string;
@@ -557,6 +695,167 @@ function readPrivateSourcePayload(value: string): {
     content: record["content"],
     metadata: recordMetadata(record["metadata"]),
   };
+}
+
+export function buildArtifactContentResponse(
+  artifact: typeof sourceArtifacts.$inferSelect,
+  payload: {
+    title: string | null;
+    content: string;
+    metadata: Record<string, unknown>;
+  },
+) {
+  const artifactMetadata = recordMetadata(artifact.metadata);
+  const preview = decodePreviewContent(payload.content, artifact.sourceType);
+  const dataUrl = parseDataUrl(payload.content);
+  const fileName = safePreviewFileName(
+    optionalString(payload.metadata["fileName"]) ??
+      optionalString(artifactMetadata["sourceDisplayName"]) ??
+      optionalString(artifactMetadata["agentInstructionFileName"]) ??
+      optionalString(artifactMetadata["targetInstructionFile"]) ??
+      payload.title ??
+      artifact.sourceType,
+  );
+
+  return {
+    policy: {
+      rawArtifactsIncluded: true,
+      decryptedSourceIncluded: true,
+      scope: "memory:read",
+    },
+    artifact: {
+      id: artifact.id,
+      sourceType: artifact.sourceType,
+      ingestionStatus: artifact.ingestionStatus,
+      fileName,
+      title: payload.title,
+      contentType: preview?.contentType ?? contentTypeForTextSource(artifact.sourceType),
+      encoding: dataUrl ? "data_url" : "text",
+      byteLength: preview?.bytes.byteLength ?? new TextEncoder().encode(payload.content).byteLength,
+      metadata: sanitizeSafeMetadata({
+        ...artifactMetadata,
+        ...safePrivatePayloadSourceMetadata(payload.metadata),
+      }),
+      createdAt: artifact.createdAt.toISOString(),
+      updatedAt: artifact.updatedAt.toISOString(),
+    },
+    content: payload.content,
+  };
+}
+
+export function formatArtifactSourceSummary(
+  artifact: typeof sourceArtifacts.$inferSelect,
+  candidates: Array<{
+    id: string;
+    metadata: unknown;
+  }>,
+) {
+  const metadata = recordMetadata(artifact.metadata);
+  const engineeringCandidateCount = candidates.filter((candidate) =>
+    recordMetadata(candidate.metadata)["engineering"] === true,
+  ).length;
+  const sourceKind = optionalString(metadata["engineeringSourceKind"]) ??
+    optionalString(metadata["sourceKind"]) ??
+    sourceKindForArtifact(artifact);
+  const targetInstructionFile = optionalString(metadata["targetInstructionFile"]);
+  const agentInstructionFileName = optionalString(metadata["agentInstructionFileName"]);
+
+  return {
+    artifactId: artifact.id,
+    sourceType: artifact.sourceType,
+    sourceKind,
+    displayName: displayNameForArtifactSource({
+      artifact,
+      metadata,
+      targetInstructionFile,
+      agentInstructionFileName,
+    }),
+    targetInstructionFile,
+    agentInstructionFileName,
+    ingestionStatus: artifact.ingestionStatus,
+    intelligenceStatus: readIntelligenceStatus(artifact.metadata) ?? null,
+    processing: readProcessingMetadata(artifact.metadata),
+    exactContentAvailable: Boolean(artifact.rawStorageRef),
+    candidateMemoryCount: candidates.length,
+    engineeringMemoryCount: engineeringCandidateCount,
+    metadata: sanitizeSafeMetadata(metadata),
+    createdAt: artifact.createdAt.toISOString(),
+    updatedAt: artifact.updatedAt.toISOString(),
+  };
+}
+
+function groupCandidateRowsByArtifact<T extends { sourceArtifactId: string }>(rows: T[]) {
+  const groups = new Map<string, T[]>();
+
+  for (const row of rows) {
+    groups.set(row.sourceArtifactId, [...(groups.get(row.sourceArtifactId) ?? []), row]);
+  }
+
+  return groups;
+}
+
+function readArtifactListKind(value: string | undefined): "all" | "agent_instructions" {
+  return value === "agent_instructions" ? "agent_instructions" : "all";
+}
+
+function readArtifactListLimit(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "80", 10);
+
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 80;
+}
+
+function isAgentInstructionArtifact(artifact: typeof sourceArtifacts.$inferSelect) {
+  return recordMetadata(artifact.metadata)["engineeringSourceKind"] === "agent_instruction_file";
+}
+
+function sourceKindForArtifact(artifact: typeof sourceArtifacts.$inferSelect) {
+  if (isAgentInstructionArtifact(artifact)) {
+    return "agent_instruction_file";
+  }
+
+  return artifact.sourceType;
+}
+
+function displayNameForArtifactSource(input: {
+  artifact: typeof sourceArtifacts.$inferSelect;
+  metadata: Record<string, unknown>;
+  targetInstructionFile: string | null;
+  agentInstructionFileName: string | null;
+}) {
+  return optionalString(input.metadata["sourceDisplayName"]) ??
+    input.targetInstructionFile ??
+    input.agentInstructionFileName ??
+    optionalString(input.metadata["aiChatProvider"]) ??
+    `${formatSourceType(input.artifact.sourceType)} source`;
+}
+
+function safePrivatePayloadSourceMetadata(metadata: Record<string, unknown>) {
+  const safeKeys = [
+    "agentInstructionFileName",
+    "targetInstructionFile",
+    "agentInstructionOrigin",
+    "engineeringSourceKind",
+    "artifactPurpose",
+    "uploadSurface",
+  ];
+
+  return Object.fromEntries(
+    safeKeys.flatMap((key) => (
+      metadata[key] === undefined ? [] : [[key, metadata[key]]]
+    )),
+  );
+}
+
+function contentTypeForTextSource(sourceType: string) {
+  if (sourceType === "markdown") {
+    return "text/markdown; charset=utf-8";
+  }
+
+  if (sourceType === "chat_export") {
+    return "application/json; charset=utf-8";
+  }
+
+  return "text/plain; charset=utf-8";
 }
 
 function decodePreviewContent(
@@ -583,6 +882,18 @@ function decodePreviewContent(
   }
 
   return null;
+}
+
+function formatSourceType(value: string) {
+  return value
+    .replace(/[_-]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/\S+/gu, (word) =>
+      word.length <= 2
+        ? word.toUpperCase()
+        : `${word.slice(0, 1).toUpperCase()}${word.slice(1).toLowerCase()}`,
+    );
 }
 
 function parseDataUrl(value: string): { bytes: Uint8Array; contentType: string } | null {

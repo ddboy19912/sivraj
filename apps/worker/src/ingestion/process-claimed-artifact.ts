@@ -463,12 +463,13 @@ async function processEncryptedPrivateArtifact(
   }
 
   const privatePayload = decodePrivateSourcePayload(plaintext);
+  const enrichedMetadata = enrichArtifactMetadataFromPrivatePayload(metadata, privatePayload);
 
   if (isSpeechToTextSource(artifact.sourceType)) {
-    return processEncryptedSpeechToText(repository, artifact, metadata, now, options, privatePayload);
+    return processEncryptedSpeechToText(repository, artifact, enrichedMetadata, now, options, privatePayload);
   }
 
-  return processEncryptedParsedContent(repository, artifact, metadata, now, options, privatePayload);
+  return processEncryptedParsedContent(repository, artifact, enrichedMetadata, now, options, privatePayload);
 }
 
 async function processPlaintextArtifact(
@@ -546,4 +547,97 @@ export async function processClaimedArtifact(
   }
 
   return processPlaintextArtifact(repository, artifact, metadata, now, options, plaintext);
+}
+
+function enrichArtifactMetadataFromPrivatePayload(
+  metadata: Record<string, unknown>,
+  payload: PrivateSourcePayload,
+): Record<string, unknown> {
+  const safePayloadMetadata = readSafeAgentInstructionPayloadMetadata(payload.metadata);
+
+  return Object.keys(safePayloadMetadata).length > 0
+    ? { ...metadata, ...safePayloadMetadata }
+    : metadata;
+}
+
+function readSafeAgentInstructionPayloadMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const existingSourceKind = readMetadataString(metadata, "engineeringSourceKind");
+  const existingTarget = readMetadataString(metadata, "targetInstructionFile");
+  const fileName = readMetadataString(metadata, "agentInstructionFileName") ??
+    readMetadataString(metadata, "fileName") ??
+    readMetadataString(metadata, "path");
+  const inferredTarget = existingTarget ?? (fileName ? inferAgentInstructionTargetFile(fileName) : null);
+
+  if (existingSourceKind !== "agent_instruction_file" && !inferredTarget) {
+    return {};
+  }
+
+  return {
+    artifactPurpose: "agent_skill_source",
+    engineeringSourceKind: "agent_instruction_file",
+    ...(inferredTarget ? { targetInstructionFile: inferredTarget } : {}),
+    ...(fileName ? { agentInstructionFileName: safeInstructionFileName(fileName) } : {}),
+    ...(readMetadataString(metadata, "agentInstructionOrigin")
+      ? { agentInstructionOrigin: readMetadataString(metadata, "agentInstructionOrigin") }
+      : {}),
+    ...(readMetadataString(metadata, "uploadSurface")
+      ? { uploadSurface: readMetadataString(metadata, "uploadSurface") }
+      : {}),
+  };
+}
+
+function inferAgentInstructionTargetFile(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/\\/gu, "/")
+    .replace(/\/+/gu, "/")
+    .toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.endsWith("claude.md")) {
+    return "CLAUDE.md";
+  }
+
+  if (normalized.endsWith("skill.md")) {
+    return "SKILL.md";
+  }
+
+  if (normalized.endsWith(".cursorrules")) {
+    return ".cursorrules";
+  }
+
+  if (
+    normalized === ".github/copilot-instructions.md" ||
+    normalized.endsWith("/.github/copilot-instructions.md")
+  ) {
+    return ".github/copilot-instructions.md";
+  }
+
+  if (normalized.endsWith(".mdc")) {
+    return ".cursor/rules/sivraj.mdc";
+  }
+
+  if (normalized.endsWith("agents.md") || normalized.endsWith("agent.md")) {
+    return "AGENTS.md";
+  }
+
+  return null;
+}
+
+function safeInstructionFileName(value: string): string {
+  const basename = value
+    .replace(/\\/gu, "/")
+    .split("/")
+    .filter(Boolean)
+    .at(-1) ?? value;
+
+  return basename
+    .replace(/["\r\n]/gu, "")
+    .trim()
+    .slice(0, 160) || "agent-skill.md";
 }

@@ -102,7 +102,11 @@ export function buildChatAttachmentMetadata(input: {
   fileSize?: number | null;
 }): ChatAttachmentMetadata {
   const metadata = readRecord(input.artifact.metadata);
-  const fileName = input.fileName ?? optionalString(metadata["fileName"]) ?? input.artifact.sourceType;
+  const fileName = input.fileName ??
+    optionalString(metadata["fileName"]) ??
+    optionalString(metadata["agentInstructionFileName"]) ??
+    optionalString(metadata["targetInstructionFile"]) ??
+    input.artifact.sourceType;
   const fileType = input.fileType ?? optionalString(metadata["fileType"]);
   const fileSize = input.fileSize ?? readFiniteNonNegativeNumber(metadata["fileSize"]);
 

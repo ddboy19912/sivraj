@@ -1,14 +1,21 @@
 import type { ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AgentSkillSaveMenu } from "@/components/chat/AgentSkillSaveMenu";
 import { ClipboardActionButton } from "@/components/ui/clipboard-action-button";
 import { cn } from "@/lib/ui/utils";
 
-export function ChatMessageContent({ content }: { content: string }) {
+export function ChatMessageContent({
+  content,
+  onSaveCodeBlock,
+}: {
+  content: string;
+  onSaveCodeBlock?: (code: string, fileName: string) => void;
+}) {
   return (
     <div className="space-y-3">
       <ReactMarkdown
-        components={markdownComponents}
+        components={markdownComponents(onSaveCodeBlock)}
         remarkPlugins={[remarkGfm]}
       >
         {content}
@@ -17,7 +24,10 @@ export function ChatMessageContent({ content }: { content: string }) {
   );
 }
 
-const markdownComponents = {
+function markdownComponents(
+  onSaveCodeBlock?: (code: string, fileName: string) => void,
+): Components {
+  return {
   a({ children, href }) {
     return (
       <a
@@ -79,7 +89,13 @@ const markdownComponents = {
     return <p className="whitespace-pre-wrap">{children}</p>;
   },
   pre({ children, node }) {
-    return <MarkdownCodeBlock fallback={children} node={node} />;
+    return (
+      <MarkdownCodeBlock
+        fallback={children}
+        node={node}
+        onSaveCodeBlock={onSaveCodeBlock}
+      />
+    );
   },
   strong({ children }) {
     return <strong className="font-semibold text-white/92">{children}</strong>;
@@ -116,14 +132,17 @@ const markdownComponents = {
       </ul>
     );
   },
-} satisfies Components;
+  };
+}
 
 function MarkdownCodeBlock({
   fallback,
   node,
+  onSaveCodeBlock,
 }: {
   fallback: ReactNode;
   node?: HastNode;
+  onSaveCodeBlock?: (code: string, fileName: string) => void;
 }) {
   const code = extractCodeBlock(node);
 
@@ -138,16 +157,26 @@ function MarkdownCodeBlock({
   return (
     <figure className="overflow-hidden rounded-lg border border-[#1f2937] bg-[#070a0f] shadow-[0_14px_34px_rgba(0,0,0,0.24)]">
       <figcaption className="flex h-9 items-center justify-between border-b border-[#1f2937] bg-[#10151c] px-3">
-        <span className="min-w-0 truncate text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-slate-400">
+        <span className="min-w-0 truncate text-[0.72rem] font-semibold uppercase tracking-normal text-slate-400">
           {code.language ?? "code"}
         </span>
-        <ClipboardActionButton
-          action="copy"
-          value={code.value}
-          aria-label="Copy code"
-          className="size-6 text-slate-400 hover:bg-slate-700/70 hover:text-white focus-visible:bg-slate-700/70 focus-visible:text-white"
-          iconClassName="size-3"
-        />
+        <span className="flex items-center gap-1">
+          {onSaveCodeBlock ? (
+            <AgentSkillSaveMenu
+              ariaLabel="Save code block as source file"
+              defaultFileName={defaultCodeBlockFileName(code.language)}
+              triggerClassName="size-6 text-slate-400 hover:bg-slate-700/70 hover:text-white focus-visible:bg-slate-700/70 focus-visible:text-white"
+              onSelect={(fileName) => onSaveCodeBlock(code.value, fileName)}
+            />
+          ) : null}
+          <ClipboardActionButton
+            action="copy"
+            value={code.value}
+            aria-label="Copy code"
+            className="size-6 text-slate-400 hover:bg-slate-700/70 hover:text-white focus-visible:bg-slate-700/70 focus-visible:text-white"
+            iconClassName="size-3"
+          />
+        </span>
       </figcaption>
       <pre
         className={cn(
@@ -159,6 +188,33 @@ function MarkdownCodeBlock({
       </pre>
     </figure>
   );
+}
+
+function defaultCodeBlockFileName(language: string | null): string {
+  const extensionByLanguage: Record<string, string> = {
+    bash: "sh",
+    css: "css",
+    html: "html",
+    javascript: "js",
+    js: "js",
+    json: "json",
+    markdown: "md",
+    md: "md",
+    python: "py",
+    py: "py",
+    shell: "sh",
+    sh: "sh",
+    text: "txt",
+    ts: "ts",
+    tsx: "tsx",
+    typescript: "ts",
+    yaml: "yaml",
+    yml: "yml",
+  };
+  const normalized = language?.toLowerCase().trim() ?? "";
+  const extension = extensionByLanguage[normalized] ?? "txt";
+
+  return `snippet.${extension}`;
 }
 
 type HastNode = {

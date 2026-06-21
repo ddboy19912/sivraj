@@ -9,6 +9,7 @@ import {
   VenetianMask,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
+import { AgentSkillSaveMenu } from "@/components/chat/AgentSkillSaveMenu";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -35,6 +36,7 @@ type ChatComposerProps = {
   onStopStreaming: () => void;
   onRetryLastMessage: () => void;
   onAttachFiles: (files: FileList | null) => void;
+  onSaveDraftAsSource: (fileName: string) => void;
 };
 
 export function ChatComposer({
@@ -52,6 +54,7 @@ export function ChatComposer({
   onStopStreaming,
   onRetryLastMessage,
   onAttachFiles,
+  onSaveDraftAsSource,
 }: ChatComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -95,7 +98,7 @@ export function ChatComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.md,.markdown,.txt,.json,.csv,.html,.htm,image/*"
+          accept=".pdf,.md,.markdown,.mdx,.mdc,.cursorrules,.txt,.json,.csv,.html,.htm,image/*"
           aria-label="Upload context file"
           className="sr-only"
           onChange={(event) => {
@@ -119,6 +122,13 @@ export function ChatComposer({
           value={memoryIntent}
           disabled={isSending}
           onChange={onMemoryIntentChange}
+        />
+        <AgentSkillSaveMenu
+          ariaLabel="Save draft as source file"
+          disabled={isUploadingAttachment || draft.trim().length === 0}
+          defaultFileName="notes.md"
+          triggerClassName="size-10 shrink-0 text-white/40 hover:text-white/70"
+          onSelect={onSaveDraftAsSource}
         />
         <textarea
           ref={textareaRef}
