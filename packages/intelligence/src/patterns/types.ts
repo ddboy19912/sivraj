@@ -5,6 +5,7 @@ export type PatternSignal = {
   sourceArtifactId: string;
   memoryFragmentId: string;
   candidateMemoryId: string;
+  canonicalMemoryId?: string | null;
   memoryType: MemoryType;
   subject: string | null;
   confidence: number;
@@ -32,6 +33,7 @@ export type DetectedPattern = {
   sourceArtifactIds: string[];
   memoryFragmentIds: string[];
   candidateMemoryIds: string[];
+  canonicalMemoryIds: string[];
   memoryTypes: MemoryType[];
   sourceTypes: string[];
   detector: string;

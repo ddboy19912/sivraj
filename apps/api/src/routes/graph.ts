@@ -1,4 +1,4 @@
-import { graphEdges, graphNodes, memoryFragments } from "@sivraj/db";
+import { candidateMemories, graphEdges, graphNodes, memoryFragments } from "@sivraj/db";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppDependencies } from "../app.js";
@@ -6,6 +6,18 @@ import {
   artifactScopedGraphNodeName,
   collectArtifactScopedGraphIds,
 } from "../lib/graph/scoped-loader.js";
+import {
+  collectPatternCandidateMemoryIds,
+  filterVisibleGraphNodesByPatternEvidence,
+} from "../lib/graph/pattern-visibility.js";
+import {
+  loadBrainMemoryGraphNodes,
+  type BrainGraphRouteNode,
+} from "../lib/graph/brain-memory-nodes.js";
+import {
+  loadGraphCanonicalMemoryContexts,
+  type GraphCanonicalMemoryContext,
+} from "../lib/graph/canonical-context.js";
 import { recordMetadata, sanitizeSafeMetadata } from "../lib/safe-metadata.js";
 import { requireAuth, type AuthEnv } from "../middleware/auth.js";
 import { authorizeTwinRoute } from "../lib/http/route-auth.js";
@@ -25,6 +37,7 @@ const GRAPH_NODE_TYPES = [
 ] as const;
 
 type GraphNodeType = typeof GRAPH_NODE_TYPES[number];
+type GraphRouteNode = typeof graphNodes.$inferSelect | BrainGraphRouteNode;
 
 export function createGraphRoutes({ db }: AppDependencies) {
   const routes = new Hono<AuthEnv>();
@@ -55,13 +68,44 @@ export function createGraphRoutes({ db }: AppDependencies) {
           limit,
         });
 
+    const supplementalNodes = artifactId
+      ? []
+      : await loadBrainMemoryGraphNodes({
+          db,
+          twinId,
+          nodeType,
+          limit,
+        });
+    const candidateNodes = [
+      ...orderGraphRouteNodes(supplementalNodes),
+      ...orderGraphRouteNodes(graph.nodes),
+    ].slice(0, limit);
+    const nodes = await filterVisibleGraphNodes({
+      db,
+      nodes: candidateNodes,
+    });
+    const visibleNodeIds = new Set(nodes.map((node) => node.id));
+    const edges = graph.edges.filter((edge) => (
+      visibleNodeIds.has(edge.fromNodeId) && visibleNodeIds.has(edge.toNodeId)
+    ));
+    const canonicalContextsByNodeId = await loadGraphCanonicalMemoryContexts({
+      db,
+      twinId,
+      nodes,
+      edges,
+    });
+
     return c.json({
       policy: {
         rawArtifactsIncluded: false,
+        canonicalMemoryContextIncluded: true,
         scope: "memory:read",
       },
-      nodes: graph.nodes.map(formatNode),
-      edges: graph.edges.map(formatEdge),
+      nodes: nodes.map((node) => formatNode(
+        node,
+        canonicalContextsByNodeId.get(node.id) ?? [],
+      )),
+      edges: edges.map(formatEdge),
     });
   });
 
@@ -239,7 +283,10 @@ async function findMemoryFragment(
   return fragment ?? null;
 }
 
-function formatNode(node: typeof graphNodes.$inferSelect) {
+function formatNode(
+  node: GraphRouteNode,
+  canonicalMemories: GraphCanonicalMemoryContext[],
+) {
   return {
     id: node.id,
     twinId: node.twinId,
@@ -248,10 +295,54 @@ function formatNode(node: typeof graphNodes.$inferSelect) {
     normalizedName: node.normalizedName,
     description: node.description,
     properties: sanitizeSafeMetadata(node.properties),
+    canonicalMemories,
     confidenceScore: node.confidenceScore,
     createdAt: node.createdAt.toISOString(),
     updatedAt: node.updatedAt.toISOString(),
   };
+}
+
+async function filterVisibleGraphNodes(input: {
+  db: AppDependencies["db"];
+  nodes: GraphRouteNode[];
+}) {
+  const patternCandidateMemoryIds = collectPatternCandidateMemoryIds(input.nodes);
+  const canonicalMemoryIdsByCandidateId = patternCandidateMemoryIds.length > 0
+    ? await loadCanonicalMemoryIdsByCandidateId(input.db, patternCandidateMemoryIds)
+    : new Map<string, string>();
+
+  return filterVisibleGraphNodesByPatternEvidence(
+    input.nodes,
+    canonicalMemoryIdsByCandidateId,
+  );
+}
+
+function orderGraphRouteNodes(nodes: GraphRouteNode[]) {
+  return nodes.slice().sort((a: GraphRouteNode, b: GraphRouteNode) => (
+    b.updatedAt.getTime() - a.updatedAt.getTime() ||
+    a.id.localeCompare(b.id)
+  ));
+}
+
+async function loadCanonicalMemoryIdsByCandidateId(
+  db: AppDependencies["db"],
+  candidateMemoryIds: string[],
+) {
+  const rows = await db
+    .select({
+      id: candidateMemories.id,
+      canonicalMemoryId: candidateMemories.canonicalMemoryId,
+    })
+    .from(candidateMemories)
+    .where(inArray(candidateMemories.id, candidateMemoryIds));
+
+  return new Map(
+    rows
+      .filter((row): row is { id: string; canonicalMemoryId: string } =>
+        typeof row.canonicalMemoryId === "string" && row.canonicalMemoryId.length > 0,
+      )
+      .map((row) => [row.id, row.canonicalMemoryId]),
+  );
 }
 
 function formatEdge(edge: typeof graphEdges.$inferSelect) {
@@ -274,4 +365,3 @@ function readNodeType(value: string | undefined): GraphNodeType | null {
     ? value as GraphNodeType
     : null;
 }
-

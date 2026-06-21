@@ -6,7 +6,13 @@ import type {
   PatternType,
 } from "../types.js";
 import type { MemoryType } from "../../index.js";
-import { buildDetectedPatternEvidenceFields, repeatedEvidenceConfidence, unique } from "./detector-utils.js";
+import {
+  buildDetectedPatternEvidenceFields,
+  dedupePatternEvidenceSignals,
+  patternEvidenceKey,
+  repeatedEvidenceConfidence,
+  repeatedPatternEvidenceCount,
+} from "./detector-utils.js";
 
 const REPEATED_SUBJECT_MEMORY_TYPES: Array<{
   memoryType: MemoryType;
@@ -56,29 +62,26 @@ function detectRepeatedSubject(
   return Array.from(grouped.entries())
     .filter(([, group]) => hasRepeatedEvidence(group))
     .map(([normalizedSubject, group]) => {
-      const firstSubject = group.find((signal) => signal.subject)?.subject ?? normalizedSubject;
-      const evidenceCount = group.length;
-      const confidence = repeatedEvidenceConfidence(group);
+      const evidenceGroup = dedupePatternEvidenceSignals(group);
+      const firstSubject = evidenceGroup.find((signal) => signal.subject)?.subject ?? normalizedSubject;
+      const evidenceCount = evidenceGroup.length;
+      const confidence = repeatedEvidenceConfidence(evidenceGroup);
 
       return {
         patternType,
-        patternHash: patternHash(patternType, normalizedSubject, group),
+        patternHash: patternHash(patternType, normalizedSubject, evidenceGroup),
         subject: firstSubject,
         normalizedSubject,
         confidence,
         evidenceCount,
-        ...buildDetectedPatternEvidenceFields(group),
+        ...buildDetectedPatternEvidenceFields(evidenceGroup),
         detector: "repeated_subject_detector",
       };
     });
 }
 
 function hasRepeatedEvidence(signals: PatternSignal[]): boolean {
-  if (signals.length < 2) {
-    return false;
-  }
-
-  return unique(signals.map((signal) => signal.candidateMemoryId)).length >= 2;
+  return repeatedPatternEvidenceCount(signals) >= 2;
 }
 
 function patternHash(
@@ -86,7 +89,7 @@ function patternHash(
   normalizedSubject: string,
   signals: PatternSignal[],
 ): string {
-  const evidence = unique(signals.map((signal) => signal.candidateMemoryId)).sort().join("|");
+  const evidence = signals.map(patternEvidenceKey).sort().join("|");
 
   return createHash("sha256")
     .update(`${patternType}:${normalizedSubject}:${evidence}`)

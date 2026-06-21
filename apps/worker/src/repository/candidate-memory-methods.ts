@@ -38,7 +38,10 @@ async function createCandidateMemory(db: Db, input: CandidateMemoryInput) {
 
   if (existing) {
     await updateExistingCandidateMemory(db, existing.id, input, canonicalMemory);
-    return existing;
+    return {
+      id: existing.id,
+      canonicalMemoryId: canonicalMemory.id,
+    };
   }
 
   return insertCandidateMemory(db, input, canonicalMemory);
@@ -418,13 +421,18 @@ async function insertCandidateMemory(
         canonicalMemory,
       }),
     })
-    .returning({ id: candidateMemories.id });
+    .returning({
+      id: candidateMemories.id,
+    });
 
   if (!candidate) {
     throw new Error("Failed to create candidate memory");
   }
 
-  return candidate;
+  return {
+    id: candidate.id,
+    canonicalMemoryId: canonicalMemory.id,
+  };
 }
 
 function archiveStatusFromMetadata(

@@ -24,38 +24,40 @@ export function ChatPage(props: ChatPageProps) {
   }
 
   return (
-    <section className="absolute inset-x-4 top-[84px] bottom-[104px] z-10 mx-auto flex max-w-[1180px] gap-3 max-md:top-[76px] max-md:bottom-[96px]">
-      <ChatThreadSidebar
-        threads={chat.threads}
-        activeThreadId={chat.activeThreadId}
-        onSelectThread={(threadId) => void chat.switchThread(threadId)}
-        onCreateThread={() => void chat.startNewThread()}
-        onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
-      />
-      <ChatConversationPanel
-        activeThread={chat.activeThread}
-        providerPresentation={chat.providerPresentation}
-        twinName={props.twinName}
-        status={chat.status}
-        notice={chat.notice}
-        isLoading={chat.isLoading}
-        isSending={chat.isSending}
-        attachmentUploadStatus={chat.attachmentUploadStatus}
-        messages={chat.messages}
-        draft={chat.draft}
-        memoryIntent={chat.memoryIntent}
-        messagesEndRef={chat.messagesEndRef}
-        onCreateThread={() => void chat.startNewThread()}
-        onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
-        onDraftChange={chat.setDraft}
-        onMemoryIntentChange={chat.setMemoryIntent}
-        onComposerKeyDown={chat.handleComposerKeyDown}
-        onSendMessage={() => void chat.sendMessage()}
-        onStopStreaming={chat.stopStreaming}
-        onRetryLastMessage={() => void chat.retryLastMessage()}
-        onAttachFiles={(files) => void chat.attachFiles(files)}
-        onOpenAttachment={(attachment) => void chat.openAttachment(attachment)}
-      />
+    <section className="absolute inset-0 z-10 min-h-0 overflow-hidden px-5 pt-[76px] pb-[92px] max-lg:px-4 max-md:pt-[70px] max-md:pb-[86px]">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1220px] gap-4 max-md:gap-3">
+        <ChatThreadSidebar
+          threads={chat.threads}
+          activeThreadId={chat.activeThreadId}
+          onSelectThread={(threadId) => void chat.switchThread(threadId)}
+          onCreateThread={() => void chat.startNewThread()}
+          onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
+        />
+        <ChatConversationPanel
+          activeThread={chat.activeThread}
+          providerPresentation={chat.providerPresentation}
+          twinName={props.twinName}
+          status={chat.status}
+          notice={chat.notice}
+          isLoading={chat.isLoading}
+          isSending={chat.isSending}
+          attachmentUploadStatus={chat.attachmentUploadStatus}
+          messages={chat.messages}
+          draft={chat.draft}
+          memoryIntent={chat.memoryIntent}
+          messagesEndRef={chat.messagesEndRef}
+          onCreateThread={() => void chat.startNewThread()}
+          onDeleteThread={(threadId) => void chat.deleteThread(threadId)}
+          onDraftChange={chat.setDraft}
+          onMemoryIntentChange={chat.setMemoryIntent}
+          onComposerKeyDown={chat.handleComposerKeyDown}
+          onSendMessage={() => void chat.sendMessage()}
+          onStopStreaming={chat.stopStreaming}
+          onRetryLastMessage={() => void chat.retryLastMessage()}
+          onAttachFiles={(files) => void chat.attachFiles(files)}
+          onOpenAttachment={(attachment) => void chat.openAttachment(attachment)}
+        />
+      </div>
     </section>
   );
 }

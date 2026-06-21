@@ -30,7 +30,7 @@ export function ChatConversationPanel({
   onOpenAttachment,
 }: ChatConversationPanelProps) {
   return (
-    <div className={cn(liquidGlass, "flex min-w-0 flex-1 flex-col overflow-hidden rounded-[32px]")}>
+    <div className={cn(liquidGlass, "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[24px]")}>
       <ChatConversationHeader
         activeThread={activeThread}
         providerPresentation={providerPresentation}

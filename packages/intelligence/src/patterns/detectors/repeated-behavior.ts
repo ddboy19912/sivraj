@@ -5,7 +5,12 @@ import type {
   PatternSignal,
 } from "../types.js";
 import { behaviorPatternSubject } from "../behavior-patterns.js";
-import { buildDetectedPatternEvidenceFields, repeatedEvidenceConfidence, unique } from "./detector-utils.js";
+import {
+  buildDetectedPatternEvidenceFields,
+  dedupePatternEvidenceSignals,
+  repeatedEvidenceConfidence,
+  repeatedPatternEvidenceCount,
+} from "./detector-utils.js";
 
 export function createRepeatedBehaviorDetector(): PatternDetector {
   return {
@@ -27,11 +32,12 @@ export function createRepeatedBehaviorDetector(): PatternDetector {
       }
 
       return Array.from(grouped.entries())
-        .filter(([, group]) => unique(group.map((signal) => signal.candidateMemoryId)).length >= 2)
+        .filter(([, group]) => repeatedPatternEvidenceCount(group) >= 2)
         .map(([patternKey, group]) => {
+          const evidenceGroup = dedupePatternEvidenceSignals(group);
           const subject = behaviorPatternSubject(patternKey);
-          const evidenceCount = group.length;
-          const confidence = repeatedEvidenceConfidence(group);
+          const evidenceCount = evidenceGroup.length;
+          const confidence = repeatedEvidenceConfidence(evidenceGroup);
 
           return {
             patternType: "repeated_behavior_theme",
@@ -40,7 +46,7 @@ export function createRepeatedBehaviorDetector(): PatternDetector {
             normalizedSubject: patternKey,
             confidence,
             evidenceCount,
-            ...buildDetectedPatternEvidenceFields(group),
+            ...buildDetectedPatternEvidenceFields(evidenceGroup),
             detector: "repeated_behavior_detector",
           } satisfies DetectedPattern;
         });

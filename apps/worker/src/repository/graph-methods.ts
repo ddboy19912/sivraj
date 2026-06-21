@@ -15,6 +15,7 @@ async function upsertGraphNode(
     .select({
       id: graphNodes.id,
       name: graphNodes.name,
+      description: graphNodes.description,
       properties: graphNodes.properties,
       confidenceScore: graphNodes.confidenceScore,
     })
@@ -93,20 +94,24 @@ async function updateExistingGraphNode(
   db: Db,
   existing: {
     id: string;
+    description: string | null;
     properties: unknown;
     confidenceScore: number | null;
   },
   input: {
+    description?: string | null;
     properties: Record<string, unknown>;
     confidenceScore: number;
   },
 ) {
   const mergedProperties = mergeGraphNodeProperties(existing.properties, input.properties);
   const confidenceScore = maxNullableNumber(existing.confidenceScore, input.confidenceScore);
+  const description = mergeGraphNodeDescription(existing.description, input.description);
 
   await db
     .update(graphNodes)
     .set({
+      description,
       properties: mergedProperties,
       confidenceScore,
       updatedAt: new Date(),
@@ -114,6 +119,19 @@ async function updateExistingGraphNode(
     .where(eq(graphNodes.id, existing.id));
 
   return existing;
+}
+
+function mergeGraphNodeDescription(
+  existing: string | null,
+  incoming: string | null | undefined,
+) {
+  const existingDescription = existing?.trim();
+  if (existingDescription) {
+    return existing;
+  }
+
+  const incomingDescription = incoming?.trim();
+  return incomingDescription ? incomingDescription : existing;
 }
 
 async function insertGraphNode(

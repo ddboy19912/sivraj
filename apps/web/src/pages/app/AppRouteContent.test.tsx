@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ChatRoute from "@/pages/app/ChatRoute";
+import BrainRoute from "@/pages/app/BrainRoute";
 import HomeRoute from "@/pages/app/HomeRoute";
 import type { AppRouteContextValue } from "@/providers/app-route-context";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
@@ -10,6 +11,12 @@ const homepageMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/chat/ChatPage", () => ({
   ChatPage: () => <section aria-label="Chat page" />,
+}));
+
+vi.mock("@/components/brain/BrainPage", () => ({
+  BrainPage: (props: { session: { twinId: string } }) => (
+    <section aria-label="Brain page" data-twin-id={props.session.twinId} />
+  ),
 }));
 
 vi.mock("@/pages/Homepage", () => ({
@@ -59,6 +66,21 @@ describe("app route content", () => {
 
     expect(screen.getByLabelText("Chat page")).toBeInTheDocument();
   });
+
+  it("does not mount protected brain before verified access", () => {
+    renderRoute(<BrainRoute />, createRouteContext({ canUseProtectedApp: false }));
+
+    expect(screen.queryByLabelText("Brain page")).not.toBeInTheDocument();
+  });
+
+  it("mounts the brain with protected twin session context", () => {
+    renderRoute(<BrainRoute />, createRouteContext({ canUseProtectedApp: true }));
+
+    expect(screen.getByLabelText("Brain page")).toHaveAttribute(
+      "data-twin-id",
+      "twin-test",
+    );
+  });
 });
 
 function renderRoute(page: React.ReactNode, context: AppRouteContextValue) {
@@ -70,10 +92,20 @@ function renderRoute(page: React.ReactNode, context: AppRouteContextValue) {
 function createRouteContext(
   flowOverrides: Parameters<typeof createFlow>[0],
 ): AppRouteContextValue {
+  const session = flowOverrides.canUseProtectedApp
+    ? {
+      token: "token",
+      refreshToken: "refresh",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      twinId: "twin-test",
+      walletAddress: "0x123",
+    }
+    : null;
+
   return {
     homeAgentState: "initializing",
     homeStatusHud: { label: "AGENT_STATUS", status: "READY" },
-    onboarding: createFlow(flowOverrides),
+    onboarding: createFlow({ session, ...flowOverrides }),
     providerState: null,
     setProviderOpen: vi.fn(),
     setProviderState: vi.fn(),

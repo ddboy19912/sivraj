@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { detectPatterns, type PatternSignal } from "./index.js";
 import {
   run_detectpatterns_detects_repeated_goal_subjects_across_current_and_histo,
+  run_detectpatterns_dedupes_same_canonical_memory_before_repeated_subjects,
   run_detectpatterns_does_not_detect_a_pattern_from_one_isolated_signal,
   run_detectpatterns_detects_repeated_behavior_themes_across_different_proje,
   run_detectpatterns_detects_repeated_engineering_failure_themes,
@@ -14,6 +15,10 @@ describe("detectPatterns", () => {
 
 describe("detectPatterns", () => {
   it("does not detect a pattern from one isolated signal", () => run_detectpatterns_does_not_detect_a_pattern_from_one_isolated_signal());
+});
+
+describe("detectPatterns", () => {
+  it("dedupes same canonical memory before repeated subjects", () => run_detectpatterns_dedupes_same_canonical_memory_before_repeated_subjects());
 });
 
 describe("detectPatterns", () => {

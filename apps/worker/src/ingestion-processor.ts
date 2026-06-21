@@ -559,10 +559,13 @@ async function processEntityExtraction(
         nodeType: entity.graphNodeType,
         name: entity.name,
         normalizedName: entity.normalizedName,
+        description: describeExtractedEntityNode(entity, input.artifact.sourceType),
         properties: {
           normalizedName: entity.normalizedName,
           entityType: entity.type,
           aliases: entity.aliases,
+          sourceArtifactId: input.artifact.id,
+          memoryFragmentId: input.memoryFragmentId,
           sourceType: input.artifact.sourceType,
           evidenceHash: entity.evidenceHash,
           evidenceLength: entity.evidenceLength,
@@ -646,6 +649,14 @@ async function processEntityExtraction(
       detail: errorMessage(error),
     };
   }
+}
+
+function describeExtractedEntityNode(entity: ExtractedEntity, sourceType: string) {
+  return `${formatGraphLabel(entity.type)} detected in ${formatGraphLabel(sourceType)} memory and connected to related evidence.`;
+}
+
+function formatGraphLabel(value: string) {
+  return value.replace(/[_-]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 async function processEntityExtractionChunks(

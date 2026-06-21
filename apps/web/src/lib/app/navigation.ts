@@ -3,6 +3,7 @@ import type { NavigationTabId } from "@/components/navigation/NavigationTab";
 const ROUTE_BY_TAB: Record<NavigationTabId, string> = {
   home: "/",
   chat: "/chat",
+  brain: "/brain",
   settings: "/settings",
 };
 
@@ -17,6 +18,10 @@ export function getNavigationTabForPath(pathname: string): NavigationTabId {
 
   if (pathname === "/settings") {
     return "settings";
+  }
+
+  if (pathname === "/brain") {
+    return "brain";
   }
 
   return "home";

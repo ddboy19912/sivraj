@@ -17,6 +17,7 @@ export async function run_detectpatterns_detects_repeated_goal_subjects_across_c
       {
         ...baseSignal,
         candidateMemoryId: "candidate-current",
+        evidenceHash: "evidence-current",
         memoryType: "goal",
         subject: "Sivraj",
       },
@@ -27,6 +28,7 @@ export async function run_detectpatterns_detects_repeated_goal_subjects_across_c
         sourceArtifactId: "artifact-old",
         memoryFragmentId: "fragment-old",
         candidateMemoryId: "candidate-old",
+        evidenceHash: "evidence-old",
         memoryType: "goal",
         subject: "sivraj",
       },
@@ -74,6 +76,41 @@ export async function run_detectpatterns_does_not_detect_a_pattern_from_one_isol
     expect(result.metadata.patternCount).toBe(0);
 }
 
+export async function run_detectpatterns_dedupes_same_canonical_memory_before_repeated_subjects() {
+  const result = detectPatterns({
+      twinId: "twin-id",
+      currentSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-pdf",
+          memoryFragmentId: "fragment-pdf",
+          candidateMemoryId: "candidate-pdf",
+          canonicalMemoryId: "canonical-rg-preference",
+          evidenceHash: "pdf-rg-evidence",
+          memoryType: "preference",
+          subject: "rg",
+          sourceType: "pdf",
+        },
+      ],
+      historicalSignals: [
+        {
+          ...baseSignal,
+          sourceArtifactId: "artifact-chat-export",
+          memoryFragmentId: "fragment-chat-export",
+          candidateMemoryId: "candidate-chat-export",
+          canonicalMemoryId: "canonical-rg-preference",
+          evidenceHash: "chat-rg-evidence",
+          memoryType: "preference",
+          subject: "rg",
+          sourceType: "chat_export",
+        },
+      ],
+    });
+
+    expect(result.patterns).toEqual([]);
+    expect(result.metadata.patternCount).toBe(0);
+}
+
 export async function run_detectpatterns_detects_repeated_behavior_themes_across_different_proje() {
   const result = detectPatterns({
       twinId: "twin-id",
@@ -83,6 +120,7 @@ export async function run_detectpatterns_detects_repeated_behavior_themes_across
           sourceArtifactId: "artifact-gamma",
           memoryFragmentId: "fragment-gamma",
           candidateMemoryId: "candidate-gamma",
+          evidenceHash: "evidence-gamma",
           memoryType: "project_update",
           subject: "Project Gamma",
           metadata: {
@@ -96,6 +134,7 @@ export async function run_detectpatterns_detects_repeated_behavior_themes_across
           sourceArtifactId: "artifact-alpha",
           memoryFragmentId: "fragment-alpha",
           candidateMemoryId: "candidate-alpha",
+          evidenceHash: "evidence-alpha",
           memoryType: "project_update",
           subject: "Project Alpha",
           metadata: {
@@ -107,6 +146,7 @@ export async function run_detectpatterns_detects_repeated_behavior_themes_across
           sourceArtifactId: "artifact-beta",
           memoryFragmentId: "fragment-beta",
           candidateMemoryId: "candidate-beta",
+          evidenceHash: "evidence-beta",
           memoryType: "project_update",
           subject: "Project Beta",
           metadata: {
@@ -135,6 +175,7 @@ export async function run_detectpatterns_detects_repeated_engineering_failure_th
           sourceArtifactId: "artifact-current",
           memoryFragmentId: "fragment-current",
           candidateMemoryId: "candidate-current",
+          evidenceHash: "evidence-current",
           memoryType: "project_update",
           subject: "Walrus read",
           metadata: {
@@ -148,6 +189,7 @@ export async function run_detectpatterns_detects_repeated_engineering_failure_th
           sourceArtifactId: "artifact-old",
           memoryFragmentId: "fragment-old",
           candidateMemoryId: "candidate-old",
+          evidenceHash: "evidence-old",
           memoryType: "project_update",
           subject: "Seal decrypt",
           metadata: {
@@ -174,6 +216,7 @@ export async function run_detectpatterns_keeps_pattern_output_free_of_private_st
         {
           ...baseSignal,
           candidateMemoryId: "candidate-current",
+          evidenceHash: "evidence-current",
           memoryType: "decision",
           subject: "Sivraj",
           metadata: {
@@ -185,6 +228,7 @@ export async function run_detectpatterns_keeps_pattern_output_free_of_private_st
         {
           ...baseSignal,
           candidateMemoryId: "candidate-old",
+          evidenceHash: "evidence-old",
           memoryType: "decision",
           subject: "Sivraj",
         },

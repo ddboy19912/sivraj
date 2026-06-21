@@ -134,28 +134,7 @@ export function createCartesiaRealtimeTextToSpeechClient(
     cancel();
   }, { once: true });
 
-  const done = (async () => {
-    await ready;
-
-    while (!input.signal.aborted) {
-      if (error) {
-        break;
-      }
-
-      const text = queue.shift();
-      if (!text) {
-        if (closed) {
-          break;
-        }
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-        continue;
-      }
-
-      await synthesizeChunk(text);
-    }
-
+  const done = ready.then(processQueue).then(() => {
     settled = true;
     if (!input.signal.aborted && started) {
       input.onStreamClosed();
@@ -163,7 +142,28 @@ export function createCartesiaRealtimeTextToSpeechClient(
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.close();
     }
-  })();
+  });
+
+  async function processQueue(): Promise<void> {
+    if (input.signal.aborted || error) {
+      return;
+    }
+
+    const text = queue.shift();
+    if (text) {
+      await synthesizeChunk(text);
+      return processQueue();
+    }
+
+    if (closed) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    return processQueue();
+  }
 
   async function synthesizeChunk(text: string) {
     const contextId = createContextId();

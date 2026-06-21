@@ -285,7 +285,7 @@ async function persistCandidateMemories(
       goalCandidates.push({ memory, candidateMemoryId: candidate.id, statementIndex });
     }
 
-    const patternSignal = toPatternSignal(input.artifact, input.memoryFragmentId, candidate.id, memory);
+    const patternSignal = toPatternSignal(input.artifact, input.memoryFragmentId, candidate, memory);
     if (patternSignal) {
       currentPatternSignals.push(patternSignal);
     }

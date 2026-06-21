@@ -87,6 +87,7 @@ async function findRecentPatternSignals(db: Db, twinId: string, limit: number) {
   const rows = await db
     .select({
       id: candidateMemories.id,
+      canonicalMemoryId: candidateMemories.canonicalMemoryId,
       sourceArtifactId: candidateMemories.sourceArtifactId,
       memoryFragmentId: candidateMemories.memoryFragmentId,
       memoryType: candidateMemories.memoryType,
@@ -382,6 +383,7 @@ function mapPatternSignalRow(
   twinId: string,
   row: {
     id: string;
+    canonicalMemoryId: string | null;
     sourceArtifactId: string;
     memoryFragmentId: string;
     memoryType: typeof candidateMemories.$inferSelect["memoryType"];
@@ -405,6 +407,7 @@ function mapPatternSignalRow(
     sourceArtifactId: row.sourceArtifactId,
     memoryFragmentId: row.memoryFragmentId,
     candidateMemoryId: row.id,
+    canonicalMemoryId: row.canonicalMemoryId,
     memoryType: row.memoryType,
     subject,
     confidence: row.confidenceScore ?? 0.5,

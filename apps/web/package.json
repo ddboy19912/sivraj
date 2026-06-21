@@ -27,7 +27,6 @@
     "clsx": "^2.1.1",
     "livekit-client": "^2.19.0",
     "lucide-react": "^1.17.0",
-    "motion": "^12.40.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.6",
     "react-colorful": "^5.7.0",

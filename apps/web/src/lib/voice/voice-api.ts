@@ -1,6 +1,5 @@
 import {
   getAuthedJson,
-  postAuthedAudio,
   postAuthedJson,
   putAuthedJson,
 } from "@/lib/api";
@@ -98,28 +97,6 @@ export function transcribeVoiceAudio(
     session,
     onSessionRefreshed,
   );
-}
-
-// Synthesize a single spoken clip and return an object URL. Used to stream a
-// reply sentence-by-sentence so playback can begin before the full answer is
-// generated, instead of waiting on one large synthesis request.
-export async function synthesizeVoiceClip(
-  input: { text: string; style: "energetic"; exaggeration?: number },
-  session: Session,
-  onSessionRefreshed: SessionHandler,
-): Promise<string> {
-  const audio = await postAuthedAudio(
-    `/v1/twins/${session.twinId}/voice/speak`,
-    {
-      text: input.text,
-      style: input.style,
-      exaggeration: input.exaggeration ?? 0.72,
-    },
-    session,
-    onSessionRefreshed,
-  );
-
-  return URL.createObjectURL(audio);
 }
 
 export function createRealtimeVoiceTranscriptionSession(

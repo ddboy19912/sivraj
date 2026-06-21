@@ -20,12 +20,17 @@ export function ChatThreadSidebar({
   onDeleteThread,
 }: ChatThreadSidebarProps) {
   return (
-    <aside className={cn(liquidGlass, "hidden w-[260px] shrink-0 overflow-hidden rounded-[28px] p-3 md:block")}>
+    <aside
+      className={cn(
+        liquidGlass,
+        "hidden min-h-0 w-[340px] shrink-0 flex-col overflow-hidden rounded-[24px] p-2.5 md:flex",
+      )}
+    >
       <ChatThreadSidebarHeader
         threadCount={threads.length}
         onCreateThread={onCreateThread}
       />
-      <div className="relative z-1 mt-2 grid gap-1 overflow-y-auto pr-1">
+      <div className="relative z-1 mt-1.5 grid min-h-0 flex-1 gap-1 overflow-y-auto overscroll-contain pr-0.5">
         {threads.map((thread) => (
           <ChatThreadListItem
             key={thread.id}

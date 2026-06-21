@@ -238,7 +238,7 @@ function createArtifactRepositoryStub(): ArtifactRepository {
       return { id: "edge-1" };
     },
     async createCandidateMemory() {
-      return { id: "candidate-1" };
+      return { id: "candidate-1", canonicalMemoryId: "canonical-1" };
     },
     async createCandidateMemoryArchive() {
       return { id: "archive-1" };

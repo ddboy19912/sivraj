@@ -30,7 +30,7 @@ export function ChatThreadListItem({
         onClick={onSelect}
         className="min-w-0 flex-1 px-3 py-3 text-left"
       >
-        <p className="block truncate max-w-[160px] text-sm font-semibold">
+        <p className="truncate text-sm font-semibold">
           {thread.title}
         </p>
         <span className="mt-1 block text-[11px] text-white/38">

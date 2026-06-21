@@ -101,6 +101,7 @@ async function upsertProjectClusterNode(
     nodeType: "project",
     name: candidate.name,
     normalizedName: candidate.normalizedName,
+    description: describeProjectCluster(candidate, artifact.sourceType),
     properties: {
       normalizedName: candidate.normalizedName,
       sourceType: artifact.sourceType,
@@ -123,6 +124,7 @@ export async function upsertArtifactGraphNode(
     nodeType: "artifact",
     name: `source_artifact:${artifact.id}`,
     normalizedName: `source_artifact:${artifact.id}`,
+    description: `Source artifact from ${formatGraphLabel(artifact.sourceType)} memory that contributed evidence to the knowledge graph.`,
     properties: {
       sourceArtifactId: artifact.id,
       memoryFragmentId,
@@ -244,6 +246,7 @@ export async function linkDecisionGraphNodes(
       nodeType: "decision",
       name: `decision:${decisionHash.slice(0, 12)}`,
       normalizedName: `decision:${decisionHash}`,
+      description: describePrivateMemoryGraphNode("decision", decision.memory.subject),
       properties: {
         decisionHash,
         sourceArtifactId: input.artifact.id,
@@ -320,6 +323,7 @@ export async function linkGoalGraphNodes(
       nodeType: "goal",
       name: `goal:${goalHash.slice(0, 12)}`,
       normalizedName: `goal:${goalHash}`,
+      description: describePrivateMemoryGraphNode("goal", goal.memory.subject),
       properties: {
         goalHash,
         sourceArtifactId: input.artifact.id,
@@ -386,6 +390,7 @@ async function upsertPatternGraphNode(
     nodeType: "other",
     name: `pattern:${pattern.patternHash.slice(0, 12)}`,
     normalizedName: `pattern:${pattern.patternHash}`,
+    description: describePatternGraphNode(pattern),
     properties: {
       kind: "pattern",
       patternType: pattern.patternType,
@@ -396,6 +401,7 @@ async function upsertPatternGraphNode(
       sourceArtifactIds: pattern.sourceArtifactIds,
       memoryFragmentIds: pattern.memoryFragmentIds,
       candidateMemoryIds: pattern.candidateMemoryIds,
+      canonicalMemoryIds: pattern.canonicalMemoryIds,
       memoryTypes: pattern.memoryTypes,
       sourceTypes: pattern.sourceTypes,
       detector: pattern.detector,
@@ -417,7 +423,7 @@ export function patternMetadataForMemory(memory: ExtractedMemory): Record<string
 export function toPatternSignal(
   artifact: QueuedArtifact,
   memoryFragmentId: string,
-  candidateMemoryId: string,
+  candidateMemory: { id: string; canonicalMemoryId?: string | null },
   memory: ExtractedMemory,
 ): PatternSignal | null {
   if (!memory.subject) {
@@ -428,7 +434,8 @@ export function toPatternSignal(
     twinId: artifact.twinId,
     sourceArtifactId: artifact.id,
     memoryFragmentId,
-    candidateMemoryId,
+    candidateMemoryId: candidateMemory.id,
+    canonicalMemoryId: candidateMemory.canonicalMemoryId ?? null,
     memoryType: memory.memoryType,
     subject: memory.subject,
     confidence: memory.confidence,
@@ -440,6 +447,30 @@ export function toPatternSignal(
       ...patternMetadataForMemory(memory),
     },
   };
+}
+
+function describeProjectCluster(
+  candidate: ProjectClusterCandidate,
+  sourceType: string,
+) {
+  const signals = candidate.signals.map(formatGraphLabel).join(", ");
+  return `Subject cluster inferred from ${signals || "graph"} signals in ${formatGraphLabel(sourceType)} memory.`;
+}
+
+function describePrivateMemoryGraphNode(
+  kind: "decision" | "goal",
+  subject: string | null,
+) {
+  const about = subject ? ` about ${subject}` : "";
+  return `Encrypted ${kind} memory${about}. The raw statement stays private while safe metadata keeps it connected.`;
+}
+
+function describePatternGraphNode(pattern: DetectedPattern) {
+  return `Detected ${formatGraphLabel(pattern.patternType)} pattern about ${pattern.subject} across ${pattern.evidenceCount} evidence signals.`;
+}
+
+function formatGraphLabel(value: string) {
+  return value.replace(/[_-]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 export async function detectAndLinkPatterns(

@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useReducer,
   useRef,
@@ -87,6 +86,12 @@ export function useHomepageVoiceChat({
   const lastLoggedPhaseRef = useRef(state.phase);
   const sessionRef = useRef(session);
   const onSessionRefreshedRef = useRef(onSessionRefreshed);
+  const beginPushToTalkRef = useRef<() => void>(() => undefined);
+  const endPushToTalkRef = useRef<() => void>(() => undefined);
+  const startRecordingSessionRef = useRef<(
+    eventId: string,
+    options?: { autoStopMs?: number },
+  ) => void>(() => undefined);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -139,11 +144,11 @@ export function useHomepageVoiceChat({
     };
   }, [enabled, session?.twinId]);
 
-  const completeListening = useCallback((eventId: string) => {
+  const completeListening = (eventId: string) => {
     onRuntimeEvent({ type: "agent.listening_completed", eventId });
-  }, [onRuntimeEvent]);
+  };
 
-  const handleRealtimeTranscript = useCallback(async (eventId: string, text: string) => {
+  const handleRealtimeTranscript = async (eventId: string, text: string) => {
     if (!session) {
       return;
     }
@@ -174,9 +179,9 @@ export function useHomepageVoiceChat({
       onRuntimeEvent({ type: "runtime.cancelled", eventId });
       dispatch({ type: "FAILED", eventId, error: errorMessage(error) });
     }
-  }, [onRuntimeEvent, onSessionRefreshed, session]);
+  };
 
-  const processRecording = useCallback(async (eventId: string, blob: Blob) => {
+  const processRecording = async (eventId: string, blob: Blob) => {
     if (!session) {
       return;
     }
@@ -220,15 +225,9 @@ export function useHomepageVoiceChat({
       onRuntimeEvent({ type: "runtime.cancelled", eventId });
       dispatch({ type: "FAILED", eventId, error: errorMessage(error) });
     }
-  }, [
-    completeListening,
-    onRuntimeEvent,
-    onSessionRefreshed,
-    session,
-    twinName,
-  ]);
+  };
 
-  const stopRecording = useCallback(() => {
+  const stopRecording = () => {
     if (autoStopTimerRef.current !== null) {
       window.clearTimeout(autoStopTimerRef.current);
       autoStopTimerRef.current = null;
@@ -304,9 +303,9 @@ export function useHomepageVoiceChat({
         realtimeTranscriber.cancel();
       }
     }
-  }, [completeListening, handleRealtimeTranscript, onRuntimeEvent, processRecording]);
+  };
 
-  const startRealtimeRecordingSession = useCallback(async (
+  const startRealtimeRecordingSession = async (
     eventId: string,
     stream: MediaStream,
   ): Promise<boolean> => {
@@ -338,9 +337,9 @@ export function useHomepageVoiceChat({
       realtimeTranscriberRef.current = null;
       return false;
     }
-  }, [onSessionRefreshed, session]);
+  };
 
-  const startRecordingSession = useCallback(async (
+  const startRecordingSession = async (
     eventId: string,
     options: { autoStopMs?: number } = {},
   ) => {
@@ -484,16 +483,9 @@ export function useHomepageVoiceChat({
       dispatch({ type: "FAILED", eventId, error: voiceRecordingErrorMessage(error) });
       void logAudioInputDevices("after failure");
     }
-  }, [
-    completeListening,
-    onRuntimeEvent,
-    processRecording,
-    session,
-    startRealtimeRecordingSession,
-    stopRecording,
-  ]);
+  };
 
-  const beginPushToTalk = useCallback(() => {
+  const beginPushToTalk = () => {
     if (!enabled || !session) {
       voiceDebug("begin ignored: inactive", {
         enabled,
@@ -522,15 +514,23 @@ export function useHomepageVoiceChat({
     }
 
     void startRecordingSession(eventId);
-  }, [enabled, onRuntimeEvent, session, startRecordingSession]);
+  };
 
-  const endPushToTalk = useCallback(() => {
+  const endPushToTalk = () => {
     voiceDebug("end push-to-talk", {
       recorderState: recorderRef.current?.state ?? null,
       phase: stateRef.current.phase,
     });
     stopRecording();
-  }, [stopRecording]);
+  };
+
+  useEffect(() => {
+    beginPushToTalkRef.current = beginPushToTalk;
+    endPushToTalkRef.current = endPushToTalk;
+    startRecordingSessionRef.current = (eventId, options) => {
+      void startRecordingSession(eventId, options);
+    };
+  });
 
   useEffect(() => {
     function handleInactiveSpace(event: KeyboardEvent) {
@@ -586,13 +586,13 @@ export function useHomepageVoiceChat({
 
       if (action === "stop") {
         pendingKeyboardStopRef.current = true;
-        endPushToTalk();
+        endPushToTalkRef.current();
         return;
       }
 
       if (action === "start") {
         pendingKeyboardStopRef.current = false;
-        beginPushToTalk();
+        beginPushToTalkRef.current();
       }
     }
 
@@ -625,9 +625,9 @@ export function useHomepageVoiceChat({
       pendingKeyboardStopRef.current = false;
       voiceDebug("shortcut detached", { enabled, hasSession: Boolean(session) });
     };
-  }, [beginPushToTalk, enabled, endPushToTalk, session]);
+  }, [enabled, session]);
 
-  const cancelVoiceTurn = useCallback(() => {
+  const cancelVoiceTurn = () => {
     activeStreamAbortRef.current?.abort();
     realtimeTranscriberRef.current?.cancel();
     realtimeTranscriberRef.current = null;
@@ -644,9 +644,9 @@ export function useHomepageVoiceChat({
     });
     stopRecording();
     dispatch({ type: "IDLE" });
-  }, [onRuntimeEvent, stopRecording]);
+  };
 
-  const saveSettings = useCallback(async (input: {
+  const saveSettings = async (input: {
     wakeEnabled?: boolean;
     wakePhrase?: string | null;
   }) => {
@@ -668,7 +668,7 @@ export function useHomepageVoiceChat({
     } catch (error) {
       dispatch({ type: "SETTINGS_FAILED", error: errorMessage(error) });
     }
-  }, [onSessionRefreshed, session]);
+  };
 
   useEffect(() => {
     if (
@@ -701,7 +701,7 @@ export function useHomepageVoiceChat({
       const eventId = createVoiceEventId();
       dispatch({ type: "WAKE_DETECTED", eventId });
       recognition.stop();
-      void startRecordingSession(eventId, { autoStopMs: WAKE_RECORDING_MS });
+      startRecordingSessionRef.current(eventId, { autoStopMs: WAKE_RECORDING_MS });
     };
     recognition.onerror = () => undefined;
     recognition.onend = () => {
@@ -730,7 +730,6 @@ export function useHomepageVoiceChat({
   }, [
     enabled,
     session,
-    startRecordingSession,
     state.phase,
     state.settings?.wakeEnabled,
     state.settings?.wakePhrase,
@@ -739,32 +738,14 @@ export function useHomepageVoiceChat({
 
   useEffect(() => {
     return () => {
-      const activeStreamAbort = activeStreamAbortRef.current;
-      const recognition = recognitionRef.current;
-      const recorder = recorderRef.current;
-      const realtimeFallbackRecorder = realtimeFallbackRecorderRef.current;
-      const realtimeTranscriber = realtimeTranscriberRef.current;
-      activeStreamAbortRef.current = null;
-      recognitionRef.current = null;
-      recorderRef.current = null;
-      realtimeFallbackRecorderRef.current = null;
-      realtimeTranscriberRef.current = null;
-
-      if (autoStopTimerRef.current !== null) {
-        window.clearTimeout(autoStopTimerRef.current);
-        autoStopTimerRef.current = null;
-      }
-      activeStreamAbort?.abort();
-      recognition?.stop();
-      realtimeTranscriber?.cancel();
-      if (realtimeFallbackRecorder?.state === "recording") {
-        realtimeFallbackRecorder.stop();
-      }
-      if (recorder?.state === "recording") {
-        recorder.stop();
-      } else {
-        recorder?.stream.getTracks().forEach((track) => track.stop());
-      }
+      disposeHomepageVoiceResources({
+        activeStreamAbortRef,
+        autoStopTimerRef,
+        recognitionRef,
+        realtimeFallbackRecorderRef,
+        realtimeTranscriberRef,
+        recorderRef,
+      });
     };
   }, []);
 
@@ -775,6 +756,42 @@ export function useHomepageVoiceChat({
     saveSettings,
     state,
   };
+}
+
+function disposeHomepageVoiceResources(input: {
+  activeStreamAbortRef: RefObject<AbortController | null>;
+  autoStopTimerRef: RefObject<number | null>;
+  recognitionRef: RefObject<SpeechRecognitionLike | null>;
+  realtimeFallbackRecorderRef: RefObject<MediaRecorder | null>;
+  realtimeTranscriberRef: RefObject<RealtimeSpeechToTextClient | null>;
+  recorderRef: RefObject<MediaRecorder | null>;
+}) {
+  const activeStreamAbort = input.activeStreamAbortRef.current;
+  const recognition = input.recognitionRef.current;
+  const recorder = input.recorderRef.current;
+  const realtimeFallbackRecorder = input.realtimeFallbackRecorderRef.current;
+  const realtimeTranscriber = input.realtimeTranscriberRef.current;
+  input.activeStreamAbortRef.current = null;
+  input.recognitionRef.current = null;
+  input.recorderRef.current = null;
+  input.realtimeFallbackRecorderRef.current = null;
+  input.realtimeTranscriberRef.current = null;
+
+  if (input.autoStopTimerRef.current !== null) {
+    window.clearTimeout(input.autoStopTimerRef.current);
+    input.autoStopTimerRef.current = null;
+  }
+  activeStreamAbort?.abort();
+  recognition?.stop();
+  realtimeTranscriber?.cancel();
+  if (realtimeFallbackRecorder?.state === "recording") {
+    realtimeFallbackRecorder.stop();
+  }
+  if (recorder?.state === "recording") {
+    recorder.stop();
+  } else {
+    recorder?.stream.getTracks().forEach((track) => track.stop());
+  }
 }
 
 async function streamVoiceTurn(input: {

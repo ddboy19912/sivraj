@@ -168,7 +168,7 @@ export type ArtifactRepository = {
     archiveStatus?: "not_required" | "pending" | "queued" | "archiving" | "archived" | "failed_retryable" | "failed_blocked" | "cancelled";
     metadata: Record<string, unknown>;
     mergeJudge?: CanonicalMemoryMergeJudge;
-  }): Promise<{ id: string }>;
+  }): Promise<{ id: string; canonicalMemoryId: string }>;
   createCandidateMemoryArchive(input: {
     twinId: string;
     sourceArtifactId: string;

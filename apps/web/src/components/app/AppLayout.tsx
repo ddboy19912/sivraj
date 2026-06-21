@@ -26,6 +26,7 @@ export function AppLayout() {
   const activeTab = getNavigationTabForPath(location.pathname);
   const app = useSivrajAppState(activeTab);
   const settingsOpen = activeTab === "settings" || app.settingsOpen;
+  const showAmbientStage = activeTab !== "brain";
   const setProviderOpen = app.setProviderOpen;
   const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();
 
@@ -103,7 +104,7 @@ export function AppLayout() {
         onRuntimeEvent={app.twinRuntime.dispatchRuntimeEvent}
         onPlaybackCompleted={app.twinRuntime.consumeRuntimeEvent}
       >
-        <AppAmbientStage />
+        {showAmbientStage ? <AppAmbientStage /> : null}
         <AppRouteContextProvider
           value={{
             homeAgentState: app.homeAgentState,
