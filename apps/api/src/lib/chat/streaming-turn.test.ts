@@ -223,7 +223,9 @@ describe("runStreamingChatTurn retrieval fallback", () => {
       abortController: new AbortController(),
     });
 
-    expect(mockChatTurn.markTurnGenerating).toHaveBeenCalled();
+    expect(mockChatTurn.loadMemoryContext).not.toHaveBeenCalled();
+    expect(mockChatTurn.createOpenAICompatibleChatGenerator).not.toHaveBeenCalled();
+    expect(mockChatTurn.markTurnGenerating).not.toHaveBeenCalled();
     expect(mockChatTurn.completeStreamingTurn).toHaveBeenCalledWith(
       expect.objectContaining({
         finalContent: "Your name is Fortune.",

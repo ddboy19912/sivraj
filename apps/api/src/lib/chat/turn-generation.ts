@@ -29,6 +29,7 @@ import { estimateMemoryTokenSavings } from "./token-accounting.js";
 import { sanitizeAssistantContent } from "./chat-sanitize.js";
 import { generateSemanticChatTitle } from "./thread-title.js";
 import {
+  resolveCoreCommsAnswer,
   shouldFastReplyMissingMemory,
   shouldLoadMemoryContext,
 } from "./turn-policy.js";
@@ -81,6 +82,19 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
       llmFetch: input.llmFetch,
     }));
   const retrievalQuery = contextResolution.standaloneQuery;
+  const coreCommsContext =
+    input.coreCommsContext ??
+    (await loadCachedCoreCommsContext(input.db, input.twinId));
+  const coreCommsAnswer =
+    resolveCoreCommsAnswer(input.content, coreCommsContext) ??
+    resolveCoreCommsAnswer(retrievalQuery, coreCommsContext);
+  if (coreCommsAnswer) {
+    return buildStaticAssistantTurn({
+      content: coreCommsAnswer.content,
+      runtimeConfig: input.runtimeConfig,
+      contextResolution,
+    });
+  }
   const shouldLoadMemory = shouldLoadMemoryContext(contextResolution, retrievalQuery);
   const shouldLoadDocument = shouldLoadDocumentContext(contextResolution);
   const memoryContextPromise = shouldLoadMemory
@@ -107,11 +121,9 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
         llmFetch: input.llmFetch,
       })
     : Promise.resolve(emptyDocumentContext());
-  const coreCommsContextPromise = loadCachedCoreCommsContext(input.db, input.twinId);
-  const [memoryContext, documentContext, coreCommsContext] = await Promise.all([
+  const [memoryContext, documentContext] = await Promise.all([
     memoryContextPromise,
     documentContextPromise,
-    coreCommsContextPromise,
   ]);
   if (
     shouldFastReplyMissingMemory({

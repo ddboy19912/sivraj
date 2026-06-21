@@ -129,6 +129,11 @@ export function storedMemoryCount(memoryIntake: Pick<MemoryIntakeResult, "facts"
 
 export type CoreCommsAnswerTarget = "assistant_name" | "user_name";
 
+export type CoreCommsAnswer = {
+  target: CoreCommsAnswerTarget;
+  content: string;
+};
+
 export function resolveCoreCommsAnswerTarget(
   query: string,
   coreCommsContext: Pick<CoreCommsContext, "assistantName" | "displayName">,
@@ -144,6 +149,28 @@ export function resolveCoreCommsAnswerTarget(
 
   if (coreCommsContext.assistantName && isAssistantNameQuestion(normalized)) {
     return "assistant_name";
+  }
+
+  return null;
+}
+
+export function resolveCoreCommsAnswer(
+  query: string,
+  coreCommsContext: Pick<CoreCommsContext, "assistantName" | "displayName">,
+): CoreCommsAnswer | null {
+  const target = resolveCoreCommsAnswerTarget(query, coreCommsContext);
+  if (target === "user_name" && coreCommsContext.displayName) {
+    return {
+      target,
+      content: `Your name is ${coreCommsContext.displayName}.`,
+    };
+  }
+
+  if (target === "assistant_name" && coreCommsContext.assistantName) {
+    return {
+      target,
+      content: `My name is ${coreCommsContext.assistantName}.`,
+    };
   }
 
   return null;
@@ -186,9 +213,10 @@ function normalizeIdentityQuery(query: string): string {
 }
 
 function isUserNameQuestion(query: string): boolean {
-  return /\b(?:what(?:'s| is)|do you know|tell me|remind me)\s+my\s+name\b/u.test(query) ||
+  return /\b(?:what(?:'s| is)|do you know|tell me|remind me)\s+(?:my|(?:the\s+)?user'?s)\s+(?:display\s+)?name\b/u.test(query) ||
     /\bmy\s+name\s+(?:is|was)\s+what\b/u.test(query) ||
-    /\bwho\s+am\s+i\b/u.test(query);
+    /\bwho\s+am\s+i\b/u.test(query) ||
+    /\bwho\s+is\s+(?:the\s+)?user\b/u.test(query);
 }
 
 function isAssistantNameQuestion(query: string): boolean {

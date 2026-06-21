@@ -55,6 +55,7 @@ import {
   memoryIntakeFailureMessage,
   memoryIntakeIntentFromTurnPlan,
   memoryIntakeMessageFromTurnPlan,
+  resolveCoreCommsAnswer,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
   shouldFastReplyMissingMemory,
@@ -356,6 +357,40 @@ try {
         return;
     }
     const retrievalQuery = contextResolution.standaloneQuery;
+    const coreCommsAnswer = runtimeConfig
+        ? resolveCoreCommsAnswer(content, coreCommsContext) ??
+            resolveCoreCommsAnswer(retrievalQuery, coreCommsContext)
+        : null;
+    if (runtimeConfig && coreCommsAnswer) {
+        const memoryContext = emptyMemoryContext();
+        const documentContext = emptyDocumentContext();
+        const retrievalStatus = notRequestedRetrievalStatus();
+        const citations = buildCitations(memoryContext, documentContext);
+        const tokenSavings = estimateMemoryTokenSavings(memoryContext);
+        timings.contextReadyMs = Date.now() - contextStartedAt;
+        await completeFallbackStreamingTurn({
+            c,
+            deps,
+            gate,
+            stream,
+            turnId: turnSeed.turn.id,
+            assistantMessageId: turnSeed.assistantMessage.id,
+            content,
+            finalContent: coreCommsAnswer.content,
+            runtimeConfig,
+            memoryContext,
+            documentContext,
+            contextResolution,
+            citations,
+            tokenSavings,
+            timings,
+            surface,
+            retrievalStatus,
+            turnStartedAt,
+            policyMemory: "Sivraj answered from authoritative core comms identity context.",
+        });
+        return;
+    }
     const shouldLoadMemory = shouldLoadMemoryContext(contextResolution, retrievalQuery);
     const shouldLoadDocument = shouldLoadDocumentContext(contextResolution);
     const loadedMemory = shouldLoadMemory && runtimeConfig
