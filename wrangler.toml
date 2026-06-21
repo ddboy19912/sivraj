@@ -4,3 +4,12 @@ compatibility_date = "2026-06-21"
 [assets]
 directory = "apps/web/dist"
 not_found_handling = "single-page-application"
+
+[vars]
+VITE_API_URL = "https://api-production-7f98.up.railway.app"
+VITE_SEAL_KEY_SERVERS = "0x73d05d62c18d9374e3ea529e8e0ed6161da1a141a94d3f76ae3fe4e99356db75,0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8"
+VITE_SEAL_PACKAGE_ID = "0x8a5490f87e7d8be38af59390beebf50d512b3cb4a509d84dc0e50d99a6465b37"
+VITE_SEAL_POLICY_ID = "0xe612bfa28620970c89eaadc9c68668784f6c8a5380f8ab98bd94e59e4f7d69df"
+VITE_SEAL_THRESHOLD = "1"
+VITE_SUI_NETWORK = "testnet"
+VITE_SUI_RPC_URL = "https://fullnode.testnet.sui.io:443"
