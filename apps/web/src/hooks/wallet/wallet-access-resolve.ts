@@ -93,17 +93,17 @@ function resolveWalletAuthGate({
 function resolveBootstrapAccessState(
   input: ResolveWalletAccessStateInput,
 ): AppAccessState | null {
-  const loading = resolveBootstrapLoadingState(input);
-  if (loading) {
-    return loading;
-  }
-
   const error = resolveBootstrapErrorState(input);
   if (error) {
     return error;
   }
 
-  return resolveBootstrapReadyState(input);
+  const ready = resolveBootstrapReadyState(input);
+  if (ready) {
+    return ready;
+  }
+
+  return resolveBootstrapLoadingState(input);
 }
 
 function resolveBootstrapLoadingState({
@@ -121,8 +121,10 @@ function resolveBootstrapLoadingState({
 }
 
 function resolveBootstrapErrorState({
+  bootstrap,
   bootstrapError,
   hasCompletionHint,
+  retry,
 }: ResolveWalletAccessStateInput): AppAccessState | null {
   if (!bootstrapError) {
     return null;
@@ -137,23 +139,21 @@ function resolveBootstrapErrorState({
     };
   }
 
-  return null;
+  if (bootstrap) {
+    return null;
+  }
+
+  return {
+    status: "fatal_error",
+    title: "Twin initialization failed",
+    message: errorMessage(bootstrapError),
+    retry,
+  };
 }
 
 function resolveBootstrapReadyState({
   bootstrap,
-  bootstrapError,
-  retry,
 }: ResolveWalletAccessStateInput): AppAccessState | null {
-  if (bootstrapError && !isAuthError(bootstrapError)) {
-    return {
-      status: "fatal_error",
-      title: "Twin initialization failed",
-      message: errorMessage(bootstrapError),
-      retry,
-    };
-  }
-
   if (!bootstrap) {
     return null;
   }

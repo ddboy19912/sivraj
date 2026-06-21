@@ -18,6 +18,12 @@ const mockChatTurn = vi.hoisted(() => ({
   loadTurnPlanningMemoryHints: vi.fn(),
   resolveConversationContext: vi.fn(),
   loadMemoryContext: vi.fn(),
+  createOpenAICompatibleChatGenerator: vi.fn(),
+  enqueueCompletedChatTurnLearning: vi.fn(),
+}));
+
+vi.mock("@sivraj/llm", () => ({
+  createOpenAICompatibleChatGenerator: mockChatTurn.createOpenAICompatibleChatGenerator,
 }));
 
 vi.mock("./turn-persistence.js", () => ({
@@ -44,6 +50,10 @@ vi.mock("./helpers.js", async (importOriginal) => {
     loadThreadMessages: mockChatTurn.loadThreadMessages,
   };
 });
+
+vi.mock("./chat-learning-queue.js", () => ({
+  enqueueCompletedChatTurnLearning: mockChatTurn.enqueueCompletedChatTurnLearning,
+}));
 
 vi.mock("./current-truth.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./current-truth.js")>();
@@ -94,6 +104,12 @@ describe("runStreamingChatTurn retrieval fallback", () => {
     mockChatTurn.loadThreadMessages.mockResolvedValue([]);
     mockChatTurn.loadTurnPlanningMemoryHints.mockResolvedValue([]);
     mockChatTurn.resolveConversationContext.mockResolvedValue(memoryQaResolution());
+    mockChatTurn.loadMemoryContext.mockResolvedValue(emptyMemoryContext());
+    mockChatTurn.createOpenAICompatibleChatGenerator.mockReturnValue({
+      generateChat: vi.fn(),
+      streamChat: vi.fn(() => chatStream("Your name is Fortune.")),
+    });
+    mockChatTurn.enqueueCompletedChatTurnLearning.mockResolvedValue(undefined);
     mockChatTurn.completeStreamingTurn.mockImplementation(async (input: any) => chatMessageRow({
       id: input.assistantMessageId,
       role: "assistant",
@@ -173,6 +189,56 @@ describe("runStreamingChatTurn retrieval fallback", () => {
       reason: "timeout",
     });
   });
+
+  it("does not use the missing-memory fallback when core comms can answer the identity question", async () => {
+    mockChatTurn.resolveConversationContext.mockResolvedValue({
+      ...memoryQaResolution(),
+      standaloneQuery: "What is my name?",
+    });
+    const events: Array<{ event: string; data: string }> = [];
+
+    await runStreamingChatTurn({
+      c: {} as any,
+      deps: {
+        db: {} as any,
+        privateMemoryReader: {} as any,
+        privateMemoryStorage: undefined,
+        artifactProcessingQueue: undefined,
+        llmFetch: vi.fn() as any,
+        memorySearchConfig: {} as any,
+      },
+      gate: {
+        twinId: "twin-1",
+        thread: chatThreadRow(),
+      },
+      stream: {
+        writeSSE: vi.fn(async (event) => {
+          events.push(event);
+        }),
+      },
+      content: "What is my name?",
+      memoryIntent: "auto",
+      surface: "web_chat",
+      retryAttempt: 0,
+      abortController: new AbortController(),
+    });
+
+    expect(mockChatTurn.markTurnGenerating).toHaveBeenCalled();
+    expect(mockChatTurn.completeStreamingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        finalContent: "Your name is Fortune.",
+        memoryContext: expect.objectContaining({ results: [] }),
+      }),
+    );
+    expect(events.map((event) => event.event)).toEqual([
+      "turn.created",
+      "context.ready",
+      "assistant.delta",
+      "assistant.completed",
+    ]);
+    expect(parseEventData(events[2]).delta).toBe("Your name is Fortune.");
+    expect(parseEventData(events[3]).assistantMessage.content).toBe("Your name is Fortune.");
+  });
 });
 
 function runtimeConfig(): ChatRuntimeConfig {
@@ -217,6 +283,29 @@ function chatTurnSeed(): ChatTurnSeed {
       status: "pending",
     }),
   } as ChatTurnSeed;
+}
+
+function emptyMemoryContext() {
+  return {
+    results: [],
+    tokenAccountingByMemoryId: new Map(),
+  };
+}
+
+function chatStream(content: string) {
+  async function* textStream() {
+    yield content;
+  }
+
+  return {
+    textStream: textStream(),
+    result: Promise.resolve({
+      content,
+      provider: "openai",
+      model: "gpt-test",
+      metadata: { usage: {} },
+    }),
+  };
 }
 
 function chatThreadRow() {

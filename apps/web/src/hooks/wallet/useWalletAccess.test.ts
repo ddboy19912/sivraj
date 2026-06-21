@@ -61,6 +61,26 @@ describe("resolveWalletAccessState", () => {
     expect(state.status).toBe("pending");
   });
 
+  it("keeps completed app access during a background bootstrap refetch", () => {
+    const state = resolveWalletAccessState({
+      ...baseSignals,
+      bootstrap: createBootstrap("completed"),
+      isBootstrapLoading: true,
+    });
+
+    expect(state.status).toBe("app_ready");
+  });
+
+  it("keeps completed app access during a non-auth bootstrap refresh failure", () => {
+    const state = resolveWalletAccessState({
+      ...baseSignals,
+      bootstrap: createBootstrap("completed"),
+      bootstrapError: new Error("Network request failed."),
+    });
+
+    expect(state.status).toBe("app_ready");
+  });
+
   it("resolves completed backend bootstrap to app ready", () => {
     const state = resolveWalletAccessState({
       ...baseSignals,
@@ -86,6 +106,22 @@ describe("resolveWalletAccessState", () => {
     });
 
     expect(state.status).toBe("wallet_auth");
+  });
+
+  it("surfaces a fatal error when initial bootstrap fails before data is loaded", () => {
+    const retry = vi.fn();
+    const state = resolveWalletAccessState({
+      ...baseSignals,
+      bootstrapError: new Error("Network request failed."),
+      retry,
+    });
+
+    expect(state).toEqual({
+      status: "fatal_error",
+      title: "Twin initialization failed",
+      message: "Network request failed.",
+      retry,
+    });
   });
 });
 

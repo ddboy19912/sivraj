@@ -127,6 +127,28 @@ export function storedMemoryCount(memoryIntake: Pick<MemoryIntakeResult, "facts"
   return memoryIntake.facts.length + memoryIntake.engineeringMemories.length;
 }
 
+export type CoreCommsAnswerTarget = "assistant_name" | "user_name";
+
+export function resolveCoreCommsAnswerTarget(
+  query: string,
+  coreCommsContext: Pick<CoreCommsContext, "assistantName" | "displayName">,
+): CoreCommsAnswerTarget | null {
+  const normalized = normalizeIdentityQuery(query);
+  if (!normalized) {
+    return null;
+  }
+
+  if (coreCommsContext.displayName && isUserNameQuestion(normalized)) {
+    return "user_name";
+  }
+
+  if (coreCommsContext.assistantName && isAssistantNameQuestion(normalized)) {
+    return "assistant_name";
+  }
+
+  return null;
+}
+
 /** Short-circuit with a voice reply when memory QA finds no matching hot memory. */
 export function shouldFastReplyMissingMemory(input: {
   query: string;
@@ -146,9 +168,33 @@ export function shouldFastReplyMissingMemory(input: {
     return false;
   }
 
+  if (resolveCoreCommsAnswerTarget(input.query, input.coreCommsContext)) {
+    return false;
+  }
+
   return input.contextResolution?.retrieval === "hot_memory" ||
     input.contextResolution?.answerTarget === "memory" ||
     input.contextResolution?.intent === "memory_qa";
+}
+
+function normalizeIdentityQuery(query: string): string {
+  return query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUserNameQuestion(query: string): boolean {
+  return /\b(?:what(?:'s| is)|do you know|tell me|remind me)\s+my\s+name\b/u.test(query) ||
+    /\bmy\s+name\s+(?:is|was)\s+what\b/u.test(query) ||
+    /\bwho\s+am\s+i\b/u.test(query);
+}
+
+function isAssistantNameQuestion(query: string): boolean {
+  return /\b(?:what(?:'s| is)|do i know|tell me|remind me)\s+your\s+name\b/u.test(query) ||
+    /\bwho\s+are\s+you\b/u.test(query) ||
+    /\bwhat\s+should\s+i\s+call\s+you\b/u.test(query);
 }
 
 export function shouldFallbackForRetrievalDegradation(
