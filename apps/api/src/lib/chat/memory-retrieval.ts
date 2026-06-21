@@ -87,10 +87,6 @@ export async function loadMemoryContext(input: {
         tokenAccountingByMemoryId: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
       };
     }
-    return {
-      results: [],
-      tokenAccountingByMemoryId: new Map(),
-    };
   }
   if (!input.privateMemoryReader) {
     const currentTruthResults = selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates);
