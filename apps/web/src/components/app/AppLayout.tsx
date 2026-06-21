@@ -26,7 +26,7 @@ export function AppLayout() {
   const activeTab = getNavigationTabForPath(location.pathname);
   const app = useSivrajAppState(activeTab);
   const settingsOpen = activeTab === "settings" || app.settingsOpen;
-  const showAmbientStage = activeTab !== "brain";
+  const showAmbientStage = activeTab !== "brain" && activeTab !== "agents";
   const setProviderOpen = app.setProviderOpen;
   const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();
 
@@ -62,7 +62,10 @@ export function AppLayout() {
   }
 
   return (
-    <main className="ambient-ui-page absolute inset-0 isolate min-h-svh min-w-[320px] overflow-hidden text-[#f6feff]">
+    <main
+      data-active-tab={activeTab}
+      className="ambient-ui-page absolute inset-0 isolate min-h-svh min-w-[320px] overflow-hidden text-[#f6feff]"
+    >
       <AOSInit />
       <Navbar
         onProviderClick={() => app.setProviderOpen(true)}

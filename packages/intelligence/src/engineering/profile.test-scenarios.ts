@@ -459,6 +459,9 @@ export async function run_buildcodingagentcont_prioritizes_repo_matching_context
     expect(packet.warnings).toContain("context_conflict:package_manager_conflict");
     expect(packet.warnings).toContain(`context_quality:${packet.quality.label}`);
     expect(packet.quality.readyForAgent).toBe(false);
+    expect(
+      buildCodingAgentContextExport(packet).warnings.some((warning) => warning.startsWith("context_quality:")),
+    ).toBe(false);
     expect(packet.quality.risks).toContain("Conflicting or stale context issues were detected.");
     expect(packet.issues.map((issue) => issue.reason)).toEqual(
       expect.arrayContaining(["frontend_framework_conflict", "package_manager_conflict"]),
@@ -571,6 +574,10 @@ export async function run_buildcodingagentcont_builds_a_private_safe_agents_md_p
     });
     expect(patch.suggestedMarkdown).toContain("# Agent Instructions");
     expect(patch.suggestedMarkdown).toContain("Do not revert user changes unless explicitly requested.");
+    expect(patch.suggestedMarkdown).not.toContain("Evidence:");
+    expect(patch.suggestedMarkdown).not.toContain("Evidence Map");
+    expect(patch.suggestedMarkdown).not.toContain("Sivraj quality");
+    expect(patch.suggestedMarkdown).not.toContain("candidate-1");
     expect(patch.suggestedMarkdown).not.toContain("Use pnpm for package management.");
     expect(patch.suggestedMarkdown).not.toContain("Raw source statement");
     expect(patch.evidence.map((ref) => ref.candidateMemoryId)).toEqual(["candidate-1"]);
@@ -611,6 +618,10 @@ export async function run_buildcodingagentcont_builds_cursor_and_generic_mcp_exp
     });
     expect(cursorExport.content).toContain("alwaysApply: true");
     expect(cursorExport.content).toContain("Do not revert user changes unless explicitly requested.");
+    expect(cursorExport.content).not.toContain("Evidence:");
+    expect(cursorExport.content).not.toContain("## Evidence");
+    expect(cursorExport.content).not.toContain("Sivraj quality");
+    expect(cursorExport.content).not.toContain("candidate-1");
     expect(cursorExport.content).not.toContain("Raw source statement");
 
     expect(mcpExport).toMatchObject({
@@ -621,5 +632,9 @@ export async function run_buildcodingagentcont_builds_cursor_and_generic_mcp_exp
     });
     const parsed = JSON.parse(mcpExport.content) as { rules: Array<{ line: string }> };
     expect(parsed.rules[0]?.line).toBe("Do not revert user changes unless explicitly requested.");
+    expect(mcpExport.content).not.toContain("\"quality\"");
+    expect(mcpExport.content).not.toContain("\"evidence\"");
+    expect(mcpExport.content).not.toContain("context_quality:");
+    expect(mcpExport.content).not.toContain("candidate-1");
     expect(mcpExport.content).not.toContain("Raw source statement");
 }

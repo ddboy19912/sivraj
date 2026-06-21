@@ -64,6 +64,8 @@ export type WalrusConfig = {
   aggregatorUrl?: string;
 };
 
+export type AgentContextPreset = "codex" | "claude_code" | "cursor" | "generic_mcp";
+
 export type SealConfig = {
   packageId: string;
   policyId: string;
@@ -88,6 +90,7 @@ export type McpServerConfig = {
   token: string;
   projectName?: string;
   projectId?: string;
+  agentPreset: AgentContextPreset;
   includeCandidates: boolean;
   maxItemsPerSection: number;
   writebackEncryption: "api" | "client";
@@ -180,6 +183,7 @@ export function loadMcpServerConfig(env: EnvSource): McpServerConfig {
     token: readRequired(env, "SIVRAJ_TOKEN"),
     projectName: readMaybe(env, "SIVRAJ_PROJECT_NAME"),
     projectId: readMaybe(env, "SIVRAJ_PROJECT_ID"),
+    agentPreset: readEnum(env, "SIVRAJ_AGENT_PRESET", ["codex", "claude_code", "cursor", "generic_mcp"], "codex"),
     includeCandidates: readBoolean(env, "SIVRAJ_INCLUDE_CANDIDATES", true),
     maxItemsPerSection: readPositiveInteger(env, "SIVRAJ_MAX_ITEMS_PER_SECTION", 12),
     writebackEncryption,

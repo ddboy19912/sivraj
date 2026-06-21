@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ChatRoute from "@/pages/app/ChatRoute";
 import BrainRoute from "@/pages/app/BrainRoute";
+import AgentsRoute from "@/pages/app/AgentsRoute";
 import HomeRoute from "@/pages/app/HomeRoute";
 import type { AppRouteContextValue } from "@/providers/app-route-context";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
@@ -16,6 +17,12 @@ vi.mock("@/components/chat/ChatPage", () => ({
 vi.mock("@/components/brain/BrainPage", () => ({
   BrainPage: (props: { session: { twinId: string } }) => (
     <section aria-label="Brain page" data-twin-id={props.session.twinId} />
+  ),
+}));
+
+vi.mock("@/components/settings/AgentsSettingsSection", () => ({
+  AgentsSettingsSection: (props: { session: { twinId: string } }) => (
+    <section aria-label="Agents page" data-twin-id={props.session.twinId} />
   ),
 }));
 
@@ -77,6 +84,21 @@ describe("app route content", () => {
     renderRoute(<BrainRoute />, createRouteContext({ canUseProtectedApp: true }));
 
     expect(screen.getByLabelText("Brain page")).toHaveAttribute(
+      "data-twin-id",
+      "twin-test",
+    );
+  });
+
+  it("does not mount protected agents before verified access", () => {
+    renderRoute(<AgentsRoute />, createRouteContext({ canUseProtectedApp: false }));
+
+    expect(screen.queryByLabelText("Agents page")).not.toBeInTheDocument();
+  });
+
+  it("mounts the agents page with protected twin session context", () => {
+    renderRoute(<AgentsRoute />, createRouteContext({ canUseProtectedApp: true }));
+
+    expect(screen.getByLabelText("Agents page")).toHaveAttribute(
       "data-twin-id",
       "twin-test",
     );

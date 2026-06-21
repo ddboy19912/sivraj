@@ -3,6 +3,40 @@ import { test } from "vitest";
 import { SivrajApiClient, type AgentWritebackArgs } from "./sivraj-client.js";
 import type { AgentWritebackEncryptor } from "./writeback-encryption.js";
 
+test("getEngineeringContext uses the configured preset unless a tool call overrides it", async () => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (url) => {
+    calls.push(String(url));
+
+    return new Response(JSON.stringify({ contextExport: { content: "# Context" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = new SivrajApiClient({
+      apiUrl: "http://api.test",
+      twinId: "twin-1",
+      token: "token-1",
+      agentPreset: "claude_code",
+      includeCandidates: false,
+      maxItemsPerSection: 12,
+      writebackEncryption: "api",
+    });
+
+    await client.getEngineeringContext();
+    await client.getEngineeringContext({ preset: "cursor" });
+
+    assert.match(calls[0] ?? "", /preset=claude_code/);
+    assert.match(calls[1] ?? "", /preset=cursor/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("recordAgentWriteback sends client-encrypted payload when enabled", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const originalFetch = globalThis.fetch;
@@ -54,6 +88,7 @@ test("recordAgentWriteback sends client-encrypted payload when enabled", async (
       apiUrl: "http://api.test",
       twinId: "twin-1",
       token: "token-1",
+      agentPreset: "codex",
       includeCandidates: false,
       maxItemsPerSection: 12,
       writebackEncryption: "client",

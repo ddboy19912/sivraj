@@ -5,6 +5,7 @@ import { VoiceSettingsSection } from "@/components/settings/VoiceSettingsSection
 import {
   Drawer,
   DrawerContent,
+  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
@@ -63,6 +64,9 @@ export function SettingsDrawer({
           <DrawerTitle className="text-lg font-semibold tracking-tight text-[#f7fdff]">
             Settings
           </DrawerTitle>
+          <DrawerDescription className="sr-only">
+            Manage account, voice, and appearance settings.
+          </DrawerDescription>
         </DrawerHeader>
 
         <div className="border-b border-white/10 px-4 py-3">

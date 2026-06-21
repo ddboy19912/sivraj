@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/providers/theme-provider";
 const HomeRoute = lazy(() => import("@/pages/app/HomeRoute"));
 const ChatRoute = lazy(() => import("@/pages/app/ChatRoute"));
 const BrainRoute = lazy(() => import("@/pages/app/BrainRoute"));
+const AgentsRoute = lazy(() => import("@/pages/app/AgentsRoute"));
 
 function App() {
   const [queryClient] = useState(
@@ -40,6 +41,10 @@ function App() {
               <Route
                 path="brain"
                 element={<RoutedPage page={<BrainRoute />} />}
+              />
+              <Route
+                path="agents"
+                element={<RoutedPage page={<AgentsRoute />} />}
               />
               <Route path="home" element={<Navigate to="/" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

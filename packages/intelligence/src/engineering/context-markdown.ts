@@ -8,6 +8,7 @@ import type {
 
 type ContextRuleLineOptions = {
   emptyMessage: string;
+  includeEvidenceRefs?: boolean;
   showCandidatePrefix?: boolean;
 };
 
@@ -29,11 +30,21 @@ type ContextIssueSectionOptions = {
   limit?: number;
 };
 
-function formatAgentContextRuleLine(item: CodingAgentContextPacketItem): string {
-  const prefix = item.status === "candidate" ? "[CANDIDATE] " : "";
+function formatAgentContextRuleLine(
+  item: CodingAgentContextPacketItem,
+  options: Pick<ContextRuleLineOptions, "includeEvidenceRefs" | "showCandidatePrefix">,
+): string {
+  const prefix = item.status === "candidate" && options.showCandidatePrefix !== false
+    ? "[CANDIDATE] "
+    : "";
   const line = item.agentContextLine || fallbackAgentContextLine(item);
+  const ruleLine = `- ${prefix}${line}`;
 
-  return `- ${prefix}${line} Evidence: ${item.evidence.candidateMemoryId}`;
+  if (options.includeEvidenceRefs === false) {
+    return ruleLine;
+  }
+
+  return `${ruleLine} Evidence: ${item.evidence.candidateMemoryId}`;
 }
 
 export function appendContextRuleLines(
@@ -47,12 +58,7 @@ export function appendContextRuleLines(
   }
 
   for (const item of items) {
-    if (options.showCandidatePrefix === false && item.status === "candidate") {
-      lines.push(`- ${item.agentContextLine || fallbackAgentContextLine(item)} Evidence: ${item.evidence.candidateMemoryId}`);
-      continue;
-    }
-
-    lines.push(formatAgentContextRuleLine(item));
+    lines.push(formatAgentContextRuleLine(item, options));
   }
 }
 
@@ -175,7 +181,6 @@ export function appendExportProjectContext(
     `- ${label}: ${packet.project.name || "Unknown"}`,
     `- Repo: ${repoNameFromFingerprint(packet.project.repoFingerprint)}`,
     `- Stack: ${formatRepoStack(packet.project.repoFingerprint) || "Unknown"}`,
-    `- Sivraj quality: ${qualityPercent(packet.quality.score)} (${packet.quality.label})`,
     "",
     "## Privacy Boundary",
     "",

@@ -1,4 +1,4 @@
-export const AGENT_INSTRUCTION_TARGET_FILES = [
+const AGENT_INSTRUCTION_TARGET_FILES = [
   "AGENTS.md",
   "CLAUDE.md",
   "SKILL.md",

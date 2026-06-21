@@ -13,6 +13,7 @@ import {
   buildEngineeringInstructionPatchResponse,
   engineeringContextPolicy,
   emptyEngineeringSourcesResponse,
+  loadEngineeringProfileBundle,
   loadEngineeringProfileMemories,
   loadEngineeringReviewBundle,
   readBoolean,
@@ -84,7 +85,7 @@ export async function handleEngineeringContextGet(
   { auth, twinId }: AuthorizedTwin,
 ) {
   const query = readEngineeringContextQuery(c);
-  const memories = await loadEngineeringProfileMemories(db, twinId, {
+  const { memories, inventory } = await loadEngineeringProfileBundle(db, twinId, {
     artifactId: query.artifactId,
     limit: query.limit,
   });
@@ -100,6 +101,7 @@ export async function handleEngineeringContextGet(
   });
   const response = buildEngineeringContextJsonResponse({
     memories,
+    inventory,
     ...bundle,
   });
 

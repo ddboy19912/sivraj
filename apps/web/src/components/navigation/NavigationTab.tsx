@@ -1,4 +1,5 @@
 import {
+  Bot,
   Home,
   MessageCircle,
   Brain,
@@ -10,7 +11,7 @@ import { NavigationTabButton } from "@/components/navigation/NavigationTabButton
 import { liquidGlass } from "@/lib/ui/liquid-glass";
 import { cn } from "@/lib/ui/utils";
 
-export type NavigationTabId = "home" | "chat" | "brain" | "settings";
+export type NavigationTabId = "home" | "chat" | "brain" | "agents" | "settings";
 
 const TABS: {
   id: NavigationTabId;
@@ -20,6 +21,7 @@ const TABS: {
   { id: "home", label: "Home", icon: Home },
   { id: "chat", label: "Chat", icon: MessageCircle },
   { id: "brain", label: "Brain", icon: Brain },
+  { id: "agents", label: "Agents", icon: Bot },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -44,7 +46,7 @@ export function NavigationTab({
 
   return (
     <nav
-      className="absolute bottom-[max(20px,env(safe-area-inset-bottom))] left-1/2 z-50 w-[min(calc(100vw-32px),500px)] -translate-x-1/2"
+      className="absolute bottom-[max(20px,env(safe-area-inset-bottom))] left-1/2 z-50 w-[min(calc(100vw-32px),580px)] -translate-x-1/2"
       aria-label="Main navigation"
     >
       <div className={cn(liquidGlass, "overflow-hidden rounded-[28px] p-1")}>

@@ -455,7 +455,7 @@ export function buildCodingAgentContextExport(
     targetFile,
     content,
     evidence,
-    warnings: Array.from(warnings).sort(),
+    warnings: Array.from(warnings).filter(isUserFacingExportWarning).sort(),
     quality: packet.quality,
     includedCandidate: includeCandidate,
     itemCount: items.length,
@@ -599,7 +599,6 @@ function formatInstructionPatchMarkdown(input: {
     "",
     "- Follow current user instructions first.",
     "- Follow repository-local files and direct maintainer instructions before this generated file when they conflict.",
-    "- Treat evidence IDs as traceability handles, not as source text.",
     "",
     "## Project Context",
   ];
@@ -608,13 +607,14 @@ function formatInstructionPatchMarkdown(input: {
   lines.push(
     "- Raw private memories are not included in this file.",
     "- Uploaded document bodies and plaintext source statements are not included.",
-    "- Rules below are derived from source-backed Sivraj evidence IDs.",
+    "- Rules below are derived from repo-safe Sivraj engineering memory.",
     "",
     "## Working Rules",
     "",
   );
   appendContextRuleLines(lines, items, {
     emptyMessage: "No approved repo-safe engineering rules are ready for export yet.",
+    includeEvidenceRefs: false,
   });
   appendCandidateNoticeSection(lines, {
     when: "include_candidate_flag",
@@ -622,8 +622,6 @@ function formatInstructionPatchMarkdown(input: {
     message: "Candidate rules are included for testing only. Approve them in Sivraj before relying on them as permanent repo policy.",
     blankLineBeforeBullet: true,
   });
-  lines.push("", "## Evidence Map", "");
-  appendItemEvidenceMap(lines, items);
   appendPacketIssues(lines, packet.issues, { title: "## Review Notes", limit: 8 });
 
   return finalizeMarkdown(lines);
@@ -652,13 +650,14 @@ function formatCursorRulesMdc(input: {
   lines.push(
     "- Raw private memories are not included.",
     "- Uploaded document bodies and plaintext source statements are not included.",
-    "- Rules are derived from evidence IDs that can be reviewed in Sivraj.",
+    "- Rules are derived from repo-safe Sivraj engineering memory.",
     "",
     "## Rules",
     "",
   );
   appendContextRuleLines(lines, items, {
     emptyMessage: "No approved repo-safe engineering rules are ready for Cursor yet.",
+    includeEvidenceRefs: false,
   });
   appendCandidateNoticeSection(lines, {
     when: "include_candidate_flag",
@@ -666,9 +665,6 @@ function formatCursorRulesMdc(input: {
     message: "Candidate rules are included for testing only. Approve them in Sivraj before making them permanent Cursor rules.",
     blankLineBeforeBullet: true,
   });
-  lines.push("", "## Evidence", "");
-  appendItemEvidenceMap(lines, items);
-
   return finalizeMarkdown(lines);
 }
 
@@ -693,24 +689,19 @@ function formatGenericMcpJson(input: {
     priority: [
       "Current user instructions override this packet.",
       "Repository-local files override this packet when they conflict.",
-      "Evidence IDs are traceability handles, not source text.",
     ],
     includeCandidate,
-    quality: packet.quality,
     issues: packet.issues,
     rules: items.map((item) => ({
-      id: item.id,
       type: item.type,
       scope: item.scope,
       status: item.status,
       confidence: item.confidence,
       subject: item.subject,
       line: item.agentContextLine || fallbackAgentContextLine(item),
-      evidence: item.evidence,
       safeMetadata: sanitizeExportMetadata(item.metadata),
     })),
-    evidence: dedupeEvidence(items.map((item) => item.evidence)),
-    warnings: packet.warnings,
+    warnings: packet.warnings.filter((warning) => !warning.startsWith("context_quality:")),
   }, null, 2)}\n`;
 }
 
@@ -764,6 +755,10 @@ function formatForPreset(preset: CodingAgentExportPreset): CodingAgentExportForm
   }
 
   return "markdown";
+}
+
+function isUserFacingExportWarning(warning: string): boolean {
+  return !warning.startsWith("context_quality:");
 }
 
 function normalizePresetForTarget(

@@ -247,6 +247,7 @@ async function persistCandidateMemories(
       sourceArtifactId: input.artifact.id,
       memoryFragmentId: input.memoryFragmentId,
       memoryType: memory.memoryType,
+      status: isAgentInstructionArtifact(input.artifact) ? "approved" : undefined,
       statement: memory.statement,
       normalizedStatement: memory.normalizedStatement,
       statementStorageRef: pendingCandidateMemoryArchiveRef(input.artifact.id, input.memoryFragmentId),
@@ -299,6 +300,19 @@ async function persistCandidateMemories(
     goalCandidates,
     currentPatternSignals,
   };
+}
+
+function isAgentInstructionArtifact(artifact: QueuedArtifact): boolean {
+  const metadata = readRecord(artifact.metadata);
+
+  return metadata["engineeringSourceKind"] === "agent_instruction_file" ||
+    metadata["artifactPurpose"] === "agent_skill_source";
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function buildCandidateMemoryMetadata(input: {

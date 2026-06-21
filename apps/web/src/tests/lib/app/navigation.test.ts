@@ -9,6 +9,7 @@ describe("app navigation routes", () => {
     expect(getPathForNavigationTab("home")).toBe("/");
     expect(getPathForNavigationTab("chat")).toBe("/chat");
     expect(getPathForNavigationTab("brain")).toBe("/brain");
+    expect(getPathForNavigationTab("agents")).toBe("/agents");
     expect(getPathForNavigationTab("settings")).toBe("/settings");
   });
 
@@ -16,6 +17,7 @@ describe("app navigation routes", () => {
     expect(getNavigationTabForPath("/")).toBe("home");
     expect(getNavigationTabForPath("/chat")).toBe("chat");
     expect(getNavigationTabForPath("/brain")).toBe("brain");
+    expect(getNavigationTabForPath("/agents")).toBe("agents");
     expect(getNavigationTabForPath("/console")).toBe("home");
     expect(getNavigationTabForPath("/settings")).toBe("settings");
     expect(getNavigationTabForPath("/missing")).toBe("home");

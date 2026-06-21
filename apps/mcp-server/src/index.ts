@@ -36,7 +36,7 @@ server.registerResource(
   async (uri) => {
     const response = await client.getEngineeringContext({
       ...mergeRepoFingerprint(localRepoFingerprint, {}),
-      preset: "generic_mcp",
+      preset: config.agentPreset,
     });
     const markdown = typeof response["contextMarkdown"] === "string"
       ? response["contextMarkdown"]
@@ -188,4 +188,3 @@ function resourceText(uri: string, text: string) {
     ],
   };
 }
-

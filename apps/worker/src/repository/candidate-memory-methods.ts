@@ -10,6 +10,7 @@ type CandidateMemoryInput = {
   memoryFragmentId: string;
   archiveId?: string | null;
   memoryType: typeof candidateMemories.$inferSelect["memoryType"];
+  status?: typeof candidateMemories.$inferSelect["status"];
   statement?: string;
   normalizedStatement?: string;
   statementStorageRef: string;
@@ -358,6 +359,7 @@ async function updateExistingCandidateMemory(
     statementSha256: string;
     evidenceLength: number;
     confidenceScore: number;
+    status?: typeof candidateMemories.$inferSelect["status"];
     archiveId?: string | null;
     archiveStatus?: typeof candidateMemories.$inferSelect["archiveStatus"];
     metadata: Record<string, unknown>;
@@ -372,6 +374,7 @@ async function updateExistingCandidateMemory(
       evidenceLength: input.evidenceLength,
       confidenceScore: input.confidenceScore,
       canonicalMemoryId: canonicalMemory.id,
+      ...(input.status ? { status: input.status } : {}),
       archiveId: input.archiveId ?? null,
       archiveStatus: input.archiveStatus ?? archiveStatusFromMetadata(input.metadata),
       metadata: buildCandidateConsolidationMetadata({
@@ -391,6 +394,7 @@ async function insertCandidateMemory(
     memoryFragmentId: string;
     archiveId?: string | null;
     memoryType: typeof candidateMemories.$inferSelect["memoryType"];
+    status?: typeof candidateMemories.$inferSelect["status"];
     statementStorageRef: string;
     statementSha256: string;
     evidenceHash: string;
@@ -410,6 +414,7 @@ async function insertCandidateMemory(
       sourceArtifactId: input.sourceArtifactId,
       memoryFragmentId: input.memoryFragmentId,
       memoryType: input.memoryType,
+      ...(input.status ? { status: input.status } : {}),
       statementStorageRef: input.statementStorageRef,
       statementSha256: input.statementSha256,
       evidenceHash: input.evidenceHash,

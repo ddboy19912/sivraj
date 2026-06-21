@@ -158,6 +158,7 @@ export type ArtifactRepository = {
     memoryFragmentId: string;
     archiveId?: string | null;
     memoryType: ExtractedMemory["memoryType"];
+    status?: "candidate" | "approved" | "rejected" | "superseded";
     statement?: string;
     normalizedStatement?: string;
     statementStorageRef: string;

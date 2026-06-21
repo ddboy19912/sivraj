@@ -48,13 +48,14 @@ export class SivrajApiClient {
   }
 
   async getEngineeringContext(args: EngineeringContextArgs = {}): Promise<JsonObject> {
+    const preset = args.preset ?? this.config.agentPreset;
     const params = buildEngineeringContextParams(args, {
       projectName: this.config.projectName,
       projectId: this.config.projectId,
       includeCandidates: this.config.includeCandidates,
       maxItemsPerSection: this.config.maxItemsPerSection,
     });
-    setSearchParam(params, "preset", args.preset);
+    setSearchParam(params, "preset", preset);
 
     return this.request("GET", `/v1/twins/${this.config.twinId}/engineering/context?${params.toString()}`);
   }

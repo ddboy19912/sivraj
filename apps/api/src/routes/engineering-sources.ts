@@ -11,6 +11,7 @@ import {
   buildEngineeringContextResponse,
   engineeringContextPolicy,
   groupEngineeringCandidates,
+  type EngineeringContextInventory,
 } from "../lib/engineering/helpers.js";
 
 export type EngineeringContextBundle = ReturnType<typeof buildEngineeringContextResponse>;
@@ -106,6 +107,7 @@ export function buildEngineeringContextAuditMetadata(input: {
 
 export function buildEngineeringContextJsonResponse(input: {
   memories: unknown[];
+  inventory?: EngineeringContextInventory;
   contextPacket: EngineeringContextBundle["contextPacket"];
   contextMarkdown: EngineeringContextBundle["contextMarkdown"];
   contextExport: EngineeringContextBundle["contextExport"];
@@ -128,6 +130,15 @@ export function buildEngineeringContextJsonResponse(input: {
       issues: input.contextPacket.issues,
       quality: input.contextPacket.quality,
       repoFingerprint: input.contextPacket.project.repoFingerprint,
+      inventory: {
+        candidateEngineeringMemoryCount: input.inventory?.candidateEngineeringMemoryCount ?? input.memories.length,
+        canonicalEngineeringMemoryCount: input.inventory?.canonicalEngineeringMemoryCount ?? 0,
+        engineeringMemoryCount: input.inventory?.engineeringMemoryCount ?? input.memories.length,
+        engineeringSourceCount: input.inventory?.engineeringSourceCount ?? 0,
+        agentInstructionSourceCount: input.inventory?.agentInstructionSourceCount ?? 0,
+        sourceBackedEngineeringMemoryCount: input.inventory?.sourceBackedEngineeringMemoryCount ?? 0,
+        exportableItemCount: input.contextExport.itemCount,
+      },
     },
   };
 }

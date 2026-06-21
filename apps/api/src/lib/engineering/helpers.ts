@@ -16,7 +16,7 @@ import {
   AGENT_CONTEXT_READ_SCOPE,
   AGENT_PROJECT_PROFILE_READ_SCOPE,
 } from "@sivraj/auth";
-import { candidateMemories } from "@sivraj/db";
+import { candidateMemories, canonicalMemories, sourceArtifacts } from "@sivraj/db";
 import { and, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppDependencies } from "../../app.js";
@@ -35,6 +35,15 @@ export const ENGINEERING_CONTEXT_AGENT_SCOPES = [
   AGENT_CONTEXT_READ_SCOPE,
   AGENT_PROJECT_PROFILE_READ_SCOPE,
 ] as const;
+
+export type EngineeringContextInventory = {
+  candidateEngineeringMemoryCount: number;
+  canonicalEngineeringMemoryCount: number;
+  engineeringMemoryCount: number;
+  engineeringSourceCount: number;
+  agentInstructionSourceCount: number;
+  sourceBackedEngineeringMemoryCount: number;
+};
 
 export function createEngineeringAgentHandler(
   db: AppDependencies["db"],
@@ -66,22 +75,70 @@ export async function loadEngineeringProfileMemories(
   twinId: string,
   input: { artifactId?: string | null; limit: number },
 ): Promise<EngineeringProfileMemoryRecord[]> {
+  return (await loadEngineeringProfileBundle(db, twinId, input)).memories;
+}
+
+export async function loadEngineeringProfileBundle(
+  db: AppDependencies["db"],
+  twinId: string,
+  input: { artifactId?: string | null; limit: number },
+): Promise<{
+  memories: EngineeringProfileMemoryRecord[];
+  inventory: EngineeringContextInventory;
+}> {
   const filters = [eq(candidateMemories.twinId, twinId)];
 
   if (input.artifactId) {
     filters.push(eq(candidateMemories.sourceArtifactId, input.artifactId));
   }
 
-  const rows = await db
+  const candidateRows = await db
     .select()
     .from(candidateMemories)
     .where(and(...filters))
     .orderBy(desc(candidateMemories.createdAt))
     .limit(input.limit);
-
-  return rows
-    .map(toEngineeringProfileMemory)
+  const canonicalRows = await db
+    .select()
+    .from(canonicalMemories)
+    .where(eq(canonicalMemories.twinId, twinId))
+    .orderBy(desc(canonicalMemories.lastSeenAt))
+    .limit(input.limit);
+  const sourceRows = await db
+    .select()
+    .from(sourceArtifacts)
+    .where(eq(sourceArtifacts.twinId, twinId))
+    .orderBy(desc(sourceArtifacts.createdAt))
+    .limit(Math.min(input.limit, 1_000));
+  const sourceInventory = buildEngineeringSourceInventory(sourceRows);
+  const candidateEngineeringMemories = candidateRows
+    .map((row) => toCandidateEngineeringProfileMemory(row, {
+      autoApprove: sourceInventory.autoApprovedSourceIds.has(row.sourceArtifactId),
+    }))
     .filter((memory): memory is EngineeringProfileMemoryRecord => Boolean(memory));
+  const canonicalEngineeringMemories = canonicalRows
+    .map(toCanonicalEngineeringProfileMemory)
+    .filter((memory): memory is EngineeringProfileMemoryRecord => Boolean(memory))
+    .filter((memory) => !input.artifactId || memory.sourceArtifactId === input.artifactId);
+  const memories = dedupeEngineeringProfileMemories([
+    ...candidateEngineeringMemories,
+    ...canonicalEngineeringMemories,
+  ]).slice(0, input.limit);
+
+  return {
+    memories,
+    inventory: {
+      candidateEngineeringMemoryCount: candidateEngineeringMemories.length,
+      canonicalEngineeringMemoryCount: canonicalEngineeringMemories.length,
+      engineeringMemoryCount: memories.length,
+      engineeringSourceCount: sourceInventory.engineeringSourceCount,
+      agentInstructionSourceCount: sourceInventory.agentInstructionSourceCount,
+      sourceBackedEngineeringMemoryCount: countSourceBackedEngineeringMemories(
+        memories,
+        sourceInventory.engineeringSourceIds,
+      ),
+    },
+  };
 }
 
 export async function loadEngineeringReviewBundle(
@@ -99,7 +156,7 @@ export async function loadEngineeringReviewBundle(
   return {
     rows,
     memories: rows
-      .map(toEngineeringProfileMemory)
+      .map((row) => toCandidateEngineeringProfileMemory(row))
       .filter((memory): memory is EngineeringProfileMemoryRecord => Boolean(memory)),
   };
 }
@@ -251,7 +308,10 @@ export function emptyEngineeringSourcesResponse() {
   };
 }
 
-function toEngineeringProfileMemory(row: unknown): EngineeringProfileMemoryRecord | null {
+function toCandidateEngineeringProfileMemory(
+  row: unknown,
+  options: { autoApprove?: boolean } = {},
+): EngineeringProfileMemoryRecord | null {
   const record = row as Record<string, unknown>;
   const metadata = recordMetadata(record["metadata"]);
   const engineeringMetadata = recordMetadata(metadata["engineeringMetadata"]);
@@ -282,9 +342,176 @@ function toEngineeringProfileMemory(row: unknown): EngineeringProfileMemoryRecor
     scope,
     subject: readString(metadata["subject"]),
     confidence: readNumber(record["confidenceScore"]) ?? 0.5,
-    status: readStatus(record["status"]),
+    status: options.autoApprove ? "approved" : readStatus(record["status"]),
     metadata: buildEngineeringSafeMetadata(metadata, engineeringMetadata),
   };
+}
+
+function toCanonicalEngineeringProfileMemory(row: unknown): EngineeringProfileMemoryRecord | null {
+  const record = row as Record<string, unknown>;
+  const metadata = recordMetadata(record["metadata"]);
+  const memoryMetadata = recordMetadata(metadata["memoryMetadata"]);
+  const currentTruth = recordMetadata(metadata["currentTruth"]);
+
+  if (
+    metadata["engineering"] !== true &&
+    memoryMetadata["engineering"] !== true &&
+    currentTruth["kind"] !== "engineering_memory"
+  ) {
+    return null;
+  }
+
+  const engineeringMemoryType = readString(metadata["engineeringMemoryType"]) ??
+    readString(memoryMetadata["engineeringMemoryType"]) ??
+    readString(currentTruth["engineeringMemoryType"]) ??
+    readString(currentTruth["slot"]);
+  const scope = readString(metadata["engineeringInstructionScope"]) ??
+    readString(memoryMetadata["engineeringInstructionScope"]) ??
+    readString(currentTruth["engineeringInstructionScope"]) ??
+    readString(currentTruth["qualifier"]) ??
+    "project";
+
+  if (!engineeringMemoryType || !isEngineeringMemoryType(engineeringMemoryType)) {
+    return null;
+  }
+
+  if (!isEngineeringInstructionScope(scope)) {
+    return null;
+  }
+
+  const id = readString(record["id"]);
+  const sourceArtifactId = readString(currentTruth["sourceArtifactId"]) ??
+    readString(metadata["sourceArtifactId"]);
+  const memoryFragmentId = readString(currentTruth["memoryFragmentId"]) ??
+    readString(metadata["memoryFragmentId"]) ??
+    sourceArtifactId;
+  const memoryType = readString(record["memoryType"]);
+  const evidenceHash = readString(metadata["engineeringEvidenceHash"]) ??
+    readString(currentTruth["evidenceHash"]) ??
+    readFirstString(metadata["evidenceHashes"]);
+
+  if (!id || !sourceArtifactId || !memoryFragmentId || !memoryType || !evidenceHash) {
+    return null;
+  }
+
+  return {
+    id,
+    sourceArtifactId,
+    memoryFragmentId,
+    memoryType,
+    evidenceHash,
+    evidenceLength: readNumber(metadata["engineeringEvidenceLength"]),
+    engineeringMemoryType,
+    scope,
+    subject: readString(metadata["engineeringSubject"]) ??
+      readString(currentTruth["subject"]) ??
+      readString(record["subject"]),
+    confidence: readNumber(record["confidenceScore"]) ?? 0.5,
+    status: readStatus(currentTruth["status"] ?? record["status"]),
+    metadata: buildEngineeringSafeMetadata(metadata, {
+      ...memoryMetadata,
+      agentContextLine: currentTruth["agentContextLine"],
+      sourceKind: metadata["sourceType"],
+      codeReference: currentTruth["codeReference"],
+    }),
+  };
+}
+
+function dedupeEngineeringProfileMemories(
+  memories: EngineeringProfileMemoryRecord[],
+): EngineeringProfileMemoryRecord[] {
+  const byKey = new Map<string, EngineeringProfileMemoryRecord>();
+
+  for (const memory of memories) {
+    const key = [
+      memory.evidenceHash,
+      memory.engineeringMemoryType,
+      memory.scope,
+      memory.subject ?? "",
+      memory.sourceArtifactId,
+      memory.memoryFragmentId,
+    ].join(":");
+    const existing = byKey.get(key);
+
+    if (!existing || compareEngineeringMemoryPriority(memory, existing) > 0) {
+      byKey.set(key, memory);
+    }
+  }
+
+  return [...byKey.values()];
+}
+
+function compareEngineeringMemoryPriority(
+  left: EngineeringProfileMemoryRecord,
+  right: EngineeringProfileMemoryRecord,
+) {
+  const leftStatus = statusPriority(readStatus(left.status));
+  const rightStatus = statusPriority(readStatus(right.status));
+
+  if (leftStatus !== rightStatus) {
+    return leftStatus - rightStatus;
+  }
+
+  return left.confidence - right.confidence;
+}
+
+function statusPriority(status: EngineeringProfileMemoryStatus) {
+  if (status === "active" || status === "approved") {
+    return 3;
+  }
+
+  if (status === "candidate") {
+    return 2;
+  }
+
+  if (status === "superseded") {
+    return 1;
+  }
+
+  return 0;
+}
+
+function buildEngineeringSourceInventory(rows: Array<typeof sourceArtifacts.$inferSelect>) {
+  const engineeringSourceIds = new Set<string>();
+  const autoApprovedSourceIds = new Set<string>();
+  let agentInstructionSourceCount = 0;
+
+  for (const row of rows) {
+    const metadata = recordMetadata(row.metadata);
+    const isEngineeringSource = metadata["engineeringSourceKind"] !== undefined ||
+      metadata["artifactPurpose"] === "agent_skill_source";
+
+    if (!isEngineeringSource) {
+      continue;
+    }
+
+    engineeringSourceIds.add(row.id);
+
+    if (
+      metadata["engineeringSourceKind"] === "agent_instruction_file" ||
+      metadata["artifactPurpose"] === "agent_skill_source"
+    ) {
+      autoApprovedSourceIds.add(row.id);
+    }
+
+    if (metadata["engineeringSourceKind"] === "agent_instruction_file") {
+      agentInstructionSourceCount += 1;
+    }
+  }
+
+  return {
+    engineeringSourceIds,
+    autoApprovedSourceIds,
+    engineeringSourceCount: engineeringSourceIds.size,
+    agentInstructionSourceCount,
+  };
+}
+
+function countSourceBackedEngineeringMemories(
+  memories: EngineeringProfileMemoryRecord[],
+  engineeringSourceIds: Set<string>,
+) {
+  return memories.filter((memory) => engineeringSourceIds.has(memory.sourceArtifactId)).length;
 }
 
 function readEngineeringIdentityFields(record: Record<string, unknown>) {
@@ -522,4 +749,12 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readFirstString(value: unknown): string | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return value.find((item): item is string => typeof item === "string" && item.trim().length > 0) ?? null;
 }

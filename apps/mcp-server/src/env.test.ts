@@ -9,6 +9,7 @@ test("loads MCP config with explicit Sivraj values", () => {
     SIVRAJ_TOKEN: "token-1",
     SIVRAJ_PROJECT_NAME: "sivraj",
     SIVRAJ_PROJECT_ID: "project-1",
+    SIVRAJ_AGENT_PRESET: "cursor",
     SIVRAJ_INCLUDE_CANDIDATES: "false",
     SIVRAJ_MAX_ITEMS_PER_SECTION: "7",
   });
@@ -18,6 +19,7 @@ test("loads MCP config with explicit Sivraj values", () => {
   assert.equal(config.token, "token-1");
   assert.equal(config.projectName, "sivraj");
   assert.equal(config.projectId, "project-1");
+  assert.equal(config.agentPreset, "cursor");
   assert.equal(config.includeCandidates, false);
   assert.equal(config.maxItemsPerSection, 7);
   assert.equal(config.writebackEncryption, "api");
@@ -31,6 +33,7 @@ test("falls back to API_URL and candidate review mode defaults", () => {
   });
 
   assert.equal(config.apiUrl, "http://localhost:4000");
+  assert.equal(config.agentPreset, "codex");
   assert.equal(config.includeCandidates, true);
   assert.equal(config.maxItemsPerSection, 12);
 });
