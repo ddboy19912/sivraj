@@ -562,7 +562,7 @@ export async function run_extracts_deployment_environment_requirements_while_dro
                     scope: "project",
                     subject: "Sivraj local environment",
                     confidence: 0.9,
-                    evidence: "DATABASE_URL=... REDIS_URL=... SUI_PRIVATE_KEY=... TOKEN_ISSUER=sivraj",
+                    evidence: "TOKEN_ISSUER=sivraj",
                     metadata: {
                       variableNames: "DATABASE_URL,REDIS_URL,SUI_PRIVATE_KEY,TOKEN_ISSUER",
                       secretValue: "suiprivkey1example",
@@ -690,6 +690,48 @@ export async function run_rejects_malformed_or_non_engineering_extraction_rows()
 
     expect(result.memories).toEqual([]);
     expect(result.metadata.warnings).toContain("engineering_memory_missing_required_fields");
+}
+
+export async function run_rejects_prompt_example_memories_without_source_evidence() {
+  const result = await extractEngineeringMemories(
+    {
+      twinId: "twin-id",
+      sourceArtifactId: "artifact-id",
+      memoryFragmentId: "fragment-id",
+      sourceType: "note",
+      content: "The user is a software engineer. No repository-search preference is mentioned here.",
+    },
+    {
+      generator: {
+        async generateJson() {
+          return {
+            provider: "openrouter",
+            model: "google/gemini-2.5-flash-lite",
+            json: {
+              memories: [
+                {
+                  statement: "The user prefers rg for repository search before slower alternatives.",
+                  type: "tool_preference",
+                  scope: "global_user",
+                  subject: "rg",
+                  confidence: 0.86,
+                  evidence: "Use rg before grep.",
+                  metadata: {
+                    category: "repo_search",
+                  },
+                },
+              ],
+            },
+          };
+        },
+      },
+    },
+  );
+
+  expect(result.memories).toEqual([]);
+  expect(result.metadata.warnings).toContain("engineering_memory_evidence_not_in_source");
+  expect(result.metadata.returnedMemories).toBe(1);
+  expect(result.metadata.acceptedMemories).toBe(0);
 }
 
 export async function run_extracts_repo_health_memories_deterministically_from_agent_w() {

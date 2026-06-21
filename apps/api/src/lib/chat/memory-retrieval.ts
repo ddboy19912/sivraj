@@ -5,12 +5,12 @@
  * with bounded concurrency and fragment decrypt caching.
  */
 import type { MemorySearchConfig } from "@sivraj/config";
-import { tokenize } from "@sivraj/retrieval";
+import type { MemoryCandidate } from "@sivraj/retrieval";
 import { memoryFragments } from "@sivraj/db";
 import { eq } from "drizzle-orm";
 import type { ApiDb, AppDependencies } from "../../app.js";
 import type { ChatMemoryContext, ChatRuntimeConfig } from "../../types/chat.types.js";
-import type { ConversationContextResolution } from "./turn-types.js";
+import type { ConversationContextResolution, MemoryRequestScope } from "./turn-types.js";
 import { withTimeout } from "./chat-promise-timeout.js";
 import { loadCandidateMemorySearchCandidates } from "./candidate-memory-search.js";
 import {
@@ -18,6 +18,11 @@ import {
   selectCurrentTruthMemoryResults,
   shouldUseHotCurrentTruthFallback,
 } from "./current-truth.js";
+import {
+  memoryMatchesScope,
+  memorySearchTerms,
+  readMemoryRequestFromContext,
+} from "./memory-request.js";
 import { rankChatMemoryResults } from "./memory-ranking.js";
 import { readMemoryTokenAccounting } from "./token-accounting.js";
 import { errorMessage, readPositiveInteger } from "./helpers.js";
@@ -30,6 +35,7 @@ const CHAT_MEMORY_DECRYPT_TIMEOUT_DEFAULT_MS = 30_000;
 const CHAT_MEMORY_PLAINTEXT_CACHE_TTL_DEFAULT_MS = 10 * 60 * 1000;
 
 type PrivateMemoryReader = NonNullable<AppDependencies["privateMemoryReader"]>;
+type RankedMemoryResult = ReturnType<typeof selectCurrentTruthMemoryResults>[number];
 
 const chatMemoryCandidateCache = new Map<string, {
   expiresAt: number;
@@ -72,17 +78,22 @@ export async function loadMemoryContext(input: {
   )
     ? selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates)
     : [];
+  const memoryRequest = readMemoryRequestFromContext(input.contextResolution, input.query);
+  const memoryScope = memoryRequest.kind === "none" ? "all" : memoryRequest.scope;
   if (!input.privateMemoryReader) {
     return {
       results: dedupeRetrievalResults(
-        [...hotCurrentTruthResults, ...currentTruthFallbackResults],
+        filterResultsByMemoryRequestScope(
+          [...hotCurrentTruthResults, ...currentTruthFallbackResults],
+          memoryScope,
+        ),
         5,
         canonicalCurrentTruthContext.canonicalMemoryIdsByCandidateId,
       ).results,
       tokenAccountingByMemoryId: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
     };
   }
-  const queryTerms = memoryQueryTerms(input.query);
+  const queryTerms = memoryQueryTerms(input.query, input.contextResolution);
   const { rows } = await loadSearchRows({
     db: input.db,
     twinId: input.twinId,
@@ -124,7 +135,7 @@ export async function loadMemoryContext(input: {
     ...canonicalCurrentTruthContext.candidates,
     ...candidateMemoryContext.candidates,
     ...candidates,
-  ];
+  ].filter((candidate) => memoryMatchesScope(candidate.content, memoryScope));
   const candidatesById = new Map(combinedCandidates.map((candidate) => [candidate.id, candidate]));
   const rowsById = new Map(rowsSelectedForDecrypt.map((row) => [row.id, row]));
   const canonicalMemoryIdsByMemoryId = new Map([
@@ -132,6 +143,27 @@ export async function loadMemoryContext(input: {
     ...candidateMemoryContext.canonicalMemoryIdsByCandidateId,
     ...canonicalMemoryIdsByFragmentId,
   ]);
+  if (memoryRequest.kind === "inventory" || memoryRequest.kind === "followup") {
+    const { results } = dedupeRetrievalResults(
+      toInventoryMemoryResults(
+        combinedCandidates,
+        filterResultsByMemoryRequestScope(currentTruthFallbackResults, memoryScope),
+      ),
+      5,
+      canonicalMemoryIdsByMemoryId,
+    );
+    return {
+      results,
+      tokenAccountingByMemoryId: buildTokenAccountingByMemoryId({
+        results,
+        rowsById,
+        candidatesById,
+        currentTruthTokenAccounting: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
+        candidateTokenAccounting: candidateMemoryContext.tokenAccountingByCandidateId,
+      }),
+    };
+  }
+
   const rawResults = await rankChatMemoryResults({
     candidates: combinedCandidates,
     query: input.query,
@@ -140,30 +172,23 @@ export async function loadMemoryContext(input: {
     llmFetch: input.llmFetch,
   });
   const { results } = dedupeRetrievalResults(
-    [...hotCurrentTruthResults, ...rawResults, ...currentTruthFallbackResults],
+    [
+      ...filterResultsByMemoryRequestScope(hotCurrentTruthResults, memoryScope),
+      ...rawResults,
+      ...filterResultsByMemoryRequestScope(currentTruthFallbackResults, memoryScope),
+    ],
     5,
     canonicalMemoryIdsByMemoryId,
   );
-  const tokenAccountingByMemoryId = new Map<string, ReturnType<typeof readMemoryTokenAccounting>>();
-  for (const [candidateId, accounting] of canonicalCurrentTruthContext.tokenAccountingByCandidateId) {
-    tokenAccountingByMemoryId.set(candidateId, accounting);
-  }
-  for (const [candidateId, accounting] of candidateMemoryContext.tokenAccountingByCandidateId) {
-    tokenAccountingByMemoryId.set(candidateId, accounting);
-  }
-  for (const result of results) {
-    const row = rowsById.get(result.memory.id);
-    const candidate = candidatesById.get(result.memory.id);
-    if (!tokenAccountingByMemoryId.has(result.memory.id)) {
-      tokenAccountingByMemoryId.set(
-        result.memory.id,
-        readMemoryTokenAccounting(row?.metadata, candidate?.content ?? result.memory.content),
-      );
-    }
-  }
   return {
     results,
-    tokenAccountingByMemoryId,
+    tokenAccountingByMemoryId: buildTokenAccountingByMemoryId({
+      results,
+      rowsById,
+      candidatesById,
+      currentTruthTokenAccounting: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
+      candidateTokenAccounting: candidateMemoryContext.tokenAccountingByCandidateId,
+    }),
   };
 }
 
@@ -172,32 +197,67 @@ function isChatMemoryReadableRow(row: { storageStatus: string; storageLastReadEr
     || (row.storageStatus === "read_failed" && row.storageLastReadErrorCode === "read_timeout");
 }
 
-const MEMORY_QUERY_STOP_WORDS = new Set([
-  "about",
-  "any",
-  "are",
-  "did",
-  "do",
-  "does",
-  "have",
-  "is",
-  "know",
-  "me",
-  "memory",
-  "memories",
-  "mine",
-  "my",
-  "other",
-  "saved",
-  "tell",
-  "what",
-  "you",
-]);
+export function memoryQueryTerms(
+  query: string,
+  contextResolution?: ConversationContextResolution | Record<string, unknown>,
+): string[] {
+  return memorySearchTerms({
+    query,
+    memoryRequest: readMemoryRequestFromContext(contextResolution, query),
+  });
+}
 
-export function memoryQueryTerms(query: string): string[] {
-  return tokenize(query)
-    .filter((term) => !MEMORY_QUERY_STOP_WORDS.has(term))
-    .slice(0, 8);
+function filterResultsByMemoryRequestScope(
+  results: RankedMemoryResult[],
+  scope: MemoryRequestScope | undefined,
+): RankedMemoryResult[] {
+  if (!scope) {
+    return results;
+  }
+
+  return results.filter((result) => memoryMatchesScope(result.memory.content, scope));
+}
+
+function toInventoryMemoryResults(
+  candidates: MemoryCandidate[],
+  currentTruthResults: RankedMemoryResult[],
+): RankedMemoryResult[] {
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  return [
+    ...candidates.map((memory, index) => ({
+      memory,
+      score: Number((24 - index).toFixed(4)),
+      matchedTerms: ["inventory"],
+    })),
+    ...currentTruthResults.filter((result) => !candidateIds.has(result.memory.id)),
+  ];
+}
+
+function buildTokenAccountingByMemoryId(input: {
+  results: RankedMemoryResult[];
+  rowsById: Map<string, Parameters<typeof toMemorySearchCandidate>[0]>;
+  candidatesById: Map<string, MemoryCandidate>;
+  currentTruthTokenAccounting: Map<string, ReturnType<typeof readMemoryTokenAccounting>>;
+  candidateTokenAccounting: Map<string, ReturnType<typeof readMemoryTokenAccounting>>;
+}) {
+  const tokenAccountingByMemoryId = new Map<string, ReturnType<typeof readMemoryTokenAccounting>>();
+  for (const [candidateId, accounting] of input.currentTruthTokenAccounting) {
+    tokenAccountingByMemoryId.set(candidateId, accounting);
+  }
+  for (const [candidateId, accounting] of input.candidateTokenAccounting) {
+    tokenAccountingByMemoryId.set(candidateId, accounting);
+  }
+  for (const result of input.results) {
+    const row = input.rowsById.get(result.memory.id);
+    const candidate = input.candidatesById.get(result.memory.id);
+    if (!tokenAccountingByMemoryId.has(result.memory.id)) {
+      tokenAccountingByMemoryId.set(
+        result.memory.id,
+        readMemoryTokenAccounting(row?.metadata, candidate?.content ?? result.memory.content),
+      );
+    }
+  }
+  return tokenAccountingByMemoryId;
 }
 
 function toMemorySearchCandidateWithTimeout(

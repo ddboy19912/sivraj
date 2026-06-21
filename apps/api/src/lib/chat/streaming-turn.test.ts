@@ -326,6 +326,12 @@ function memoryQaResolution(): ConversationContextResolution {
     retrieval: "hot_memory",
     confidence: 0.9,
     referencedMessageIds: [],
+    memoryRequest: {
+      kind: "specific_fact",
+      query: "What did I tell you about the launch checklist?",
+      scope: "profile",
+      searchTerms: ["launch", "checklist"],
+    },
   };
 }
 

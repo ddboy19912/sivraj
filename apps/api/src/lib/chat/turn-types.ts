@@ -45,6 +45,30 @@ export type DocumentContext = {
   }>;
 };
 
+export type MemoryRequestScope = "all" | "profile" | "preferences" | "engineering";
+
+export type MemoryRequest =
+  | { kind: "none" }
+  | {
+      kind: "specific_fact";
+      query: string;
+      scope: MemoryRequestScope;
+      searchTerms: string[];
+    }
+  | {
+      kind: "inventory";
+      scope: MemoryRequestScope;
+      excludeAlreadyMentioned: boolean;
+    }
+  | {
+      kind: "followup";
+      relation: "other" | "same_topic" | "clarify";
+      query: string;
+      scope: MemoryRequestScope;
+      excludeAlreadyMentioned: boolean;
+      searchTerms: string[];
+    };
+
 /** Planner output for a single chat turn — controls retrieval, intake, and response path. */
 export type ConversationContextResolution = {
   source: "llm" | "fallback";
@@ -56,6 +80,7 @@ export type ConversationContextResolution = {
   retrieval: "none" | "hot_memory" | "document" | "conversation_context";
   confidence: number;
   referencedMessageIds: string[];
+  memoryRequest: MemoryRequest;
   reason?: string;
 };
 

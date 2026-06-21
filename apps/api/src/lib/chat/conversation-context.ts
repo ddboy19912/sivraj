@@ -11,6 +11,7 @@ import { optionalString } from "../http/route-helpers.js";
 import { errorMessage, readPositiveInteger, truncate } from "./helpers.js";
 import { clampConfidence, parseJsonObject } from "./chat-json.js";
 import type { ChatMemoryIntent } from "./memory-intake.js";
+import { readPlannedMemoryRequest } from "./memory-request.js";
 import type {
   ConversationContextResolution,
   CoreCommsContext,
@@ -34,7 +35,7 @@ const CONVERSATION_CONTEXT_RESOLVER_SYSTEM_PROMPT = [
   "Read the current user message and recent conversation, then decide what the backend should do before the response model runs.",
   "Use natural language understanding. Do not rely on fixed keywords; infer whether the user is asking, teaching, commanding, referring to memory, referring to documents, or just chatting.",
   "Use the recent conversation only to resolve references, omitted subjects, or follow-up intent. Do not answer the user.",
-  "Return only JSON with shape {\"standaloneQuery\":\"string\",\"intent\":\"document_qa|memory_qa|conversation_reference|general_chat|ambiguous\",\"turnKind\":\"question|statement|command|mixed\",\"answerTarget\":\"general|memory|document|conversation|none\",\"memoryWrite\":\"skip|extract|force_note\",\"retrieval\":\"none|hot_memory|document|conversation_context\",\"confidence\":0.0,\"referencedMessageIds\":[\"id\"],\"reason\":\"short\"}.",
+  "Return only JSON with shape {\"standaloneQuery\":\"string\",\"intent\":\"document_qa|memory_qa|conversation_reference|general_chat|ambiguous\",\"turnKind\":\"question|statement|command|mixed\",\"answerTarget\":\"general|memory|document|conversation|none\",\"memoryWrite\":\"skip|extract|force_note\",\"retrieval\":\"none|hot_memory|document|conversation_context\",\"memoryRequest\":{\"kind\":\"none|specific_fact|inventory|followup\",\"query\":\"string\",\"scope\":\"all|profile|preferences|engineering\",\"searchTerms\":[\"semantic search terms\"],\"excludeAlreadyMentioned\":false,\"relation\":\"other|same_topic|clarify\"},\"confidence\":0.0,\"referencedMessageIds\":[\"id\"],\"reason\":\"short\"}.",
   "If the current message is already standalone, use it unchanged as standaloneQuery.",
   "When memoryWrite is extract or force_note, standaloneQuery must be the exact standalone memory statement to store, with references like 'it', 'that', or 'this' resolved from recentConversation.",
   "Example: if the user first says 'The odd launch rule is that velvet buttons must stay blue' and later says 'Just remember it', return standaloneQuery 'The odd launch rule is that velvet buttons must stay blue', memoryWrite extract or force_note, retrieval none, answerTarget none.",
@@ -53,6 +54,10 @@ const CONVERSATION_CONTEXT_RESOLVER_SYSTEM_PROMPT = [
   "Use general_chat for normal world knowledge, coding, explanations, brainstorming, or creative tasks that do not require Sivraj memory or uploaded documents.",
   "Use memory_qa only when the user asks about saved personal facts, preferences, prior memories, or things they expect Sivraj to remember beyond the current chat.",
   "Use memory_qa for questions like 'what did I tell you about X', 'what do I believe about X', 'what is my definition of X', or 'use my saved version of X', even when X is normally a public topic.",
+  "For memory_qa, set memoryRequest.kind to specific_fact for one fact, inventory when the user asks what memories are saved, and followup when the user asks for other/additional memories relative to recent conversation.",
+  "For memoryRequest.scope, use profile for identity, occupation, personal facts, and general 'about me' questions; preferences for likes/dislikes or preferences; engineering for coding, repository, tool, command, project, or agent-specific memories; all only when the user explicitly asks for everything.",
+  "For specific_fact and followup memory requests, include 1-5 semantic searchTerms chosen by understanding the user's question. Do not include filler words like what, my, you, memory, saved, other, or about.",
+  "For followup requests like 'any other memory about me?', set relation other and excludeAlreadyMentioned true.",
   "Use document_qa only when the user asks about uploaded files, PDFs, documents, pages, chapters, passages, or document-derived knowledge.",
   "Use conversation_reference when the user refers to a previous message in the current thread and does not need durable memory or document evidence.",
   "Only include referencedMessageIds from the provided recentConversation list.",
@@ -149,6 +154,11 @@ export function readConversationContextResolution(
   const intent = readConversationIntent(parsed?.["intent"]);
   const answerTarget = readAnswerTarget(parsed?.["answerTarget"], intent);
   const retrieval = readRetrievalDecision(parsed?.["retrieval"], intent, answerTarget);
+  const baseResolution = {
+    intent,
+    answerTarget,
+    retrieval,
+  };
 
   return {
     source: "llm",
@@ -160,6 +170,10 @@ export function readConversationContextResolution(
     retrieval,
     confidence: clampConfidence(parsed?.["confidence"]),
     referencedMessageIds: Array.from(new Set(referencedMessageIds)),
+    memoryRequest: readPlannedMemoryRequest(parsed?.["memoryRequest"], {
+      query: standaloneQuery,
+      contextResolution: baseResolution,
+    }),
     reason: optionalString(parsed?.["reason"])?.slice(0, 200),
   };
 }
@@ -253,6 +267,14 @@ export function fallbackConversationContextResolution(
       retrieval: "hot_memory",
       confidence: 0,
       referencedMessageIds: [],
+      memoryRequest: readPlannedMemoryRequest(undefined, {
+        query: currentMessage,
+        contextResolution: {
+          intent: "memory_qa",
+          answerTarget: "memory",
+          retrieval: "hot_memory",
+        },
+      }),
       reason: "resolver_unavailable_explicit_memory_request",
     };
   }
@@ -268,6 +290,7 @@ export function fallbackConversationContextResolution(
       retrieval: "document",
       confidence: 0,
       referencedMessageIds: [],
+      memoryRequest: { kind: "none" },
       reason: "resolver_unavailable_explicit_document_request",
     };
   }
@@ -282,6 +305,7 @@ export function fallbackConversationContextResolution(
     retrieval: "none",
     confidence: 0,
     referencedMessageIds: [],
+    memoryRequest: { kind: "none" },
     reason: "resolver_unavailable_no_semantic_fallback",
   };
 }

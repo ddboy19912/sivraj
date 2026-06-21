@@ -33,9 +33,25 @@ vi.mock("../memory-search/load.js", () => ({
 const { loadMemoryContext, memoryQueryTerms } = await import("./memory-retrieval.js");
 
 describe("memoryQueryTerms", () => {
-  it("keeps user fact terms and drops memory QA filler", () => {
-    expect(memoryQueryTerms("What is my job?")).toEqual(["job"]);
-    expect(memoryQueryTerms("Do you have any other memory about me?")).toEqual([]);
+  it("uses planner-provided semantic terms instead of hardcoded stop words", () => {
+    expect(memoryQueryTerms("What is my job?", {
+      memoryRequest: {
+        kind: "specific_fact",
+        query: "What is my job?",
+        scope: "profile",
+        searchTerms: ["occupation", "job"],
+      },
+    })).toEqual(["occupation", "job"]);
+    expect(memoryQueryTerms("Do you have any other memory about me?", {
+      memoryRequest: {
+        kind: "followup",
+        relation: "other",
+        query: "Do you have any other memory about me?",
+        scope: "profile",
+        excludeAlreadyMentioned: true,
+        searchTerms: [],
+      },
+    })).toEqual([]);
   });
 });
 
@@ -84,6 +100,12 @@ describe("loadMemoryContext", () => {
         retrieval: "hot_memory",
         answerTarget: "memory",
         intent: "memory_qa",
+        memoryRequest: {
+          kind: "specific_fact",
+          query: "What is my job?",
+          scope: "profile",
+          searchTerms: ["job"],
+        },
       },
       runtimeConfig: {
         id: "provider-1",
@@ -153,6 +175,12 @@ describe("loadMemoryContext", () => {
         retrieval: "hot_memory",
         answerTarget: "memory",
         intent: "memory_qa",
+        memoryRequest: {
+          kind: "specific_fact",
+          query: "What is my job?",
+          scope: "profile",
+          searchTerms: ["job"],
+        },
       },
       runtimeConfig: {
         id: "provider-1",
@@ -169,6 +197,80 @@ describe("loadMemoryContext", () => {
     expect(context.results.map((result) => result.memory.content)).toEqual([
       "professional profile_fact memory: Fortune is a software engineer.",
       "Current profile fact: Fortune's name is Fortune.",
+    ]);
+  });
+
+  it("returns a profile inventory without engineering memories for about-me questions", async () => {
+    const nameMemory = memoryCandidate(
+      "canonical-current-truth:name-1",
+      "Current profile fact: Fortune's name is Fortune.",
+    );
+    const engineeringMemory = memoryCandidate(
+      "canonical-current-truth:rg-1",
+      "Engineering memory: Coding agents should use rg before grep.\nType: tool_preference\nKind: engineering_memory",
+    );
+    const jobMemory = memoryCandidate(
+      "candidate-job-1",
+      "professional fact memory: Fortune is a software engineer.",
+    );
+    const rgCandidate = memoryCandidate(
+      "candidate-rg-1",
+      "repo_search fact memory: The user prefers rg for repository search before slower alternatives.",
+    );
+
+    memoryRetrievalMocks.loadCanonicalCurrentTruthSearchCandidates.mockResolvedValue({
+      candidates: [nameMemory, engineeringMemory],
+      canonicalMemoryIdsByCandidateId: new Map(),
+      tokenAccountingByCandidateId: new Map(),
+    });
+    memoryRetrievalMocks.selectCurrentTruthMemoryResults.mockReturnValue([
+      { memory: nameMemory, score: 30, matchedTerms: ["current-truth"] },
+      { memory: engineeringMemory, score: 29, matchedTerms: ["current-truth"] },
+    ]);
+    memoryRetrievalMocks.shouldUseHotCurrentTruthFallback.mockReturnValue(true);
+    memoryRetrievalMocks.loadSearchRows.mockResolvedValue({
+      rows: [],
+      mode: "recent_fallback",
+      indexMatchCount: 0,
+    });
+    memoryRetrievalMocks.loadCanonicalMemoryIdsByFragmentId.mockResolvedValue(new Map());
+    memoryRetrievalMocks.loadCandidateMemorySearchCandidates.mockResolvedValue({
+      candidates: [jobMemory, rgCandidate],
+      canonicalMemoryIdsByCandidateId: new Map(),
+      tokenAccountingByCandidateId: new Map(),
+    });
+    memoryRetrievalMocks.rankChatMemoryResults.mockResolvedValue([]);
+
+    const context = await loadMemoryContext({
+      db: {} as any,
+      privateMemoryReader: {} as any,
+      memorySearchConfig: memorySearchConfig(),
+      twinId: "twin-1",
+      query: "What memories do you have about me?",
+      contextResolution: {
+        retrieval: "hot_memory",
+        answerTarget: "memory",
+        intent: "memory_qa",
+        memoryRequest: {
+          kind: "inventory",
+          scope: "profile",
+          excludeAlreadyMentioned: false,
+        },
+      },
+      runtimeConfig: {
+        id: "provider-1",
+        providerKind: "openai",
+        displayName: "OpenAI",
+        baseUrl: "https://example.com/v1",
+        model: "gpt-test",
+        apiKey: "test-key",
+        source: "user",
+      },
+    });
+
+    expect(context.results.map((result) => result.memory.content)).toEqual([
+      "Current profile fact: Fortune's name is Fortune.",
+      "professional fact memory: Fortune is a software engineer.",
     ]);
   });
 });

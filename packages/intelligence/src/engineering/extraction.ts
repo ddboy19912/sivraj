@@ -262,6 +262,11 @@ function parseEngineeringMemory(
     return null;
   }
 
+  if (!sourceContainsEvidence(input.content, evidence)) {
+    warnings.push("engineering_memory_evidence_not_in_source");
+    return null;
+  }
+
   const normalizedStatement = normalizeStatement(statement);
 
   if (normalizedStatement.length < 12) {
@@ -310,6 +315,20 @@ function parseEngineeringMemory(
       scopeSignals: fallbackScope.signals.join(","),
     },
   };
+}
+
+function sourceContainsEvidence(source: string, evidence: string): boolean {
+  const normalizedSource = normalizeEvidenceText(source);
+  const normalizedEvidence = normalizeEvidenceText(evidence);
+
+  return normalizedEvidence.length >= 4 && normalizedSource.includes(normalizedEvidence);
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractDeterministicRepoHealthMemories(

@@ -69,6 +69,7 @@ function turnPlan(overrides: Record<string, unknown> = {}) {
     retrieval: "none",
     confidence: 0.9,
     referencedMessageIds: [],
+    memoryRequest: { kind: "none" },
     ...overrides,
   };
 }
@@ -108,6 +109,98 @@ describe("chat prompt identity context", () => {
     );
     expect(messages[0]?.content).toContain(
       "frame it as saved user context",
+    );
+    expect(messages[0]?.content).toContain(
+      "When answering a user profile fact, speak to the user",
+    );
+  });
+
+  it("formats memory facts as structured user context for natural answers", () => {
+    const messages = buildPromptMessages({
+      currentMessage: "What is my job?",
+      contextResolution: turnPlan({
+        standaloneQuery: "What is my job?",
+        intent: "memory_qa",
+        answerTarget: "memory",
+        retrieval: "hot_memory",
+        memoryRequest: {
+          kind: "specific_fact",
+          query: "What is my job?",
+          scope: "profile",
+          searchTerms: ["job", "occupation"],
+        },
+      }),
+      coreCommsContext: {
+        assistantName: "Jarvis",
+        displayName: "Fortune",
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+      },
+      memoryContext: {
+        results: [{
+          memory: memoryCandidate("memory-occupation", "Current profile fact: Fortune's occupation is software engineer."),
+          score: 20,
+          matchedTerms: ["semantic"],
+        }],
+      },
+      recentMessages: [],
+      providerLabel: "OpenRouter",
+    });
+
+    expect(messages[0]?.content).toContain("memoryKind=profile");
+    expect(messages[0]?.content).toContain("subject=user unless content explicitly says otherwise");
+    expect(messages[0]?.content).toContain("Current profile fact: Fortune's occupation is software engineer.");
+    expect(messages[0]?.content).toContain("Never turn a user fact into 'I am'");
+  });
+
+  it("gives inventory requests explicit response guidance", () => {
+    const messages = buildPromptMessages({
+      currentMessage: "Do you have any other memory about me?",
+      contextResolution: turnPlan({
+        standaloneQuery: "Do you have any other memory about me?",
+        intent: "memory_qa",
+        answerTarget: "memory",
+        retrieval: "hot_memory",
+        memoryRequest: {
+          kind: "followup",
+          relation: "other",
+          query: "Do you have any other memory about me?",
+          scope: "profile",
+          excludeAlreadyMentioned: true,
+          searchTerms: [],
+        },
+      }),
+      coreCommsContext: {
+        assistantName: "Jarvis",
+        displayName: "Fortune",
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+      },
+      memoryContext: {
+        results: [{
+          memory: memoryCandidate("memory-name", "Current profile fact: Fortune's name is Fortune."),
+          score: 20,
+          matchedTerms: ["inventory"],
+        }],
+      },
+      recentMessages: [
+        chatMessageRow({
+          id: "previous-assistant",
+          role: "assistant",
+          content: "I have saved that you are a software engineer.",
+        }),
+      ],
+      providerLabel: "OpenRouter",
+    });
+
+    expect(messages[0]?.content).toContain("For memory inventory or follow-up requests");
+    expect(messages[0]?.content).toContain("say 'besides that'");
+    expect(messages[0]?.content).toContain(
+      "Do not use this missing-memory phrasing for inventory questions when any core comms or memory context is available.",
     );
   });
 
@@ -265,6 +358,33 @@ describe("chat prompt identity context", () => {
     });
   });
 
+  it("parses structured memory requests from the resolver output", () => {
+    const result = readConversationContextResolution(JSON.stringify({
+      standaloneQuery: "What is my occupation?",
+      intent: "memory_qa",
+      turnKind: "question",
+      answerTarget: "memory",
+      memoryWrite: "skip",
+      retrieval: "hot_memory",
+      memoryRequest: {
+        kind: "specific_fact",
+        query: "What is my occupation?",
+        scope: "profile",
+        searchTerms: ["occupation", "job"],
+      },
+      confidence: 0.9,
+      referencedMessageIds: [],
+      reason: "The user is asking for a saved profile fact.",
+    }), "What is my occupation?", []);
+
+    expect(result.memoryRequest).toEqual({
+      kind: "specific_fact",
+      query: "What is my occupation?",
+      scope: "profile",
+      searchTerms: ["occupation", "job"],
+    });
+  });
+
   it("uses conservative retrieval fallback when the LLM resolver is unavailable", () => {
     expect(
       fallbackConversationContextResolution("Do you remember the Oliver Twist PDF I uploaded?"),
@@ -286,6 +406,19 @@ describe("chat prompt identity context", () => {
       answerTarget: "memory",
       retrieval: "hot_memory",
       reason: "resolver_unavailable_explicit_memory_request",
+    });
+
+    expect(
+      fallbackConversationContextResolution("What memories do you have about me?"),
+    ).toMatchObject({
+      source: "fallback",
+      intent: "memory_qa",
+      answerTarget: "memory",
+      retrieval: "hot_memory",
+      memoryRequest: {
+        kind: "inventory",
+        scope: "profile",
+      },
     });
 
     expect(

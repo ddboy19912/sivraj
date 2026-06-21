@@ -47,9 +47,14 @@ export function shouldFastAcknowledgePrivateDisclosure(
 
 /** Whether durable memory search should run before the response model. */
 export function shouldLoadMemoryContext(
-  contextResolution: Pick<ConversationContextResolution, "intent" | "retrieval"> | undefined,
+  contextResolution: (Pick<ConversationContextResolution, "intent" | "retrieval"> &
+    Partial<Pick<ConversationContextResolution, "memoryRequest">>) | undefined,
   _query?: string,
 ): boolean {
+  if (contextResolution?.memoryRequest?.kind && contextResolution.memoryRequest.kind !== "none") {
+    return true;
+  }
+
   return contextResolution?.retrieval === "hot_memory" ||
     contextResolution?.intent === "memory_qa";
 }

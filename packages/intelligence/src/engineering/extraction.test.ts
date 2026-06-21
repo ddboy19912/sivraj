@@ -13,6 +13,7 @@ import {
   run_extracts_deployment_environment_requirements_while_dropping_,
   run_extracts_security_boundaries_as_scoped_implementation_constr,
   run_rejects_malformed_or_non_engineering_extraction_rows,
+  run_rejects_prompt_example_memories_without_source_evidence,
   run_extracts_repo_health_memories_deterministically_from_agent_w,
   run_extracts_review_copilot_memories_from_agent_writeback_user_c
 } from "./extraction-test-scenarios.js";
@@ -92,6 +93,10 @@ describe("extractEngineeringMemories / extracts security boundaries as scoped im
 
 describe("extractEngineeringMemories / rejects malformed or non-engineering extraction ro", () => {
   it("rejects malformed or non-engineering extraction rows", () => run_rejects_malformed_or_non_engineering_extraction_rows());
+});
+
+describe("extractEngineeringMemories / rejects prompt examples without source evidence", () => {
+  it("rejects prompt example memories without source evidence", () => run_rejects_prompt_example_memories_without_source_evidence());
 });
 
 describe("extractEngineeringMemories / extracts repo health memories deterministically fr", () => {
