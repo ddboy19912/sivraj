@@ -30,7 +30,7 @@ export function ChatThreadSidebar({
         threadCount={threads.length}
         onCreateThread={onCreateThread}
       />
-      <div className="relative z-1 mt-1.5 grid min-h-0 flex-1 gap-1 overflow-y-auto overscroll-contain pr-0.5">
+      <div className="relative z-1 mt-1.5 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain pr-0.5">
         {threads.map((thread) => (
           <ChatThreadListItem
             key={thread.id}

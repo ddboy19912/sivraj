@@ -16,3 +16,7 @@ export function getAppOverlay(accessState: AppAccessState): AppOverlay {
       return null
   }
 }
+
+export function shouldShowMainNavigation(overlay: AppOverlay): boolean {
+  return overlay === null
+}

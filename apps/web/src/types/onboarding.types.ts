@@ -9,6 +9,7 @@ export type OnboardingStepViewProps = {
 };
 
 export const ONBOARDING_STEP_ORDER: ActiveOnboardingStep[] = [
+  "connect",
   "name",
   "arrival",
   "identity",

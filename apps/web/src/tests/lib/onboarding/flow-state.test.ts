@@ -1,6 +1,7 @@
 import { describe, it } from "vitest";
 import type { Session } from "@/lib/session";
 import {
+  runAllowsReturningToConnectDuringOnboarding,
   runAllowsProtectedAccessDuringBootstrap,
   runBootsStoredSession,
   runClearsFirstMemoryArtifactOnTextChange,
@@ -43,6 +44,7 @@ describe("onboarding completion", () => {
   it("commits onboarding completion with runtime events", () => runCommitsOnboardingCompletionWithRuntimeEvent(session));
   it("completes onboarding without intro playback when the API does not issue a cue", () => runCompletesOnboardingWithoutIntroCue(session));
   it("routes a verified unonboarded wallet into onboarding", () => runRoutesVerifiedWalletToOnboarding(session));
+  it("allows returning to the wallet connection step during onboarding", () => runAllowsReturningToConnectDuringOnboarding(session));
 });
 
 describe("onboarding bootstrap", () => {

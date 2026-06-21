@@ -15,6 +15,7 @@ export function useWalletAccess() {
     selectedWalletAddress: account?.address,
     isWalletSettling,
   });
+  const isAccessSettling = isWalletSettling || sessionState.isSessionRestorePending;
 
   const bootstrapState = useTwinBootstrap({
     session: sessionState.session,
@@ -46,7 +47,7 @@ export function useWalletAccess() {
     hasMatchingWalletSession: sessionState.hasMatchingWalletSession,
     isBootstrapLoading: bootstrapState.isBootstrapLoading,
     isSigning,
-    isWalletSettling,
+    isWalletSettling: isAccessSettling,
     refetchBootstrap: bootstrapState.refetchBootstrap,
     session: sessionState.session,
   });

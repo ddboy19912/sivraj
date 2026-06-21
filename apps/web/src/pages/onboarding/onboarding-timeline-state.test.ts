@@ -6,9 +6,10 @@ import {
 
 describe('onboarding timeline state', () => {
   it('computes progress percentages', () => {
-    expect(getOnboardingTimelineProgress(0, 3)).toBe(0)
-    expect(getOnboardingTimelineProgress(1, 3)).toBe(50)
-    expect(getOnboardingTimelineProgress(2, 3)).toBe(100)
+    expect(getOnboardingTimelineProgress(0, 4)).toBe(0)
+    expect(getOnboardingTimelineProgress(1, 4)).toBeCloseTo(33.333)
+    expect(getOnboardingTimelineProgress(2, 4)).toBeCloseTo(66.667)
+    expect(getOnboardingTimelineProgress(3, 4)).toBe(100)
   })
 
   it('derives step visual state', () => {

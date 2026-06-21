@@ -1,6 +1,7 @@
 import {
   Brain,
   Sparkles,
+  Wallet,
   Volume2,
   type LucideIcon,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const timelineSteps: Array<{
   label: string;
   Icon: LucideIcon;
 }> = [
+  { id: "connect", label: "Wallet", Icon: Wallet },
   { id: "name", label: "Name", Icon: Sparkles },
   { id: "arrival", label: "Voice", Icon: Volume2 },
   { id: "identity", label: "Memory", Icon: Brain },
@@ -39,7 +41,7 @@ export function OnboardingTimeline({ flow }: OnboardingTimelineProps) {
   return (
     <nav className="relative" aria-label="Onboarding progress">
       <div
-        className="pointer-events-none absolute left-[calc(16.667%+20px)] right-[calc(16.667%+20px)] top-[22px] h-px bg-white/10 max-[620px]:left-[calc(16.667%+17px)] max-[620px]:right-[calc(16.667%+17px)]"
+        className="pointer-events-none absolute left-[calc(12.5%+20px)] right-[calc(12.5%+20px)] top-[22px] h-px bg-white/10 max-[620px]:left-[calc(12.5%+17px)] max-[620px]:right-[calc(12.5%+17px)]"
         aria-hidden="true"
       >
         <div
@@ -47,7 +49,7 @@ export function OnboardingTimeline({ flow }: OnboardingTimelineProps) {
           style={{ width: `${progress}%` }}
         />
       </div>
-      <ol className="relative z-10 grid grid-cols-3 gap-2 max-[620px]:gap-1">
+      <ol className="relative z-10 grid grid-cols-4 gap-2 max-[620px]:gap-1">
         {timelineSteps.map(({ id, label, Icon }, index) => (
           <OnboardingTimelineStep
             key={id}

@@ -8,6 +8,7 @@ import type {
 import { errorMessage, isAuthError } from "@/lib/api";
 import { normalizeTwinName } from "@/lib/onboarding/flow-selectors";
 import { addressesMatch } from "@/lib/onboarding/session";
+import type { Session } from "@/lib/session";
 
 export function resolveWalletAccessState(
   input: ResolveWalletAccessStateInput,
@@ -195,6 +196,22 @@ export function resolveActiveSession({
   }
 
   return { status: "unchanged" };
+}
+
+export function shouldHoldStoredSessionForWalletRestore({
+  selectedWalletAddress,
+  activeSession,
+  hasObservedWalletConnection,
+}: {
+  selectedWalletAddress: string | null;
+  activeSession: Session | null;
+  hasObservedWalletConnection: boolean;
+}) {
+  return Boolean(
+    activeSession &&
+      !selectedWalletAddress &&
+      !hasObservedWalletConnection,
+  );
 }
 
 export function isCompletedBootstrap({ profile, identity }: TwinBootstrap) {

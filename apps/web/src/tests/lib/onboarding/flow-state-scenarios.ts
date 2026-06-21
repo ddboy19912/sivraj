@@ -111,6 +111,38 @@ export function runRoutesVerifiedWalletToOnboarding(session: Session) {
   expect(shouldShowOnboardingPanel(onboardingState)).toBe(true);
 }
 
+export function runAllowsReturningToConnectDuringOnboarding(session: Session) {
+  const loadingState = onboardingReducer(createInitialState(session), { type: "SIGNED_IN", session });
+  const onboardingState = onboardingReducer(loadingState, {
+    type: "PROFILE_LOADED",
+    payload: {
+      profile: { twinId: session.twinId, name: "Primary Twin" },
+      identity: {
+        twinId: session.twinId,
+        displayName: null,
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+        selfDescriptionArtifactId: null,
+        onboardingStatus: "not_started",
+        firstMeetIntroStatus: "not_started",
+        shouldPlayFirstMeetIntro: false,
+        events: [],
+      },
+      voiceResponse: null,
+    },
+  });
+  const connectState = onboardingReducer(onboardingState, {
+    type: "STEP_CHANGED",
+    step: "connect",
+  });
+
+  expect(getCurrentStep(connectState)).toBe("connect");
+  expect(getUnlockedStepIndex(connectState, true)).toBeGreaterThanOrEqual(1);
+  expect(shouldShowOnboardingPanel(connectState)).toBe(true);
+}
+
 export function runCommitsOnboardingCompletionWithRuntimeEvent(session: Session) {
   const loadingState = onboardingReducer(createInitialState(session), { type: "SIGNED_IN", session });
   const completedState = onboardingReducer(loadingState, {

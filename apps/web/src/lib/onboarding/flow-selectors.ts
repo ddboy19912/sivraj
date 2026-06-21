@@ -21,9 +21,7 @@ export function getCurrentStep(
     return null;
   }
 
-  return state.activeStep === "intro" || state.activeStep === "connect"
-    ? "name"
-    : state.activeStep;
+  return state.activeStep === "intro" ? "name" : state.activeStep;
 }
 
 export function getUnlockedStepIndex(

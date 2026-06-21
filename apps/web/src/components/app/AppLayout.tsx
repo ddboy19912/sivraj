@@ -16,6 +16,7 @@ import {
   getNavigationTabForPath,
   getPathForNavigationTab,
 } from "@/lib/app/navigation";
+import { shouldShowMainNavigation } from "@/lib/app/overlay";
 import { hasPendingOpenRouterOAuthCallback } from "@/lib/chat/provider-config-handlers";
 import { AgentAudioProvider } from "@/providers/agent-audio-provider";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
@@ -27,6 +28,7 @@ export function AppLayout() {
   const app = useSivrajAppState(activeTab);
   const settingsOpen = activeTab === "settings" || app.settingsOpen;
   const showAmbientStage = activeTab !== "brain" && activeTab !== "agents";
+  const showMainNavigation = shouldShowMainNavigation(app.appOverlay);
   const setProviderOpen = app.setProviderOpen;
   const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();
 
@@ -86,7 +88,9 @@ export function AppLayout() {
         onSessionRefreshed={app.onboarding.setSession}
         onProviderChanged={app.setProviderState}
       />
-      <NavigationTab activeTab={activeTab} onTabChange={selectTab} />
+      {showMainNavigation ? (
+        <NavigationTab activeTab={activeTab} onTabChange={selectTab} />
+      ) : null}
       <TerminalOverlay
         key={
           app.onboarding.canUseProtectedApp

@@ -19,7 +19,7 @@ export function ChatThreadListItem({
   return (
     <div
       className={cn(
-        "group/thread-item flex items-center gap-1 rounded-2xl transition",
+        "group/thread-item flex shrink-0 items-center gap-1 rounded-2xl transition",
         isActive
           ? "bg-[rgba(var(--theme-color-rgb),0.13)] text-white"
           : "text-white/58 hover:bg-white/6 hover:text-white/84",

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   resolveActiveSession,
   resolveWalletAccessState,
+  shouldHoldStoredSessionForWalletRestore,
 } from "@/hooks/wallet/wallet-access-resolve";
 import type { TwinBootstrap } from "@/types/wallet.types";
 import type { Session } from "@/lib/session";
@@ -39,6 +40,20 @@ describe("resolveWalletAccessState", () => {
         session: null,
       }).status,
     ).toBe("pending");
+  });
+
+  it("keeps a stored app session pending before wallet restore has resolved", () => {
+    const state = resolveWalletAccessState({
+      ...baseSignals,
+      accountSelected: false,
+      hasMatchingWalletSession: false,
+      isWalletSettling: true,
+    });
+
+    expect(state).toMatchObject({
+      status: "pending",
+      title: "Booting up",
+    });
   });
 
   it("requires wallet auth after boot when no wallet is selected", () => {
@@ -122,6 +137,38 @@ describe("resolveWalletAccessState", () => {
       message: "Network request failed.",
       retry,
     });
+  });
+});
+
+describe("shouldHoldStoredSessionForWalletRestore", () => {
+  it("holds a stored session before the wallet connection has been observed", () => {
+    expect(
+      shouldHoldStoredSessionForWalletRestore({
+        selectedWalletAddress: null,
+        activeSession: session,
+        hasObservedWalletConnection: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("releases the hold after wallet connection has been observed", () => {
+    expect(
+      shouldHoldStoredSessionForWalletRestore({
+        selectedWalletAddress: null,
+        activeSession: session,
+        hasObservedWalletConnection: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not hold when a wallet address is already selected", () => {
+    expect(
+      shouldHoldStoredSessionForWalletRestore({
+        selectedWalletAddress: session.walletAddress,
+        activeSession: session,
+        hasObservedWalletConnection: false,
+      }),
+    ).toBe(false);
   });
 });
 
