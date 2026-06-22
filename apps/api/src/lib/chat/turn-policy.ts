@@ -251,7 +251,7 @@ export function buildRetrievalFallbackReply(
   _reason: ChatRetrievalDegradationReason | null = null,
 ): string {
   return target === "document"
-    ? "I couldn’t retrieve that document right now, so I can’t answer it safely."
+    ? "I found that document, but I couldn’t read its private content right now. Please retry in a moment."
     : "I couldn’t retrieve that memory right now, so I can’t answer it safely.";
 }
 

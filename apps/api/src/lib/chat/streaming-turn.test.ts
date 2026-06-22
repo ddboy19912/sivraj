@@ -18,6 +18,8 @@ const mockChatTurn = vi.hoisted(() => ({
   loadTurnPlanningMemoryHints: vi.fn(),
   resolveConversationContext: vi.fn(),
   loadMemoryContext: vi.fn(),
+  loadDocumentContextForIntent: vi.fn(),
+  updateThreadDocumentFocusFromContext: vi.fn(),
   createOpenAICompatibleChatGenerator: vi.fn(),
   enqueueCompletedChatTurnLearning: vi.fn(),
 }));
@@ -79,6 +81,15 @@ vi.mock("./memory-retrieval.js", async (importOriginal) => {
   };
 });
 
+vi.mock("./document-retrieval.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./document-retrieval.js")>();
+  return {
+    ...actual,
+    loadDocumentContextForIntent: mockChatTurn.loadDocumentContextForIntent,
+    updateThreadDocumentFocusFromContext: mockChatTurn.updateThreadDocumentFocusFromContext,
+  };
+});
+
 const { runStreamingChatTurn } = await import("./streaming-turn.js");
 
 describe("runStreamingChatTurn retrieval fallback", () => {
@@ -105,6 +116,8 @@ describe("runStreamingChatTurn retrieval fallback", () => {
     mockChatTurn.loadTurnPlanningMemoryHints.mockResolvedValue([]);
     mockChatTurn.resolveConversationContext.mockResolvedValue(memoryQaResolution());
     mockChatTurn.loadMemoryContext.mockResolvedValue(emptyMemoryContext());
+    mockChatTurn.loadDocumentContextForIntent.mockResolvedValue(emptyDocumentContext());
+    mockChatTurn.updateThreadDocumentFocusFromContext.mockResolvedValue(undefined);
     mockChatTurn.createOpenAICompatibleChatGenerator.mockReturnValue({
       generateChat: vi.fn(),
       streamChat: vi.fn(() => chatStream("Your name is Fortune.")),
@@ -301,6 +314,86 @@ describe("runStreamingChatTurn retrieval fallback", () => {
       "I searched your saved memory and did not find that phrase yet.",
     );
   });
+
+  it("completes with a deterministic fallback when required document retrieval is degraded", async () => {
+    mockChatTurn.resolveConversationContext.mockResolvedValue(documentQaResolution());
+    mockChatTurn.loadDocumentContextForIntent.mockResolvedValue({
+      ...emptyDocumentContext(),
+      retrievalPlan: {
+        source: "llm",
+        mode: "document_qa",
+        inspectionMode: "semantic_passages",
+        task: "answer",
+        target: { kind: "whole_document" },
+        artifactIds: ["artifact-1"],
+        targetPages: [],
+        confidence: 1,
+        needsClarification: false,
+      },
+      degradation: {
+        reason: "timeout",
+        message: "The document is saved, but private document retrieval timed out before I could read it.",
+        artifactIds: ["artifact-1"],
+        failureCount: 1,
+        lastError: "chat_document_read_timeout:fragment-1",
+      },
+    });
+    const events: Array<{ event: string; data: string }> = [];
+
+    await runStreamingChatTurn({
+      c: {} as any,
+      deps: {
+        db: {} as any,
+        privateMemoryReader: {} as any,
+        privateMemoryStorage: undefined,
+        artifactProcessingQueue: undefined,
+        llmFetch: vi.fn() as any,
+        memorySearchConfig: {} as any,
+      },
+      gate: {
+        twinId: "twin-1",
+        thread: chatThreadRow(),
+      },
+      stream: {
+        writeSSE: vi.fn(async (event) => {
+          events.push(event);
+        }),
+      },
+      content: "What is the launch strategy from the PDF I sent?",
+      memoryIntent: "auto",
+      surface: "web_chat",
+      retryAttempt: 0,
+      abortController: new AbortController(),
+    });
+
+    expect(mockChatTurn.loadMemoryContext).not.toHaveBeenCalled();
+    expect(mockChatTurn.createOpenAICompatibleChatGenerator).not.toHaveBeenCalled();
+    expect(mockChatTurn.markTurnGenerating).not.toHaveBeenCalled();
+    expect(mockChatTurn.completeStreamingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        finalContent: "I found that document, but I couldn’t read its private content right now. Please retry in a moment.",
+        retrievalStatus: expect.objectContaining({
+          state: "degraded",
+          target: "document",
+          reason: "timeout",
+        }),
+      }),
+    );
+    expect(events.map((event) => event.event)).toEqual([
+      "turn.created",
+      "context.ready",
+      "assistant.delta",
+      "assistant.completed",
+    ]);
+    expect(parseEventData(events[1]).retrievalStatus).toMatchObject({
+      state: "degraded",
+      target: "document",
+      reason: "timeout",
+    });
+    expect(parseEventData(events[2]).delta).toBe(
+      "I found that document, but I couldn’t read its private content right now. Please retry in a moment.",
+    );
+  });
 });
 
 function runtimeConfig(): ChatRuntimeConfig {
@@ -335,6 +428,21 @@ function memoryQaResolution(): ConversationContextResolution {
   };
 }
 
+function documentQaResolution(): ConversationContextResolution {
+  return {
+    source: "llm",
+    standaloneQuery: "What is the launch strategy from the PDF I sent?",
+    intent: "document_qa",
+    turnKind: "question",
+    answerTarget: "document",
+    memoryWrite: "skip",
+    retrieval: "document",
+    confidence: 0.95,
+    referencedMessageIds: [],
+    memoryRequest: { kind: "none" },
+  };
+}
+
 function chatTurnSeed(): ChatTurnSeed {
   return {
     turn: chatTurnRow(),
@@ -357,6 +465,26 @@ function emptyMemoryContext() {
   return {
     results: [],
     tokenAccountingByMemoryId: new Map(),
+  };
+}
+
+function emptyDocumentContext() {
+  return {
+    results: [],
+    retrievalPlan: {
+      source: "skipped",
+      mode: "general_chat",
+      inspectionMode: "semantic_passages",
+      task: "answer",
+      target: { kind: "none" },
+      artifactIds: [],
+      targetPages: [],
+      confidence: 0,
+      needsClarification: false,
+    },
+    inspectionSources: [],
+    passages: [],
+    degradation: null,
   };
 }
 

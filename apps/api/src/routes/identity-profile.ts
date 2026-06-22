@@ -479,9 +479,9 @@ function buildIdentityProfileEvents(input: {
 
 function buildOnboardingGreeting(twinName: string, userName: string) {
   const trimmedName = userName.trim();
-  const hello = trimmedName ? `Hi ${trimmedName}! ` : "";
+  const hello = trimmedName ? `Hi ${trimmedName}, ` : "";
 
-  return `${hello}I'm ${twinName}. It's really good to finally meet you. I've got your first memory now, and I'm ready to start learning your world with you.`;
+  return `${hello}it's nice to meet you. I'm ${twinName}, and I'm ready to start learning your world with you.`;
 }
 
 function readOnboardingStatus(value: unknown): OnboardingStatus | null | undefined {

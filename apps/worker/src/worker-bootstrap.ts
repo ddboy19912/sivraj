@@ -9,12 +9,15 @@ import {
   createCandidateMemoryArchiveWorker,
   createConnectorSyncQueue,
   createConnectorSyncWorker,
+  createContextWarmupQueue,
+  createContextWarmupWorker,
   createIntelligenceProcessingQueue,
   createIntelligenceProcessingWorker,
   createTransientCiphertextCache,
   createWeeklyReflectionWorker,
 } from "@sivraj/queue";
 import { enqueueDueConnectorSyncs, processConnectorSyncRun } from "./connectors.js";
+import { processContextWarmup } from "./context-warmup.js";
 import {
   enqueueDueCandidateMemoryArchives,
   processCandidateMemoryArchive,
@@ -26,6 +29,7 @@ import { createArtifactProcessingJobHandler } from "./artifact-processing-job.js
 import type { createWorkerDb } from "./db.js";
 import type { createDrizzleArtifactRepository } from "./repository.js";
 import type { createConfiguredPrivateMemoryReader } from "@sivraj/private-memory-reader";
+import type { createPrivateMemoryCiphertextCache } from "@sivraj/queue";
 import type { createConfiguredPrivateFragmentStorage } from "./private-fragment-storage.js";
 import type { createConfiguredPrivateSourceStorage } from "./private-source-storage.js";
 import type {
@@ -41,6 +45,7 @@ const memoryRenewalScriptPath = fileURLToPath(new URL("../scripts/renew-memory.m
 type WorkerDb = ReturnType<typeof createWorkerDb>;
 type ArtifactRepository = ReturnType<typeof createDrizzleArtifactRepository>;
 type PrivateMemoryReader = ReturnType<typeof createConfiguredPrivateMemoryReader>;
+type PrivateMemoryCiphertextCache = ReturnType<typeof createPrivateMemoryCiphertextCache>;
 type PrivateFragmentStorage = ReturnType<typeof createConfiguredPrivateFragmentStorage>;
 type PrivateSourceStorage = ReturnType<typeof createConfiguredPrivateSourceStorage>;
 type SpeechToTextTranscriber = ReturnType<typeof createConfiguredSpeechToTextTranscriber>;
@@ -53,6 +58,7 @@ export type WorkerRuntime = {
   candidateMemoryArchiveWorker: ReturnType<typeof createCandidateMemoryArchiveWorker>;
   weeklyReflectionWorker: ReturnType<typeof createWeeklyReflectionWorker>;
   connectorSyncWorker: ReturnType<typeof createConnectorSyncWorker>;
+  contextWarmupWorker: ReturnType<typeof createContextWarmupWorker>;
   reconciler: ReturnType<typeof setInterval>;
   connectorReconciler: ReturnType<typeof setInterval>;
   candidateMemoryArchiveReconciler: ReturnType<typeof setInterval>;
@@ -65,6 +71,7 @@ export type WorkerBootstrapInput = {
   db: WorkerDb["db"];
   closeDb: WorkerDb["close"];
   repository: ArtifactRepository;
+  privateMemoryCiphertextCache: PrivateMemoryCiphertextCache;
   privateMemoryReader: PrivateMemoryReader;
   privateFragmentStorage: PrivateFragmentStorage;
   privateSourceStorage: PrivateSourceStorage;
@@ -109,6 +116,7 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
   const intelligenceQueue = createIntelligenceProcessingQueue(input.redisUrl);
   const candidateMemoryArchiveQueue = createCandidateMemoryArchiveQueue(input.redisUrl);
   const connectorSyncQueue = createConnectorSyncQueue(input.redisUrl);
+  const contextWarmupQueue = createContextWarmupQueue(input.redisUrl);
 
   const connectorSyncWorker = createConnectorSyncWorker(
     input.redisUrl,
@@ -278,12 +286,35 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
     { concurrency: readPositiveInt(process.env["WEEKLY_REFLECTION_CONCURRENCY"], 1) },
   );
 
+  const contextWarmupWorker = createContextWarmupWorker(
+    input.redisUrl,
+    async (data, job) => {
+      const startedAt = Date.now();
+      const result = await processContextWarmup({
+        db: input.db,
+        data,
+      });
+
+      console.log(`${input.serviceName} context warmup job processed`, {
+        jobId: job.id,
+        twinId: data.twinId,
+        surface: data.surface,
+        reason: data.reason,
+        itemCount: result.itemCount,
+        sourceRefCount: result.sourceRefCount,
+        durationMs: Date.now() - startedAt,
+      });
+    },
+    { concurrency: readPositiveInt(process.env["CONTEXT_WARMUP_CONCURRENCY"], 1) },
+  );
+
   attachWorkerLogging(input.serviceName, {
     worker,
     intelligenceWorker,
     candidateMemoryArchiveWorker,
     weeklyReflectionWorker,
     connectorSyncWorker,
+    contextWarmupWorker,
   });
 
   const reconciler = setInterval(() => {
@@ -363,6 +394,7 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
     candidateMemoryArchiveWorker,
     weeklyReflectionWorker,
     connectorSyncWorker,
+    contextWarmupWorker,
     reconciler,
     connectorReconciler,
     candidateMemoryArchiveReconciler,
@@ -373,16 +405,19 @@ export function createWorkerRuntime(input: WorkerBootstrapInput): WorkerRuntime 
       clearInterval(candidateMemoryArchiveReconciler);
       clearInterval(memoryRenewalReconciler);
       await candidateMemoryArchiveWorker.close();
+      await contextWarmupWorker.close();
       await connectorSyncWorker.close();
       await weeklyReflectionWorker.close();
       await intelligenceWorker.close();
       await worker.close();
       await candidateMemoryArchiveQueue.close();
+      await contextWarmupQueue.close();
       await connectorSyncQueue.close();
       await intelligenceQueue.close();
       await transientCiphertextCache.close();
       await artifactRetryQueue.close();
       await artifactStatusPublisher.close();
+      await input.privateMemoryCiphertextCache.close();
       await input.closeDb();
     },
   };
@@ -416,6 +451,7 @@ function attachWorkerLogging(
     candidateMemoryArchiveWorker: ReturnType<typeof createCandidateMemoryArchiveWorker>;
     weeklyReflectionWorker: ReturnType<typeof createWeeklyReflectionWorker>;
     connectorSyncWorker: ReturnType<typeof createConnectorSyncWorker>;
+    contextWarmupWorker: ReturnType<typeof createContextWarmupWorker>;
   },
 ) {
   workers.worker.onCompleted((jobId) => {
@@ -467,6 +503,17 @@ function attachWorkerLogging(
   });
   workers.connectorSyncWorker.onFailed((jobId, error, attemptsMade) => {
     console.error(`${serviceName} connector sync job failed`, {
+      jobId,
+      attemptsMade,
+      errorName: error.name,
+      errorMessage: error.message,
+    });
+  });
+  workers.contextWarmupWorker.onCompleted((jobId) => {
+    console.log(`${serviceName} context warmup job completed`, { jobId });
+  });
+  workers.contextWarmupWorker.onFailed((jobId, error, attemptsMade) => {
+    console.error(`${serviceName} context warmup job failed`, {
       jobId,
       attemptsMade,
       errorName: error.name,

@@ -1,4 +1,5 @@
 export type TerminalCommandId =
+  | "account.wipe"
   | "onboarding.status"
   | "onboarding.reset"
   | "connectors.list"

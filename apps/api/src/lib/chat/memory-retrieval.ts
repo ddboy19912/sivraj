@@ -65,26 +65,58 @@ export async function loadMemoryContext(input: {
     db: input.db,
     twinId: input.twinId,
   });
+  const currentTruthCandidates = filterMemoryCandidatesForTwin(
+    canonicalCurrentTruthContext.candidates,
+    input.twinId,
+    "current_truth_candidates",
+  );
   const hotCurrentTruthResults = await rankChatMemoryResults({
-    candidates: canonicalCurrentTruthContext.candidates,
+    candidates: currentTruthCandidates,
     query: input.query,
     limit: 5,
     runtimeConfig: input.runtimeConfig,
     llmFetch: input.llmFetch,
   });
-  const currentTruthFallbackResults = shouldUseHotCurrentTruthFallback(
-    input.query,
-    input.contextResolution as ConversationContextResolution,
-  )
-    ? selectCurrentTruthMemoryResults(canonicalCurrentTruthContext.candidates)
-    : [];
+  const ownedHotCurrentTruthResults = filterMemoryResultsForTwin(
+    hotCurrentTruthResults,
+    input.twinId,
+    "hot_current_truth_results",
+  );
+  const currentTruthFallbackResults = filterMemoryResultsForTwin(
+    shouldUseHotCurrentTruthFallback(
+      input.query,
+      input.contextResolution as ConversationContextResolution,
+    )
+      ? selectCurrentTruthMemoryResults(currentTruthCandidates)
+      : [],
+    input.twinId,
+    "current_truth_fallback_results",
+  );
   const memoryRequest = readMemoryRequestFromContext(input.contextResolution, input.query);
   const memoryScope = memoryRequest.kind === "none" ? "all" : memoryRequest.scope;
+  const hotSpecificFactResults = filterResultsByMemoryRequestScope(ownedHotCurrentTruthResults, memoryScope);
+  if (memoryRequest.kind === "specific_fact" && hotSpecificFactResults.length > 0) {
+    const { results } = dedupeRetrievalResults(
+      hotSpecificFactResults,
+      5,
+      canonicalCurrentTruthContext.canonicalMemoryIdsByCandidateId,
+    );
+    return {
+      results,
+      tokenAccountingByMemoryId: buildTokenAccountingByMemoryId({
+        results,
+        rowsById: new Map(),
+        candidatesById: new Map(currentTruthCandidates.map((candidate) => [candidate.id, candidate])),
+        currentTruthTokenAccounting: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
+        candidateTokenAccounting: new Map(),
+      }),
+    };
+  }
   if (!input.privateMemoryReader) {
     return {
       results: dedupeRetrievalResults(
         filterResultsByMemoryRequestScope(
-          [...hotCurrentTruthResults, ...currentTruthFallbackResults],
+          [...ownedHotCurrentTruthResults, ...currentTruthFallbackResults],
           memoryScope,
         ),
         5,
@@ -108,7 +140,9 @@ export async function loadMemoryContext(input: {
     query: input.query,
     queryTerms,
   });
-  const readableRows = rows.filter(isChatMemoryReadableRow);
+  const readableRows = rows
+    .filter(isChatMemoryReadableRow)
+    .filter((row) => memoryFragmentRowBelongsToTwin(row, input.twinId));
   const canonicalMemoryIdsByFragmentId = await loadCanonicalMemoryIdsByFragmentId({
     db: input.db,
     twinId: input.twinId,
@@ -130,10 +164,20 @@ export async function loadMemoryContext(input: {
     rows: rowsSelectedForDecrypt,
     candidateResults,
   });
-  const { candidates } = collectDecryptedCandidates(candidateResults);
+  const { candidates: decryptedCandidates } = collectDecryptedCandidates(candidateResults);
+  const candidates = filterMemoryCandidatesForTwin(
+    decryptedCandidates,
+    input.twinId,
+    "decrypted_memory_candidates",
+  );
+  const ownedCandidateMemoryCandidates = filterMemoryCandidatesForTwin(
+    candidateMemoryContext.candidates,
+    input.twinId,
+    "candidate_memory_candidates",
+  );
   const combinedCandidates = [
-    ...canonicalCurrentTruthContext.candidates,
-    ...candidateMemoryContext.candidates,
+    ...currentTruthCandidates,
+    ...ownedCandidateMemoryCandidates,
     ...candidates,
   ].filter((candidate) => memoryMatchesScope(candidate.content, memoryScope));
   const candidatesById = new Map(combinedCandidates.map((candidate) => [candidate.id, candidate]));
@@ -171,25 +215,91 @@ export async function loadMemoryContext(input: {
     runtimeConfig: input.runtimeConfig,
     llmFetch: input.llmFetch,
   });
+  const ownedRawResults = filterMemoryResultsForTwin(
+    rawResults,
+    input.twinId,
+    "ranked_memory_results",
+  );
   const { results } = dedupeRetrievalResults(
     [
-      ...filterResultsByMemoryRequestScope(hotCurrentTruthResults, memoryScope),
-      ...rawResults,
+      ...filterResultsByMemoryRequestScope(ownedHotCurrentTruthResults, memoryScope),
+      ...ownedRawResults,
       ...filterResultsByMemoryRequestScope(currentTruthFallbackResults, memoryScope),
     ],
     5,
     canonicalMemoryIdsByMemoryId,
   );
-  return {
+  const ownedResults = filterMemoryResultsForTwin(
     results,
+    input.twinId,
+    "final_memory_results",
+  );
+  return {
+    results: ownedResults,
     tokenAccountingByMemoryId: buildTokenAccountingByMemoryId({
-      results,
+      results: ownedResults,
       rowsById,
       candidatesById,
       currentTruthTokenAccounting: canonicalCurrentTruthContext.tokenAccountingByCandidateId,
       candidateTokenAccounting: candidateMemoryContext.tokenAccountingByCandidateId,
     }),
   };
+}
+
+function filterMemoryCandidatesForTwin(
+  candidates: MemoryCandidate[],
+  requestedTwinId: string,
+  stage: string,
+): MemoryCandidate[] {
+  return candidates.filter((candidate) => {
+    const owned = candidate.twinId === requestedTwinId;
+    if (!owned) {
+      console.warn("chat memory candidate rejected for twin mismatch", {
+        stage,
+        requestedTwinId,
+        memoryId: candidate.id,
+        memoryTwinId: candidate.twinId,
+        sourceArtifactId: candidate.sourceArtifactId,
+      });
+    }
+    return owned;
+  });
+}
+
+function filterMemoryResultsForTwin(
+  results: RankedMemoryResult[],
+  requestedTwinId: string,
+  stage: string,
+): RankedMemoryResult[] {
+  return results.filter((result) => {
+    const owned = result.memory.twinId === requestedTwinId;
+    if (!owned) {
+      console.warn("chat memory result rejected for twin mismatch", {
+        stage,
+        requestedTwinId,
+        memoryId: result.memory.id,
+        memoryTwinId: result.memory.twinId,
+        sourceArtifactId: result.memory.sourceArtifactId,
+      });
+    }
+    return owned;
+  });
+}
+
+function memoryFragmentRowBelongsToTwin(
+  row: typeof memoryFragments.$inferSelect,
+  requestedTwinId: string,
+) {
+  const owned = row.twinId === requestedTwinId;
+  if (!owned) {
+    console.warn("chat memory fragment row rejected for twin mismatch", {
+      requestedTwinId,
+      memoryFragmentId: row.id,
+      memoryTwinId: row.twinId,
+      sourceArtifactId: row.sourceArtifactId,
+    });
+  }
+  return owned;
 }
 
 function isChatMemoryReadableRow(row: { storageStatus: string; storageLastReadErrorCode?: string | null }) {

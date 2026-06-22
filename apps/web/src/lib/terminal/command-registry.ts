@@ -43,6 +43,16 @@ const TERMINAL_COMMANDS: TerminalCommandDefinition[] = [
     description: "Clear the browser session and onboarding completion cache.",
   },
   {
+    id: "account.wipe",
+    usage: "account wipe --dry-run",
+    description: "Preview the current wallet account wipe.",
+  },
+  {
+    id: "account.wipe",
+    usage: "account wipe",
+    description: "Wipe the current wallet account after a Y/N confirmation.",
+  },
+  {
     id: "connectors.list",
     usage: "connectors list",
     description: "List connector accounts for the current twin.",

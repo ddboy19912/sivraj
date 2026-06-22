@@ -1,12 +1,17 @@
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { useWalletSessionCallbacks } from "@/hooks/wallet/use-wallet-session-callbacks";
 import { useWalletSessionMutations } from "@/hooks/wallet/use-wallet-session-mutations";
 import { addressesMatch } from "@/lib/onboarding/session";
 import {
   resolveActiveSession,
+  resolveWalletSessionRestoreStatus,
   shouldHoldStoredSessionForWalletRestore,
 } from "@/hooks/wallet/wallet-access-resolve";
 import { readStoredSession, type Session } from "@/lib/session";
+
+export const DAPP_KIT_SELECTED_WALLET_STORAGE_KEY =
+  "mysten-dapp-kit:selected-wallet-and-address";
+export const WALLET_SESSION_RESTORE_TIMEOUT_MS = 2500;
 
 type WalletSessionStateInput = {
   selectedWalletAddress: string | null | undefined;
@@ -20,18 +25,38 @@ export function useWalletSessionState({
   const callbacks = useWalletSessionCallbacks(selectedWalletAddress);
   const [session, setSessionState] = useState<Session | null>(readStoredSession);
   const [authError, setAuthError] = useState<string | null>(null);
-  const hasObservedWalletConnection = useSyncExternalStore(
-    subscribeToWalletConnectionObservation,
-    readWalletConnectionObservation,
-    readServerWalletConnectionObservation,
-  );
   const mutations = useWalletSessionMutations(callbacks, setSessionState, setAuthError);
-  const isSessionRestorePending = shouldHoldStoredSessionForWalletRestore({
-    selectedWalletAddress: selectedWalletAddress ?? null,
+  const storedWalletAddress = readStoredDAppKitWalletAddress();
+  const restoreKey = [
+    selectedWalletAddress ?? "",
+    session?.walletAddress ?? "",
+    storedWalletAddress ?? "",
+  ].join(":");
+  const [restoreTimeout, setRestoreTimeout] = useState(() => ({
+    hasTimedOut: false,
+    key: restoreKey,
+  }));
+
+  if (restoreTimeout.key !== restoreKey) {
+    setRestoreTimeout({ hasTimedOut: false, key: restoreKey });
+  }
+
+  const hasRestoreTimedOut =
+    restoreTimeout.key === restoreKey && restoreTimeout.hasTimedOut;
+  const walletRestoreStatus = resolveWalletSessionRestoreStatus({
     activeSession: session,
-    hasObservedWalletConnection,
+    hasTimedOut: hasRestoreTimedOut,
+    selectedWalletAddress: selectedWalletAddress ?? null,
+    storedWalletAddress,
   });
-  const shouldHoldActiveSession = isWalletSettling || isSessionRestorePending;
+  const isWalletSessionRestorePending = shouldHoldStoredSessionForWalletRestore({
+    activeSession: session,
+    hasTimedOut: hasRestoreTimedOut,
+    selectedWalletAddress: selectedWalletAddress ?? null,
+    storedWalletAddress,
+  });
+  const shouldHoldActiveSession =
+    isWalletSettling || isWalletSessionRestorePending;
 
   const hasMatchingWalletSession = Boolean(
     selectedWalletAddress &&
@@ -61,45 +86,56 @@ export function useWalletSessionState({
     resolveSession();
   }, [selectedWalletAddress, session, shouldHoldActiveSession]);
 
+  useEffect(() => {
+    if (!isWalletSessionRestorePending) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setRestoreTimeout((current) =>
+        current.key === restoreKey
+          ? { ...current, hasTimedOut: true }
+          : current,
+      );
+    }, WALLET_SESSION_RESTORE_TIMEOUT_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [
+    isWalletSessionRestorePending,
+    restoreKey,
+  ]);
+
   return {
     accountAddressRef: callbacks.accountAddressRef,
     authError,
     hasMatchingWalletSession,
-    isSessionRestorePending,
+    isWalletSessionRestorePending,
     resetSession: mutations.resetSession,
     session,
     setAuthError,
     setSession: mutations.setSession,
+    walletRestoreStatus,
   };
 }
 
-let hasObservedWalletConnectionSnapshot = false;
-const walletConnectionObservationListeners = new Set<() => void>();
-
-function subscribeToWalletConnectionObservation(onStoreChange: () => void) {
-  walletConnectionObservationListeners.add(onStoreChange);
-
-  if (hasObservedWalletConnectionSnapshot) {
-    return () => {
-      walletConnectionObservationListeners.delete(onStoreChange);
-    };
+function readStoredDAppKitWalletAddress() {
+  if (typeof window === "undefined") {
+    return null;
   }
 
-  const frame = window.requestAnimationFrame(() => {
-    hasObservedWalletConnectionSnapshot = true;
-    walletConnectionObservationListeners.forEach((listener) => listener());
-  });
-
-  return () => {
-    window.cancelAnimationFrame(frame);
-    walletConnectionObservationListeners.delete(onStoreChange);
-  };
+  return parseStoredDAppKitWalletAddress(
+    window.localStorage.getItem(DAPP_KIT_SELECTED_WALLET_STORAGE_KEY),
+  );
 }
 
-function readWalletConnectionObservation() {
-  return hasObservedWalletConnectionSnapshot;
-}
+export function parseStoredDAppKitWalletAddress(raw: string | null) {
+  if (!raw) {
+    return null;
+  }
 
-function readServerWalletConnectionObservation() {
-  return false;
+  const [, walletAddress] = raw.split(":");
+
+  return walletAddress || null;
 }

@@ -334,9 +334,10 @@ export async function postAuthedAudio(
   body: Record<string, unknown>,
   session: Session,
   onSessionRefreshed: (session: Session) => void,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   try {
-    return await postAudio(path, body, session.token)
+    return await postAudio(path, body, session.token, signal)
   } catch (error) {
     if (!isAuthError(error)) {
       throw error
@@ -344,7 +345,7 @@ export async function postAuthedAudio(
 
     const refreshed = await refreshApiSession(session)
     onSessionRefreshed(refreshed)
-    return postAudio(path, body, refreshed.token)
+    return postAudio(path, body, refreshed.token, signal)
   }
 }
 
@@ -424,9 +425,11 @@ async function postAudio(
   path: string,
   body: Record<string, unknown>,
   token: string,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   const response = await fetch(`${API_URL}${path}`, {
     method: 'POST',
+    signal,
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${token}`,

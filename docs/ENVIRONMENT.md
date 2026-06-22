@@ -46,6 +46,11 @@ Root `.env.example` is source of truth.
 - `MEMORY_SEARCH_FALLBACK_LIMIT`
 - `MEMORY_SEARCH_DECRYPT_CONCURRENCY`
 - `MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT`
+- `CONTEXT_RUNTIME_ENABLED`
+- `CONTEXT_RUNTIME_SHADOW_MODE`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_ENABLED`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_TTL_MS`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_MAX_BYTES`
 - `DATABASE_URL`
 - `JWT_SECRET`
 - `TOKEN_ISSUER`
@@ -64,6 +69,11 @@ Root `.env.example` is source of truth.
 - `CONNECTOR_RECONCILE_INTERVAL_MS`
 - `CONNECTOR_RECONCILE_LIMIT`
 - `CONNECTOR_SYNC_CONCURRENCY`
+- `CONTEXT_WARMUP_ENABLED`
+- `CONTEXT_WARMUP_CONCURRENCY`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_ENABLED`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_TTL_MS`
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_MAX_BYTES`
 - `TRANSIENT_CIPHERTEXT_MAX_BYTES`
 - `INTELLIGENCE_CHUNK_CHARS`
 - `INTELLIGENCE_CHUNK_CONCURRENCY`
@@ -128,6 +138,11 @@ Root `.env.example` is source of truth.
 - `MEMORY_SEARCH_FALLBACK_LIMIT`: Max recent encrypted memory fragments to inspect when no index shortlist exists. Defaults to `20`.
 - `MEMORY_SEARCH_DECRYPT_CONCURRENCY`: Max concurrent private fragment decrypts during search. Defaults to `3`.
 - `MEMORY_SEARCH_DECRYPT_EVIDENCE_LIMIT`: Max unique evidence fragments to decrypt for one search request. Defaults to `3`; keep low while live Walrus/Seal reads are slow.
+- `CONTEXT_RUNTIME_ENABLED`: Enables the shared private context runtime API and warmup route. Defaults to enabled; set `false` only to disable the new runtime endpoints during rollout.
+- `CONTEXT_RUNTIME_SHADOW_MODE`: Reserved rollout flag for comparing runtime output with older surface-specific retrieval paths before a surface is fully migrated. Defaults to `false`.
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_ENABLED`: Enables Redis read-through caching for encrypted private-memory bytes. Defaults to `true`.
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_TTL_MS`: Redis ciphertext cache TTL. Defaults to `86400000` (24 hours).
+- `PRIVATE_MEMORY_CIPHERTEXT_CACHE_MAX_BYTES`: Largest encrypted blob eligible for Redis ciphertext caching. Defaults to `10485760` (10 MiB). Plaintext is never written to Redis.
 
 ### Database
 
@@ -148,6 +163,8 @@ Root `.env.example` is source of truth.
 - `CONNECTOR_RECONCILE_INTERVAL_MS`: How often the worker scans connected non-manual connector accounts that are due for sync. Defaults to `60000`.
 - `CONNECTOR_RECONCILE_LIMIT`: Max connector accounts scanned per reconciliation pass. Defaults to `25`.
 - `CONNECTOR_SYNC_CONCURRENCY`: Max concurrent connector sync jobs. Defaults to `1`.
+- `CONTEXT_WARMUP_ENABLED`: Enables background context warmup jobs for runtime packets and likely ciphertext reads. Defaults to enabled.
+- `CONTEXT_WARMUP_CONCURRENCY`: Max concurrent context warmup jobs. Defaults to `1`.
 
 ### Connectors
 

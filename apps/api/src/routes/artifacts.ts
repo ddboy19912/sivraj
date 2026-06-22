@@ -14,6 +14,7 @@ import {
   handleArtifactPreview,
   handleArtifactPrivacyCheck,
   handleArtifactRetry,
+  handleArtifactRetryFailed,
   handleArtifactUpload,
 } from "./artifact-handlers.js";
 
@@ -39,6 +40,16 @@ export function createArtifactRoutes(deps: AppDependencies) {
     }
 
     return handleArtifactList(c, deps, gate.value);
+  });
+
+  artifactRoutes.post("/retry-failed", requireAuth, async (c) => {
+    const gate = authorizeTwinRoute(c, "artifact:upload");
+
+    if (!gate.ok) {
+      return gate.response;
+    }
+
+    return handleArtifactRetryFailed(c, deps, gate.value);
   });
 
   artifactRoutes.post("/:artifactId/retry", requireAuth, async (c) => {

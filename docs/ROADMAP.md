@@ -1,234 +1,232 @@
 # Roadmap
 
-## Phase 0: Product Foundation
+This roadmap is the living product direction for Sivraj. It is not a historical implementation checklist; completed foundation work now lives in the codebase and supporting docs.
 
-Goal: Align thesis, scope, and technical direction.
+For deeper context, see [Product Requirements](./PRD.md), [Product Foundation](./PRODUCT_FOUNDATION.md), [Architecture](./ARCHITECTURE.md), [Brain Architecture](./BRAIN_ARCHITECTURE.md), [Intelligence Layer](./INTELLIGENCE.md), [Coding Agent Integrations](./CODING_AGENT_INTEGRATIONS.md), and [Environment Contract](./ENVIRONMENT.md).
 
-- Finalize PRD.
-- Define first target user and demo path.
-- Lock Sivraj/Twin brand language.
-- Choose initial stack.
-- Create architecture plan.
-- Define data model.
-- Define permission model.
+## Current Baseline
 
-Exit criteria:
+Sivraj already has the core web product path in motion:
 
-- Team can start implementation without re-litigating product identity.
+- Wallet-backed user and Twin identity.
+- Onboarding identity profile and self-description memory intake.
+- Encrypted private source storage through the Seal/Walrus path.
+- Artifact upload and processing for user-provided context.
+- Chat over saved memory and uploaded documents.
+- Brain, memory, document, and retrieval hardening for source-grounded answers.
+- Brain view surfaces for inspecting what the Twin knows.
+- Engineering memory groundwork for coding-agent context packets.
+- Audit, processing state, retry, and storage metadata foundations.
 
-## Phase 1: Memory Ingestion Foundation
+The near-term roadmap should therefore focus less on proving that memory ingestion works and more on making Sivraj portable across the places users already work.
 
-Goal: Users can import meaningful context.
+## Product Direction
 
-- Implement account and Twin creation.
-- Implement Sui wallet auth.
-- Define private-memory storage boundary. (done)
-- Integrate Seal encryption for raw private memory.
-- Integrate Walrus storage for encrypted raw memory blobs.
-- Build manual memory entry.
-- Test wallet authentication and manual memory UI against the local API.
-- Deploy Sivraj Seal access-control policy on Sui testnet.
-- Configure live Sui, Walrus, and Seal testnet environment.
-- Run first live encrypted manual memory upload.
-- Add markdown/text upload.
-- Add PDF text extraction ingestion. (done)
-- Add DOCX and CSV ingestion.
-- Add OCR scanned PDF ingestion.
-- Add screenshots/image ingestion.
-- Add audio/voice note ingestion.
-- Add chat export ingestion.
-- Add email export ingestion.
-- Add Slack and WhatsApp export ingestion.
-- Add GitHub source import.
-- Add browser history import.
-- Store raw source metadata and encrypted raw storage refs.
-- Build Redis/BullMQ processing queue. (done)
+Sivraj is becoming a persistent intelligence layer with multiple first-party surfaces:
 
-Exit criteria:
+1. **Web App** - the primary control plane for onboarding, memory, chat, brain inspection, uploads, providers, and permissions.
+2. **Sivraj CLI** - the fastest path for developers, coding agents, repo context, and scripted workflows.
+3. **Desktop App** - an always-available local companion for capture, context, documents, voice, and agent handoff.
+4. **Mobile Companion App** - lightweight memory capture, voice reflection, review, and daily continuity.
 
-- User can import at least 50 artifacts into a Twin without relying on plaintext raw memory storage.
+The web app remains the source of truth for account setup and inspection. The new products should extend that truth, not fork it.
 
-## Phase 1.5: Source Connectors and Recurring Sync
+## Near-Term Priorities
 
-Goal: Keep the Twin current by connecting to the user's active tools.
+### 1. Reliability and Demo Readiness
 
-- Define connector permission and sync model.
-- Add connector account/link records.
-- Add recurring sync jobs.
-- Add connector sync audit events.
-- Add connector status and settings UI.
-- Add Notion connector.
-- Add GitHub recurring repository sync.
-- Add Microsoft Docs/OneDrive connector.
-- Add Google Drive/Docs connector.
-- Add Slack, email, and calendar connectors.
-- Add browser history connector/import.
-- Add Claude and ChatGPT/Codex history imports or connectors where APIs allow.
-- Reprocess changed documents, conversations, commits, and notes into updated memories.
+Goal: make the current web experience hard to break in front of real users.
+
+- Make upload, processing, and retrieval states explicit and retryable.
+- Keep PDF/document answers source-grounded and honest when retrieval is degraded.
+- Ensure onboarding memories, first-meet intro runtime voice state, and identity profile state survive reloads and retries.
+- Improve failed-upload recovery and user-facing notices.
+- Keep Railway/live environment configuration documented and easy to verify.
+- Maintain a polished demo path using private demo scripts kept outside the public repo.
 
 Exit criteria:
 
-- A user can connect at least one external source, perform an initial backfill, receive recurring updates, and see what the sync added or changed.
+- A new account can complete onboarding, upload meaningful files, chat with memory, inspect the brain, and recover gracefully from common live failures.
 
-## Phase 2: Cognitive Graph V1
+### 2. Memory Quality and Brain Trust
 
-Goal: Convert raw data into structured identity context.
+Goal: make Sivraj feel less like a chatbot and more like a reliable memory layer.
 
-- Extract entities.
-- Create project nodes.
-- Create goal nodes.
-- Create people nodes.
-- Create decision nodes.
-- Link memories to graph nodes.
-- Add confidence and source citations.
-- Build graph inspection UI.
+- Improve canonical memory reconciliation so repeated evidence strengthens one durable truth instead of creating duplicates.
+- Make memory correction, deletion, and supersession easy from the Brain view.
+- Distinguish user profile, preferences, engineering context, documents, and general memories in retrieval and inspection.
+- Add clearer confidence language: saved, likely, unclear, not found, temporarily unavailable.
+- Improve document inventory, page/chapter/section structure, and exact-search answers.
+- Expand token-savings and source-evidence visibility where it helps users trust the system.
 
 Exit criteria:
 
-- User can see a useful graph of projects, people, goals, and decisions.
+- Users can ask what Sivraj knows, see why it knows it, correct mistakes, and understand whether a failed answer was caused by missing memory or degraded retrieval.
 
-## Phase 2.1: Sovereign Memory Experience
+## Major Product Tracks
 
-Goal: Make Sivraj's memory feel visible, inspectable, correctable, and meaningfully sovereign.
+### Sivraj CLI
 
-- Build Memory Brain View: a graph and timeline of people, skills, documents, projects, preferences, and remembered facts.
-- Let users click memory nodes to inspect evidence, confidence, source, storage state, and connected memories.
-- Add memory correction and deletion flows from the Brain view.
-- Add Memory Receipts after memory intake, e.g. saved category, confidence, archive state, and whether the turn was private.
-- Show Walrus archive status separately from hot operational memory, e.g. archived, pending archive, retrying, or failed.
-- Add Memory Diff and Corrections: show when Sivraj updates a prior truth, such as changing age, workplace, preference, or project status.
-- Add Memory Confidence language for chat and inspection surfaces: certain, likely, unclear, or not saved.
-- Add Ask Across Your Life mode for broad self-queries such as work patterns, learning history, uploaded documents, recurring themes, and personal context.
-- Add Token Savings Dashboard to show estimated tokens saved by using memory instead of replaying raw history or documents.
-- Add Private Document Navigator for uploaded PDFs/books/docs with document list, pages, sections, summaries, extracted entities, search, and evidence links.
-- Preserve Voice Twin Continuity: same selected Cartesia voice, Twin name, memory, and personality across chat and voice surfaces.
+Goal: make Sivraj useful inside developer and agent workflows without requiring the web app to stay open.
 
-Exit criteria:
+Primary users:
 
-- A user can see what Sivraj knows, why it knows it, correct it, delete it, and understand when memory saved model tokens.
+- Developers.
+- Coding agents.
+- Power users who want scriptable memory workflows.
 
-## Phase 2.5: Voice Conversation Memory
+Core capabilities:
 
-Goal: Let users talk to Sivraj and turn meaningful conversation into Twin updates.
+- Authenticate with a Sivraj account or scoped token.
+- Select a Twin and active project/repo.
+- Fetch engineering context packets for Codex, Claude Code, Cursor, OpenClaw, and custom agents.
+- Render context as Markdown, JSON, or agent-specific prefaces.
+- Search scoped memory from the terminal.
+- Upload local docs, notes, repo instructions, and task summaries.
+- Submit agent writebacks for user review.
+- Inspect source registry, processing state, and failed jobs.
+- Run health checks for API, auth, storage, queue, and provider configuration.
 
-- Add voice recording UX.
-- Add speech-to-text transcription.
-- Extract candidate memories, goals, decisions, preferences, and project updates from conversation.
-- Ask the user to approve or edit extracted updates.
-- Store approved updates through the encrypted Walrus path.
-- Add audit events for voice-derived memory changes.
+Important commands:
 
-Exit criteria:
-
-- A user can talk to Sivraj, approve extracted memories, and later retrieve those memories with citations.
-
-## Phase 3: Retrieval and Context Routing
-
-Goal: Retrieve the right memories for the right AI system.
-
-- Build semantic search.
-- Add recency and authority ranking.
-- Add permission-scoped retrieval.
-- Generate context packets.
-- Add API endpoint for agent context.
-- Add source citations.
+```bash
+sivraj login
+sivraj twins list
+sivraj context codex --repo sivraj --format markdown
+sivraj context claude --repo sivraj --format markdown
+sivraj memory search "deployment pitfalls"
+sivraj upload ./docs/architecture.md --project sivraj
+sivraj writeback create --summary ./task-summary.md
+sivraj doctor
+```
 
 Exit criteria:
 
-- Coding, research, and strategy agents receive different context from the same Twin.
+- A coding agent can start with Sivraj context, complete work, write back what happened, and future sessions can reuse that history without the user repeating themselves.
 
-## Phase 3.5: Coding Agent Memory Layer
+Related docs:
 
-Goal: Make Sivraj the persistent engineering memory layer for Codex, Claude Code, Cursor, and custom coding agents.
+- [Coding Agent Integrations](./CODING_AGENT_INTEGRATIONS.md)
+- [Engineering Intelligence](./ENGINEERING_INTELLIGENCE.md)
+- [API Design](./API.md)
 
-- Build repo/project engineering profiles from instruction files, docs, package configs, GitHub imports, chats, PR notes, and voice conversations.
-- Add Sovereign Context Packet export/API for Codex, Cursor, Claude Code, OpenClaw, and custom agents.
-- Add approved-only coding-agent handoff packets for production use.
-- Add review-mode packets for testing candidate rules.
-- Add a Sivraj MCP server with tools for context, source registry, retrieval, project profile, and writeback.
-- Add local CLI commands for context export and writeback.
-- Add repo fingerprinting so local agents receive the right project profile automatically.
-- Add agent writeback for implementation summaries, commands run, test failures, decisions, recurring bugs, and user corrections.
-- Add user review UI for agent writebacks before they update the Twin.
-- Add stale/conflicting engineering instruction review.
-- Add suggested patches for `AGENTS.md`, `CLAUDE.md`, Cursor rules, and repo docs.
-- Add permission and audit UI for each connected coding agent.
+### Desktop App
 
-Exit criteria:
+Goal: make Sivraj feel like a local memory companion that is always close to the user's work.
 
-- A coding agent can start with Sivraj context, complete a task, write back what happened, and a future coding agent can use that history without the user repeating themselves.
+Primary users:
 
-## Phase 3.6: App Memory Permissions
+- Builders and operators who live across documents, browsers, terminals, meetings, and AI tools.
 
-Goal: Make scoped memory access concrete for every connected app and agent.
+Core capabilities:
 
-- Define app classes and default scopes, such as coding agent, health app, personal assistant, research agent, and strategy agent.
-- Add per-app permission profiles for memory categories, documents, graph nodes, and context packets.
-- Let users grant a coding agent skills, repo conventions, tools, and project context without exposing private life memories.
-- Let users grant a personal assistant schedules, preferences, and relationship context without exposing repo or strategy memories.
-- Add per-app audit logs showing exactly which memories were read, written, exported, or denied.
-- Add revoke, pause, and expire controls for every app connection.
+- Local app shell for chat, brain inspection, uploads, and provider settings.
+- Quick capture for notes, files, screenshots, links, and voice snippets.
+- Local document drop zone with processing status and retry UX.
+- Global command palette for memory search and context copy.
+- Repo/project awareness for coding-agent workflows.
+- Desktop notifications for processing failures, review queues, and reflection prompts.
+- Safe handoff into the web account and API permission model.
+
+Design requirements:
+
+- The desktop app should feel like a quiet control surface, not a marketing wrapper.
+- It should make capture and recall faster than opening a browser tab.
+- It must respect the same encryption, permission, and audit boundaries as the web app.
 
 Exit criteria:
 
-- A user can connect an app, grant scoped memory access, inspect every access, and revoke it without deleting the underlying Twin memory.
+- A user can capture context from their daily work, search their Twin, and hand context to an agent without leaving the desktop flow.
 
-## Phase 4: Synthesis Engine
+### Mobile Companion App
 
-Goal: Turn memory into strategic intelligence.
+Goal: make memory capture and reflection available when the user is away from their desk.
 
-- Build pattern detection prompts.
-- Generate recurring bottleneck analysis.
-- Generate project drift analysis.
-- Generate weekly founder reflection.
-- Track insight evidence.
-- Add user feedback on insight quality.
+Primary users:
 
-Exit criteria:
+- Operators, founders, consultants, researchers, and creators who think on the move.
 
-- User receives at least one non-obvious, high-value personal insight.
+Core capabilities:
 
-## Phase 5: Sovereign Access Control
+- Voice-first memory capture.
+- Quick text notes and lightweight uploads.
+- Daily review of candidate memories.
+- Approve, edit, or reject extracted memories.
+- Ask quick questions from the Twin.
+- Review recent insights, reminders, and unresolved memory conflicts.
+- Push notifications for reflection prompts and review queues.
 
-Goal: Users own and control memory access.
-
-- Define access scopes.
-- Add per-memory policies.
-- Add agent authorization.
-- Add audit log.
-- Add permission management UI.
+Mobile should not try to replicate the full web app. It should focus on capture, review, and continuity.
 
 Exit criteria:
 
-- User can grant and revoke scoped memory access for agent classes.
+- A user can record an important thought, approve the extracted memory, and later retrieve it from web, desktop, CLI, or chat.
 
-## Phase 6: Web3 Persistence
+## Platform and Intelligence Roadmap
 
-Goal: Make Sivraj portable, verifiable, and sovereign.
+These capabilities support all first-party products.
 
-- Add identity state snapshots.
-- Add portable export.
-- Add verifiable memory references.
-- Future, not current priority: design scalable gas and storage payment management so private memory writes do not rely forever on one subsidized server wallet. Evaluate user-paid Walrus writes, prepaid credits, quotas/free tiers, bring-your-own storage wallet, and sponsored onboarding limits.
+### Connectors and Recurring Sync
 
-Exit criteria:
-
-- User can prove and port long-term identity state across systems.
-
-## Phase 7: Operator Intelligence Product
-
-Goal: Package the strongest wedge into paid workflows for high-leverage independent operators.
-
-- Build independent-operator dashboard.
-- Add recovered expertise and reusable-framework flows.
-- Add client/project context tracking.
-- Add founder-specific dashboard views.
-- Add investor conversation tracking.
-- Add roadmap and execution bottleneck synthesis.
-- Add weekly chief-of-staff report.
-- Add decision memory.
-- Add strategic focus recommendations.
+- GitHub source and repo sync.
+- Google Drive/Docs and Microsoft OneDrive/Docs.
+- Notion.
+- Slack, email, and calendar.
+- Browser history/import where permissioned.
+- ChatGPT, Claude, and Codex history imports where APIs or exports allow.
 
 Exit criteria:
 
-- Independent operators convert to Pro after reaching the activation moment, and founder/operator users show willingness to pay for premium intelligence workflows.
+- A user can connect at least one external source, backfill it, receive recurring updates, and inspect what changed.
+
+### App Memory Permissions
+
+- Per-app permission profiles.
+- Scoped memory categories and document access.
+- Purpose-bound agent tokens.
+- Audit logs for reads, writes, exports, and denied access.
+- Revoke, pause, and expiry controls.
+
+Exit criteria:
+
+- Users can give a coding agent engineering context without exposing private life memories, and can audit every access.
+
+### Synthesis and Reflection
+
+- Weekly founder/operator reflections.
+- Project drift and bottleneck detection.
+- Decision memory and contradiction review.
+- Pattern detection across documents, chats, voice, and work history.
+- User feedback loop on insight quality.
+
+Exit criteria:
+
+- Sivraj produces source-backed insights that users would pay to receive because they are specific to their own history.
+
+### Portability and Sovereignty
+
+- Portable Twin export.
+- Verifiable memory references.
+- Durable identity snapshots.
+- Storage funding and quota model that does not rely permanently on one subsidized server wallet.
+- Bring-your-own storage wallet or prepaid storage credits where appropriate.
+
+Exit criteria:
+
+- Users can understand, verify, export, and control the long-term state of their Twin.
+
+## What Is No Longer Roadmap
+
+These are no longer useful as roadmap items because they are already part of the product foundation or implementation baseline:
+
+- Basic product thesis and brand definition.
+- Initial architecture and data model direction.
+- Wallet-backed account/Twin creation.
+- Encrypted private source storage boundary.
+- Manual/onboarding memory intake.
+- Basic upload and processing pipeline.
+- Basic chat retrieval over saved memory.
+- Queue-backed artifact processing.
+- Initial Brain and document retrieval architecture.
+
+Future roadmap items should describe product outcomes and durable capabilities, not repeat low-level setup tasks that have already been absorbed into the platform.

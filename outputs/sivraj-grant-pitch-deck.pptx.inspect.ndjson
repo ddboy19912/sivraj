@@ -1,0 +1,190 @@
+{"kind":"deck","id":"pr/awuspf","name":"Deck"}
+{"kind":"layout","layoutId":"f028409d-98ff-4136-8621-81c37fe01a47","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"6d3dd66e-4c8d-47f0-9eae-b7c8abb24c8e","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/w9groa","slide":1,"title":"Sivraj","textShapes":10}
+{"kind":"textbox","id":"sh/d8bat47y","slide":1,"text":"Sivraj","textPreview":"Sivraj","textChars":6,"textLines":1,"bbox":[74,120,760,84]}
+{"kind":"textbox","id":"sh/2lszqtcj","slide":1,"text":"A sovereign AI Twin for persistent, private intelligence","textPreview":"A sovereign AI Twin for persistent, private intelligence","textChars":56,"textLines":1,"bbox":[78,220,760,72]}
+{"kind":"textbox","id":"sh/v6psfil0","slide":1,"text":"Sivraj builds and protects a user-owned memory layer that helps AI systems understand people with permission.","textPreview":"Sivraj builds and protects a user-owned memory layer that helps AI systems understand people with permission.","textChars":109,"textLines":1,"bbox":[80,330,660,96]}
+{"kind":"shape","id":"sh/kf6dcbul","slide":1,"bbox":[838,108,330,452]}
+{"kind":"textbox","id":"sh/d0z61032","slide":1,"text":"Your Twin","textPreview":"Your Twin","textChars":9,"textLines":1,"bbox":[880,150,240,44]}
+{"kind":"shape","id":"sh/29gr2p8n","slide":1,"bbox":[878,230,246,42]}
+{"kind":"textbox","id":"sh/vu9knih4","slide":1,"text":"Memory","textPreview":"Memory","textChars":6,"textLines":1,"bbox":[894,240,214,22]}
+{"kind":"shape","id":"sh/k3q5o7qp","slide":1,"bbox":[878,288,246,42]}
+{"kind":"textbox","id":"sh/donyd0z6","slide":1,"text":"Graph","textPreview":"Graph","textChars":5,"textLines":1,"bbox":[894,298,214,22]}
+{"kind":"shape","id":"sh/p0bi9s36","slide":1,"bbox":[878,346,246,42]}
+{"kind":"textbox","id":"sh/0fepkzup","slide":1,"text":"Permissions","textPreview":"Permissions","textChars":11,"textLines":1,"bbox":[894,356,214,22]}
+{"kind":"shape","id":"sh/bulwval8","slide":1,"bbox":[878,404,246,42]}
+{"kind":"textbox","id":"sh/i9s36hcr","slide":1,"text":"Context API","textPreview":"Context API","textChars":11,"textLines":1,"bbox":[894,414,214,22]}
+{"kind":"shape","id":"sh/tovahoza","slide":1,"bbox":[878,462,246,42]}
+{"kind":"textbox","id":"sh/032lszqt","slide":1,"text":"Synthesis","textPreview":"Synthesis","textChars":9,"textLines":1,"bbox":[894,472,214,22]}
+{"kind":"textbox","id":"sh/bi9s36hc","slide":1,"text":"Grant pitch deck","textPreview":"Grant pitch deck","textChars":16,"textLines":1,"bbox":[80,620,320,28]}
+{"kind":"notes","id":"nt/w9groa","slide":1,"text":""}
+{"kind":"slide","id":"sl/ji8avz","slide":2,"title":"SIVRAJ","textShapes":14}
+{"kind":"textbox","id":"sh/cvixczed","slide":2,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/nap4r65w","slide":2,"text":"AI is powerful, but it does not remember the human","textPreview":"AI is powerful, but it does not remember the human","textChars":50,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"textbox","id":"sh/upwb2hwf","slide":2,"text":"Every model starts from a partial view. Useful context is scattered across apps, chats, files, repositories, calendars, and memory exports.","textPreview":"Every model starts from a partial view. Useful context is scattered across apps, chats, files, repositories, calendars, and memory exports.","textChars":139,"textLines":1,"bbox":[72,192,780,64]}
+{"kind":"shape","id":"sh/54zidony","slide":2,"bbox":[72,320,336,170]}
+{"kind":"shape","id":"sh/cj6tovah","slide":2,"bbox":[72,320,8,170]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":2,"text":"Fragmented","textPreview":"Fragmented","textChars":10,"textLines":1,"bbox":[100,344,270,28]}
+{"kind":"textbox","id":"sh/udg7adsj","slide":2,"text":"Context lives in silos","textPreview":"Context lives in silos","textChars":22,"textLines":1,"bbox":[100,378,280,40]}
+{"kind":"textbox","id":"sh/1032lszq","slide":2,"text":"ChatGPT, Claude, Cursor, docs, email, and repos each learn a different version of the user.","textPreview":"ChatGPT, Claude, Cursor, docs, email, and repos each learn a different version of the user.","textChars":91,"textLines":1,"bbox":[100,426,270,44]}
+{"kind":"shape","id":"sh/cfa9w3m9","slide":2,"bbox":[472,320,336,170]}
+{"kind":"shape","id":"sh/25kb6xkf","slide":2,"bbox":[472,320,8,170]}
+{"kind":"textbox","id":"sh/rqd4vmtw","slide":2,"text":"Ephemeral","textPreview":"Ephemeral","textChars":9,"textLines":1,"bbox":[500,344,270,28]}
+{"kind":"textbox","id":"sh/kb6xkf6d","slide":2,"text":"Sessions reset","textPreview":"Sessions reset","textChars":14,"textLines":1,"bbox":[500,378,280,40]}
+{"kind":"textbox","id":"sh/9w3m94fu","slide":2,"text":"Users repeatedly re-explain goals, preferences, history, constraints, and prior decisions.","textPreview":"Users repeatedly re-explain goals, preferences, history, constraints, and prior decisions.","textChars":90,"textLines":1,"bbox":[500,426,270,44]}
+{"kind":"shape","id":"sh/2t83itgf","slide":2,"bbox":[872,320,336,170]}
+{"kind":"shape","id":"sh/re1w7mp0","slide":2,"bbox":[872,320,8,170]}
+{"kind":"textbox","id":"sh/kzupwb2h","slide":2,"text":"Unowned","textPreview":"Unowned","textChars":7,"textLines":1,"bbox":[900,344,270,28]}
+{"kind":"textbox","id":"sh/9knih4by","slide":2,"text":"Memory is platform-bound","textPreview":"Memory is platform-bound","textChars":24,"textLines":1,"bbox":[900,378,280,40]}
+{"kind":"textbox","id":"sh/2p8nqxs7","slide":2,"text":"Personal intelligence is trapped inside vendor-specific systems without portable control.","textPreview":"Personal intelligence is trapped inside vendor-specific systems without portable control.","textChars":89,"textLines":1,"bbox":[900,426,270,44]}
+{"kind":"textbox","id":"sh/ra5gbq1o","slide":2,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/ji8avz","slide":2,"text":""}
+{"kind":"slide","id":"sl/2y39jg","slide":3,"title":"SIVRAJ","textShapes":12}
+{"kind":"textbox","id":"sh/8v6psfil","slide":3,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/fa9w3m94","slide":3,"text":"Limitations of current AI models","textPreview":"Limitations of current AI models","textChars":32,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"shape","id":"sh/qpg3ex0n","slide":3,"bbox":[90,218,9,9]}
+{"kind":"textbox","id":"sh/x4nap4r6","slide":3,"text":"Limited continuity: models rarely carry a durable understanding across tools and sessions.","textPreview":"Limited continuity: models rarely carry a durable understanding across tools and sessions.","textChars":90,"textLines":1,"bbox":[114,210,476,70]}
+{"kind":"shape","id":"sh/8jqh0fep","slide":3,"bbox":[90,292,9,9]}
+{"kind":"textbox","id":"sh/fyxobm58","slide":3,"text":"Context-window dependence: users must paste, summarize, or re-upload history to get useful answers.","textPreview":"Context-window dependence: users must paste, summarize, or re-upload history to get useful answers.","textChars":99,"textLines":1,"bbox":[114,284,476,70]}
+{"kind":"shape","id":"sh/qd4vmtwr","slide":3,"bbox":[90,366,9,9]}
+{"kind":"textbox","id":"sh/xs72x4na","slide":3,"text":"Weak provenance: outputs often lack source-backed memory, timestamps, and confidence.","textPreview":"Weak provenance: outputs often lack source-backed memory, timestamps, and confidence.","textChars":85,"textLines":1,"bbox":[114,358,476,70]}
+{"kind":"shape","id":"sh/87ed8bat","slide":3,"bbox":[90,440,9,9]}
+{"kind":"textbox","id":"sh/ed8v6psf","slide":3,"text":"Blunt personalization: assistants infer preferences from recent conversation instead of a governed identity graph.","textPreview":"Blunt personalization: assistants infer preferences from recent conversation instead of a governed identity graph.","textChars":114,"textLines":1,"bbox":[114,432,476,70]}
+{"kind":"shape","id":"sh/7y1kre1w","slide":3,"bbox":[680,218,9,9]}
+{"kind":"textbox","id":"sh/wjudg7ad","slide":3,"text":"Privacy tradeoff: richer personalization often requires giving one platform more raw data.","textPreview":"Privacy tradeoff: richer personalization often requires giving one platform more raw data.","textChars":90,"textLines":1,"bbox":[704,210,476,70]}
+{"kind":"shape","id":"sh/p4r65wju","slide":3,"bbox":[680,292,9,9]}
+{"kind":"textbox","id":"sh/i5sneloj","slide":3,"text":"No shared user layer: each AI app builds its own isolated memory and permission model.","textPreview":"No shared user layer: each AI app builds its own isolated memory and permission model.","textChars":86,"textLines":1,"bbox":[704,284,476,70]}
+{"kind":"shape","id":"sh/7qpg3ex0","slide":3,"bbox":[680,366,9,9]}
+{"kind":"textbox","id":"sh/0bi9s36h","slide":3,"text":"Poor correction loop: users cannot easily inspect, revise, or revoke what the model remembers.","textPreview":"Poor correction loop: users cannot easily inspect, revise, or revoke what the model remembers.","textChars":94,"textLines":1,"bbox":[704,358,476,70]}
+{"kind":"shape","id":"sh/pwb2hwfy","slide":3,"bbox":[680,440,9,9]}
+{"kind":"textbox","id":"sh/itgfmlkj","slide":3,"text":"No least-privilege routing: different agents cannot receive exactly the context they need and nothing more.","textPreview":"No least-privilege routing: different agents cannot receive exactly the context they need and nothing more.","textChars":107,"textLines":1,"bbox":[704,432,476,70]}
+{"kind":"textbox","id":"sh/7ed8bat4","slide":3,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/jqh0fepk","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/2y39jg","slide":3,"text":""}
+{"kind":"slide","id":"sl/z93nmc","slide":4,"title":"SIVRAJ","textShapes":14}
+{"kind":"textbox","id":"sh/m58z25kb","slide":4,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":4,"text":"Sivraj creates the missing user-owned intelligence layer","textPreview":"Sivraj creates the missing user-owned intelligence layer","textChars":56,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"textbox","id":"sh/4byhgn29","slide":4,"text":"The Twin is a living, permissioned context layer built from the user’s memories, files, decisions, projects, preferences, and goals.","textPreview":"The Twin is a living, permissioned context layer built from the user’s memories, files, decisions, projects, preferences, and goals.","textChars":132,"textLines":1,"bbox":[72,190,840,70]}
+{"kind":"shape","id":"sh/b2hwfyxo","slide":4,"bbox":[72,310,336,170]}
+{"kind":"shape","id":"sh/mhk3q5o7","slide":4,"bbox":[72,310,8,170]}
+{"kind":"textbox","id":"sh/t83itgfm","slide":4,"text":"Ingest","textPreview":"Ingest","textChars":6,"textLines":1,"bbox":[100,334,270,28]}
+{"kind":"textbox","id":"sh/4nap4r65","slide":4,"text":"Bring context in","textPreview":"Bring context in","textChars":16,"textLines":1,"bbox":[100,368,280,40]}
+{"kind":"textbox","id":"sh/bat47y1k","slide":4,"text":"Documents, chats, PDFs, GitHub, voice notes, emails, screenshots, and manual memories.","textPreview":"Documents, chats, PDFs, GitHub, voice notes, emails, screenshots, and manual memories.","textChars":86,"textLines":1,"bbox":[100,416,270,44]}
+{"kind":"shape","id":"sh/mp0bi9s3","slide":4,"bbox":[472,310,336,170]}
+{"kind":"shape","id":"sh/4byhgn29","slide":4,"bbox":[472,310,8,170]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":4,"text":"Understand","textPreview":"Understand","textChars":10,"textLines":1,"bbox":[500,334,270,28]}
+{"kind":"textbox","id":"sh/m58z25kb","slide":4,"text":"Build a cognitive graph","textPreview":"Build a cognitive graph","textChars":23,"textLines":1,"bbox":[500,368,280,40]}
+{"kind":"textbox","id":"sh/bq1oryts","slide":4,"text":"People, goals, projects, decisions, preferences, expertise, and recurring patterns.","textPreview":"People, goals, projects, decisions, preferences, expertise, and recurring patterns.","textChars":83,"textLines":1,"bbox":[500,416,270,44]}
+{"kind":"shape","id":"sh/4nap4r65","slide":4,"bbox":[872,310,336,170]}
+{"kind":"shape","id":"sh/t83itgfm","slide":4,"bbox":[872,310,8,170]}
+{"kind":"textbox","id":"sh/mhk3q5o7","slide":4,"text":"Route","textPreview":"Route","textChars":5,"textLines":1,"bbox":[900,334,270,28]}
+{"kind":"textbox","id":"sh/b2hwfyxo","slide":4,"text":"Share with permission","textPreview":"Share with permission","textChars":21,"textLines":1,"bbox":[900,368,280,40]}
+{"kind":"textbox","id":"sh/4vmtwra5","slide":4,"text":"Context packets give approved AI systems the right memories with citations and scope.","textPreview":"Context packets give approved AI systems the right memories with citations and scope.","textChars":85,"textLines":1,"bbox":[900,416,270,44]}
+{"kind":"textbox","id":"sh/tgfmlkjm","slide":4,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/xc3ylc7u","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/z93nmc","slide":4,"text":""}
+{"kind":"slide","id":"sl/nqevdi","slide":5,"title":"SIVRAJ","textShapes":19}
+{"kind":"textbox","id":"sh/loj2t83i","slide":5,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/ex0nuxc3","slide":5,"text":"How the system works","textPreview":"How the system works","textChars":20,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"shape","id":"sh/3itgfmlk","slide":5,"bbox":[70,260,190,158]}
+{"kind":"textbox","id":"sh/wb2hwfyx","slide":5,"text":"Sources","textPreview":"Sources","textChars":7,"textLines":1,"bbox":[88,288,154,28]}
+{"kind":"textbox","id":"sh/lwval87e","slide":5,"text":"Docs, chats, repos, voice, email","textPreview":"Docs, chats, repos, voice, email","textChars":32,"textLines":1,"bbox":[88,330,154,58]}
+{"kind":"textbox","id":"sh/e9cvixcz","slide":5,"text":"->","textPreview":"->","textChars":2,"textLines":1,"bbox":[268,318,38,40]}
+{"kind":"shape","id":"sh/3q5o7qpg","slide":5,"bbox":[308,260,190,158]}
+{"kind":"textbox","id":"sh/sneloj2t","slide":5,"text":"Encrypted storage","textPreview":"Encrypted storage","textChars":17,"textLines":1,"bbox":[326,288,154,28]}
+{"kind":"textbox","id":"sh/l87ed8ba","slide":5,"text":"Raw private memory stored as ciphertext","textPreview":"Raw private memory stored as ciphertext","textChars":39,"textLines":1,"bbox":[326,330,154,58]}
+{"kind":"textbox","id":"sh/5kb6xkf6","slide":5,"text":"->","textPreview":"->","textChars":2,"textLines":1,"bbox":[506,318,38,40]}
+{"kind":"shape","id":"sh/czed8v6p","slide":5,"bbox":[546,260,190,158]}
+{"kind":"textbox","id":"sh/neloj2t8","slide":5,"text":"Processing","textPreview":"Processing","textChars":10,"textLines":1,"bbox":[564,288,154,28]}
+{"kind":"textbox","id":"sh/ytsvu9kn","slide":5,"text":"Chunks, entities, summaries, embeddings","textPreview":"Chunks, entities, summaries, embeddings","textChars":39,"textLines":1,"bbox":[564,330,154,58]}
+{"kind":"textbox","id":"sh/5sneloj2","slide":5,"text":"->","textPreview":"->","textChars":2,"textLines":1,"bbox":[744,318,38,40]}
+{"kind":"shape","id":"sh/cbulwval","slide":5,"bbox":[784,260,190,158]}
+{"kind":"textbox","id":"sh/nqxs72x4","slide":5,"text":"Cognitive graph","textPreview":"Cognitive graph","textChars":15,"textLines":1,"bbox":[802,288,154,28]}
+{"kind":"textbox","id":"sh/u54zidon","slide":5,"text":"People, goals, projects, decisions","textPreview":"People, goals, projects, decisions","textChars":34,"textLines":1,"bbox":[802,330,154,58]}
+{"kind":"textbox","id":"sh/5wjudg7a","slide":5,"text":"->","textPreview":"->","textChars":2,"textLines":1,"bbox":[982,318,38,40]}
+{"kind":"shape","id":"sh/gbq1oryt","slide":5,"bbox":[1022,260,190,158]}
+{"kind":"textbox","id":"sh/cj6tovah","slide":5,"text":"Context router","textPreview":"Context router","textChars":14,"textLines":1,"bbox":[1040,288,154,28]}
+{"kind":"textbox","id":"sh/54zidony","slide":5,"text":"Least-privilege packets for AI apps","textPreview":"Least-privilege packets for AI apps","textChars":35,"textLines":1,"bbox":[1040,330,154,58]}
+{"kind":"textbox","id":"sh/udg7adsj","slide":5,"text":"Output: source-backed context that can travel across models, agents, and apps without exposing unrelated private data.","textPreview":"Output: source-backed context that can travel across models, agents, and apps without exposing unrelated private data.","textChars":118,"textLines":1,"bbox":[170,500,940,54]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":5,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/cvixczed","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/nqevdi","slide":5,"text":""}
+{"kind":"slide","id":"sl/yohdet","slide":6,"title":"SIVRAJ","textShapes":8}
+{"kind":"textbox","id":"sh/xczed8v6","slide":6,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/qpg3ex0n","slide":6,"text":"First wedge: high-leverage independent operators","textPreview":"First wedge: high-leverage independent operators","textChars":48,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"textbox","id":"sh/fa9w3m94","slide":6,"text":"Consultants, founders, solo builders, researchers, creators, and expert knowledge workers gain leverage when their context compounds instead of resetting.","textPreview":"Consultants, founders, solo builders, researchers, creators, and expert knowledge workers gain leverage when their context compounds inst...","textChars":154,"textLines":1,"bbox":[72,190,860,74]}
+{"kind":"shape","id":"sh/8jqh0fep","slide":6,"bbox":[96,325,1088,190]}
+{"kind":"textbox","id":"sh/x4nap4r6","slide":6,"text":"Activation moment","textPreview":"Activation moment","textChars":17,"textLines":1,"bbox":[140,356,260,32]}
+{"kind":"textbox","id":"sh/qd4vmtwr","slide":6,"text":"The user asks a real work question and Sivraj returns a specific, source-backed insight from their own past that they forgot they knew.","textPreview":"The user asks a real work question and Sivraj returns a specific, source-backed insight from their own past that they forgot they knew.","textChars":135,"textLines":1,"bbox":[140,404,960,66]}
+{"kind":"textbox","id":"sh/fyxobm58","slide":6,"text":"Example: “In March 2024 you solved a similar positioning problem. Here is the framework and source document.”","textPreview":"Example: “In March 2024 you solved a similar positioning problem. Here is the framework and source document.”","textChars":109,"textLines":1,"bbox":[140,485,940,40]}
+{"kind":"textbox","id":"sh/87ed8bat","slide":6,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/xs72x4na","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/yohdet","slide":6,"text":""}
+{"kind":"slide","id":"sl/7792sw","slide":7,"title":"SIVRAJ","textShapes":16}
+{"kind":"textbox","id":"sh/val87ed8","slide":7,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/kre1w7mp","slide":7,"text":"Real-world use cases","textPreview":"Real-world use cases","textChars":20,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"shape","id":"sh/dcbulwva","slide":7,"bbox":[80,198,500,104]}
+{"kind":"textbox","id":"sh/2x4nap4r","slide":7,"text":"Consultant memory","textPreview":"Consultant memory","textChars":17,"textLines":1,"bbox":[104,218,430,28]}
+{"kind":"textbox","id":"sh/vixczed8","slide":7,"text":"Recover prior proposals, frameworks, research, and client insights.","textPreview":"Recover prior proposals, frameworks, research, and client insights.","textChars":67,"textLines":1,"bbox":[104,254,430,38]}
+{"kind":"shape","id":"sh/k3q5o7qp","slide":7,"bbox":[660,198,500,104]}
+{"kind":"textbox","id":"sh/donyd0z6","slide":7,"text":"Founder OS","textPreview":"Founder OS","textChars":10,"textLines":1,"bbox":[684,218,430,28]}
+{"kind":"textbox","id":"sh/29gr2p8n","slide":7,"text":"Track strategy, fundraising, hiring, product decisions, and investor conversations.","textPreview":"Track strategy, fundraising, hiring, product decisions, and investor conversations.","textChars":83,"textLines":1,"bbox":[684,254,430,38]}
+{"kind":"shape","id":"sh/vu9knih4","slide":7,"bbox":[80,336,500,104]}
+{"kind":"textbox","id":"sh/3ylc7u54","slide":7,"text":"Coding agent context","textPreview":"Coding agent context","textChars":20,"textLines":1,"bbox":[104,356,430,28]}
+{"kind":"textbox","id":"sh/adsji5sn","slide":7,"text":"Give Codex, Cursor, or Claude project conventions, bug history, and repo memory.","textPreview":"Give Codex, Cursor, or Claude project conventions, bug history, and repo memory.","textChars":80,"textLines":1,"bbox":[104,392,430,38]}
+{"kind":"shape","id":"sh/h4byhgn2","slide":7,"bbox":[660,336,500,104]}
+{"kind":"textbox","id":"sh/sji5snel","slide":7,"text":"Research companion","textPreview":"Research companion","textChars":18,"textLines":1,"bbox":[684,356,430,28]}
+{"kind":"textbox","id":"sh/3m94fu18","slide":7,"text":"Connect notes, papers, drafts, and sources into reusable long-term context.","textPreview":"Connect notes, papers, drafts, and sources into reusable long-term context.","textChars":75,"textLines":1,"bbox":[684,392,430,38]}
+{"kind":"shape","id":"sh/a5gbq1or","slide":7,"bbox":[80,474,500,104]}
+{"kind":"textbox","id":"sh/lszqtcj6","slide":7,"text":"Creator archive","textPreview":"Creator archive","textChars":15,"textLines":1,"bbox":[104,494,430,28]}
+{"kind":"textbox","id":"sh/s72x4nap","slide":7,"text":"Turn scripts, posts, comments, and ideas into a searchable creative memory.","textPreview":"Turn scripts, posts, comments, and ideas into a searchable creative memory.","textChars":75,"textLines":1,"bbox":[104,530,430,38]}
+{"kind":"shape","id":"sh/zidonyd0","slide":7,"bbox":[660,474,500,104]}
+{"kind":"textbox","id":"sh/a1gvy90j","slide":7,"text":"Personal assistant","textPreview":"Personal assistant","textChars":18,"textLines":1,"bbox":[684,494,430,28]}
+{"kind":"textbox","id":"sh/ylc7u54z","slide":7,"text":"Route schedules, preferences, relationships, and goals without exposing work data.","textPreview":"Route schedules, preferences, relationships, and goals without exposing work data.","textChars":82,"textLines":1,"bbox":[684,530,430,38]}
+{"kind":"textbox","id":"sh/r65wjudg","slide":7,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/gr2p8nqx","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/7792sw","slide":7,"text":""}
+{"kind":"slide","id":"sl/4hp040","slide":8,"title":"SIVRAJ","textShapes":11}
+{"kind":"textbox","id":"sh/2t83itgf","slide":8,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/9knih4by","slide":8,"text":"Trust architecture: private by design, useful by permission","textPreview":"Trust architecture: private by design, useful by permission","textChars":59,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"shape","id":"sh/kzupwb2h","slide":8,"bbox":[96,228,9,9]}
+{"kind":"textbox","id":"sh/rqd4vmtw","slide":8,"text":"Private raw memory is encrypted before durable storage.","textPreview":"Private raw memory is encrypted before durable storage.","textChars":55,"textLines":1,"bbox":[120,220,626,62]}
+{"kind":"shape","id":"sh/25kb6xkf","slide":8,"bbox":[96,294,9,9]}
+{"kind":"textbox","id":"sh/9w3m94fu","slide":8,"text":"Walrus-backed references support portable, durable memory storage.","textPreview":"Walrus-backed references support portable, durable memory storage.","textChars":66,"textLines":1,"bbox":[120,286,626,62]}
+{"kind":"shape","id":"sh/kb6xkf6d","slide":8,"bbox":[96,360,9,9]}
+{"kind":"textbox","id":"sh/r2p8nqxs","slide":8,"text":"Sui identity and Seal policy anchor user ownership and scoped access.","textPreview":"Sui identity and Seal policy anchor user ownership and scoped access.","textChars":69,"textLines":1,"bbox":[120,352,626,62]}
+{"kind":"shape","id":"sh/2hwfyxob","slide":8,"bbox":[96,426,9,9]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":8,"text":"Postgres stores metadata, processing state, audit records, and graph/index records.","textPreview":"Postgres stores metadata, processing state, audit records, and graph/index records.","textChars":83,"textLines":1,"bbox":[120,418,626,62]}
+{"kind":"shape","id":"sh/1cfa9w3m","slide":8,"bbox":[96,492,9,9]}
+{"kind":"textbox","id":"sh/ulwval87","slide":8,"text":"Every context packet is permission-scoped and should include citations, confidence, and expiration policy.","textPreview":"Every context packet is permission-scoped and should include citations, confidence, and expiration policy.","textChars":106,"textLines":1,"bbox":[120,484,626,62]}
+{"kind":"shape","id":"sh/j6tovaho","slide":8,"bbox":[820,290,330,150]}
+{"kind":"textbox","id":"sh/c3ylc7u5","slide":8,"text":"Principle","textPreview":"Principle","textChars":9,"textLines":1,"bbox":[852,326,120,24]}
+{"kind":"textbox","id":"sh/1kre1w7m","slide":8,"text":"The Twin remembers without becoming another data silo.","textPreview":"The Twin remembers without becoming another data silo.","textChars":54,"textLines":1,"bbox":[852,360,250,54]}
+{"kind":"textbox","id":"sh/uxc3ylc7","slide":8,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/ji5snelo","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/4hp040","slide":8,"text":""}
+{"kind":"slide","id":"sl/7o446v","slide":9,"title":"SIVRAJ","textShapes":15}
+{"kind":"textbox","id":"sh/gn29gr2p","slide":9,"text":"SIVRAJ","textPreview":"SIVRAJ","textChars":6,"textLines":1,"bbox":[72,44,320,24]}
+{"kind":"textbox","id":"sh/n29gr2p8","slide":9,"text":"Grant funding accelerates the sovereign memory layer","textPreview":"Grant funding accelerates the sovereign memory layer","textChars":52,"textLines":1,"bbox":[72,88,880,92]}
+{"kind":"textbox","id":"sh/yhgn29gr","slide":9,"text":"The grant supports the path from prototype to a working, permissioned AI memory platform that users can inspect, correct, and safely connect to agents.","textPreview":"The grant supports the path from prototype to a working, permissioned AI memory platform that users can inspect, correct, and safely conn...","textChars":151,"textLines":1,"bbox":[72,186,900,70]}
+{"kind":"shape","id":"sh/5wjudg7a","slide":9,"bbox":[72,324,336,170]}
+{"kind":"shape","id":"sh/gbq1oryt","slide":9,"bbox":[72,324,8,170]}
+{"kind":"textbox","id":"sh/nuxc3ylc","slide":9,"text":"Milestone 1","textPreview":"Milestone 1","textChars":11,"textLines":1,"bbox":[100,348,270,28]}
+{"kind":"textbox","id":"sh/y90je9cv","slide":9,"text":"Ingestion foundation","textPreview":"Ingestion foundation","textChars":20,"textLines":1,"bbox":[100,382,280,40]}
+{"kind":"textbox","id":"sh/5sneloj2","slide":9,"text":"Wallet/Twin creation, encrypted memory intake, PDF/DOCX/chat/GitHub imports.","textPreview":"Wallet/Twin creation, encrypted memory intake, PDF/DOCX/chat/GitHub imports.","textChars":76,"textLines":1,"bbox":[100,430,270,44]}
+{"kind":"shape","id":"sh/cbulwval","slide":9,"bbox":[472,324,336,170]}
+{"kind":"shape","id":"sh/e9cvixcz","slide":9,"bbox":[472,324,8,170]}
+{"kind":"textbox","id":"sh/3q5o7qpg","slide":9,"text":"Milestone 2","textPreview":"Milestone 2","textChars":11,"textLines":1,"bbox":[500,348,270,28]}
+{"kind":"textbox","id":"sh/wb2hwfyx","slide":9,"text":"Cognitive graph V1","textPreview":"Cognitive graph V1","textChars":18,"textLines":1,"bbox":[500,382,280,40]}
+{"kind":"textbox","id":"sh/lwval87e","slide":9,"text":"Source-backed people, projects, goals, decisions, preferences, and confidence.","textPreview":"Source-backed people, projects, goals, decisions, preferences, and confidence.","textChars":78,"textLines":1,"bbox":[500,430,270,44]}
+{"kind":"shape","id":"sh/ex0nuxc3","slide":9,"bbox":[872,324,336,170]}
+{"kind":"shape","id":"sh/3itgfmlk","slide":9,"bbox":[872,324,8,170]}
+{"kind":"textbox","id":"sh/w3m94fu1","slide":9,"text":"Milestone 3","textPreview":"Milestone 3","textChars":11,"textLines":1,"bbox":[900,348,270,28]}
+{"kind":"textbox","id":"sh/loj2t83i","slide":9,"text":"Context API","textPreview":"Context API","textChars":11,"textLines":1,"bbox":[900,382,280,40]}
+{"kind":"textbox","id":"sh/at47y1kr","slide":9,"text":"Permissioned context packets for AI agents, apps, and coding workflows.","textPreview":"Permissioned context packets for AI agents, apps, and coding workflows.","textChars":71,"textLines":1,"bbox":[900,430,270,44]}
+{"kind":"textbox","id":"sh/3ex0nuxc","slide":9,"text":"Outcome: users own an intelligence layer that compounds across models instead of resetting with each tool.","textPreview":"Outcome: users own an intelligence layer that compounds across models instead of resetting with each tool.","textChars":106,"textLines":1,"bbox":[160,562,960,40]}
+{"kind":"textbox","id":"sh/z25kb6xk","slide":9,"text":"Your memory. Your intelligence. Yours.","textPreview":"Your memory. Your intelligence. Yours.","textChars":38,"textLines":1,"bbox":[72,670,420,24]}
+{"kind":"textbox","id":"sh/6hcrmhk3","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1162,670,46,24]}
+{"kind":"notes","id":"nt/7o446v","slide":9,"text":""}

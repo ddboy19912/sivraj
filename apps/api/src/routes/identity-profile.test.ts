@@ -46,7 +46,7 @@ describe("identity profile first-meet intro response", () => {
           type: "first_meet_intro.requested",
           eventId: "twin-id:first-meet-intro",
           dedupeKey: "twin-id:first-meet-intro",
-          text: "Hi John! I'm Nova. It's really good to finally meet you. I've got your first memory now, and I'm ready to start learning your world with you.",
+          text: "Hi John, it's nice to meet you. I'm Nova, and I'm ready to start learning your world with you.",
           voiceStyle: "energetic",
         },
       ],

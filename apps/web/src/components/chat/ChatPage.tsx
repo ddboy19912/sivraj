@@ -54,7 +54,9 @@ export function ChatPage(props: ChatPageProps) {
           onSendMessage={() => void chat.sendMessage()}
           onStopStreaming={chat.stopStreaming}
           onRetryLastMessage={() => void chat.retryLastMessage()}
+          failedAttachmentCount={chat.failedAttachmentCount}
           onAttachFiles={(files) => void chat.attachFiles(files)}
+          onRetryFailedAttachments={() => void chat.retryFailedAttachments()}
           onOpenAttachment={(attachment) => void chat.openAttachment(attachment)}
           onSaveDraftAsSource={(fileName) => void chat.saveDraftAsSource(fileName)}
           onSaveMessageAsSource={(content, fileName, role) =>

@@ -43,6 +43,7 @@ export type DocumentContext = {
     score: number;
     matchedTerms: string[];
   }>;
+  degradation: DocumentRetrievalDegradation | null;
 };
 
 export type MemoryRequestScope = "all" | "profile" | "preferences" | "engineering";
@@ -98,6 +99,14 @@ export type ChatRetrievalStatus = {
   target: ChatRetrievalTarget | null;
   reason: ChatRetrievalDegradationReason | null;
   message: string | null;
+};
+
+export type DocumentRetrievalDegradation = {
+  reason: ChatRetrievalDegradationReason;
+  message: string;
+  artifactIds: string[];
+  failureCount: number;
+  lastError: string;
 };
 
 export type TurnPlanningMemoryHint = {

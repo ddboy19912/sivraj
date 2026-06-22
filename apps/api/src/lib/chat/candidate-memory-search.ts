@@ -34,14 +34,18 @@ export async function loadCandidateMemorySearchCandidates(input: {
   if (!input.privateMemoryReader) {
     return emptyCandidateMemoryContext();
   }
-  const rows = await loadCandidateMemoryRows(input);
+  const rows = filterCandidateRowsForTwin(
+    await loadCandidateMemoryRows(input),
+    input.twinId,
+  );
   const candidateResults = await mapSettledWithConcurrency(
     rows,
     input.memorySearchConfig.decryptConcurrency,
     (row) => toCandidateMemorySearchCandidateWithTimeout(row, input.privateMemoryReader!),
   );
   await logRejectedCandidateMemoryReads({ rows, candidateResults });
-  const { candidates } = collectDecryptedCandidates(candidateResults);
+  const { candidates: decryptedCandidates } = collectDecryptedCandidates(candidateResults);
+  const candidates = filterCandidateSearchResultsForTwin(decryptedCandidates, input.twinId);
   const canonicalMemoryIdsByCandidateId = new Map<string, string>();
   const tokenAccountingByCandidateId = new Map<string, ReturnType<typeof readCandidateMemoryTokenAccounting>>();
   const rowsById = new Map(rows.map((row) => [row.id, row]));
@@ -60,6 +64,43 @@ export async function loadCandidateMemorySearchCandidates(input: {
     canonicalMemoryIdsByCandidateId,
     tokenAccountingByCandidateId,
   };
+}
+
+function filterCandidateRowsForTwin(
+  rows: Array<typeof candidateMemories.$inferSelect>,
+  requestedTwinId: string,
+) {
+  return rows.filter((row) => {
+    const owned = row.twinId === requestedTwinId;
+    if (!owned) {
+      console.warn("chat candidate memory row rejected for twin mismatch", {
+        requestedTwinId,
+        candidateMemoryId: row.id,
+        candidateTwinId: row.twinId,
+        sourceArtifactId: row.sourceArtifactId,
+        memoryFragmentId: row.memoryFragmentId,
+      });
+    }
+    return owned;
+  });
+}
+
+function filterCandidateSearchResultsForTwin(
+  candidates: MemoryCandidate[],
+  requestedTwinId: string,
+) {
+  return candidates.filter((candidate) => {
+    const owned = candidate.twinId === requestedTwinId;
+    if (!owned) {
+      console.warn("chat candidate memory result rejected for twin mismatch", {
+        requestedTwinId,
+        candidateMemoryId: candidate.id,
+        candidateTwinId: candidate.twinId,
+        sourceArtifactId: candidate.sourceArtifactId,
+      });
+    }
+    return owned;
+  });
 }
 
 function emptyCandidateMemoryContext() {

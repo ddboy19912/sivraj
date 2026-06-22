@@ -3,6 +3,7 @@ export type TerminalCommandId =
   | "clear"
   | "whoami"
   | "session.clear"
+  | "account.wipe"
   | "onboarding.status"
   | "onboarding.reset"
   | "connectors.list"
@@ -43,6 +44,7 @@ export type ParsedTerminalCommand =
   | {
       kind: "api";
       commandId:
+        | "account.wipe"
         | "onboarding.status"
         | "onboarding.reset"
         | "connectors.list"

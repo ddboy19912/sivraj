@@ -18,6 +18,7 @@ import {
 import {
   createThreadAttachmentMessage,
   getArtifactPreviewBlob,
+  retryFailedFileArtifacts,
   streamArtifactStatus,
   uploadArtifact,
   type ArtifactStatusEvent,
@@ -37,6 +38,7 @@ import type { ChatAttachmentUploadStatus, ChatNotice } from "@/types/chat.types"
 type ChatAttachmentUploadInput = {
   session: Session | null;
   activeThreadId: string | null;
+  messages: ChatMessage[];
   onSessionRefreshed: (session: Session) => void;
   setActiveThreadId: Dispatch<SetStateAction<string | null>>;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
@@ -365,10 +367,68 @@ export function useChatAttachmentUpload(input: ChatAttachmentUploadInput) {
     }
   }
 
+  async function retryFailedAttachments() {
+    if (!input.session || attachmentUploadStatus.phase !== "idle") {
+      return;
+    }
+
+    const failedAttachments = readRetryableFailedAttachments(input.messages);
+    if (failedAttachments.length === 0) {
+      input.setNotice({ tone: "info", text: "No retryable failed files found." });
+      return;
+    }
+
+    statusStreamAbortRef.current?.abort();
+    statusStreamAbortRef.current = null;
+    const retryLabel = failedAttachments.length === 1
+      ? failedAttachments[0]?.fileName ?? "failed file"
+      : `${failedAttachments.length} failed files`;
+
+    try {
+      setAttachmentUploadStatus({ phase: "retrying", fileName: retryLabel });
+      input.setNotice({
+        tone: "info",
+        text: `Retrying ${formatAttachmentCount(failedAttachments.length)}...`,
+      });
+
+      const receipt = await retryFailedFileArtifacts(
+        input.session,
+        input.onSessionRefreshed,
+      );
+      const retriedArtifactIds = new Set<string>();
+      for (const result of receipt.results) {
+        if (result.retried) {
+          retriedArtifactIds.add(result.artifactId);
+        }
+      }
+
+      if (retriedArtifactIds.size > 0) {
+        const retryStartedAt = new Date().toISOString();
+        input.setMessages((current) =>
+          current.map((message) =>
+            markRetriedAttachments(message, retriedArtifactIds, retryStartedAt),
+          ),
+        );
+      }
+
+      input.setNotice({
+        tone: receipt.retriedCount > 0 ? "info" : "error",
+        text: formatRetryFailedArtifactsNotice(receipt),
+      });
+    } catch (error) {
+      input.setNotice(chatErrorNotice(error, "Failed file retry failed."));
+      setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
+      return;
+    }
+
+    setAttachmentUploadStatus(IDLE_UPLOAD_STATUS);
+  }
+
   return {
     attachFiles,
     saveSourceContent,
     openAttachment,
+    retryFailedAttachments,
     attachmentUploadStatus,
   };
 }
@@ -473,6 +533,54 @@ function updateAttachmentMessageStatus(
         };
       })
     : [];
+
+  return {
+    ...message,
+    metadata: {
+      ...metadata,
+      attachments,
+    },
+  };
+}
+
+function markRetriedAttachments(
+  message: ChatMessage,
+  artifactIds: Set<string>,
+  retryStartedAt: string,
+): ChatMessage {
+  const metadata = readRecord(message.metadata);
+  if (!Array.isArray(metadata["attachments"])) {
+    return message;
+  }
+
+  let changed = false;
+  const attachments = metadata["attachments"].map((value) => {
+    const attachment = readRecord(value);
+    const artifactId = typeof attachment["artifactId"] === "string"
+      ? attachment["artifactId"]
+      : null;
+
+    if (!artifactId || !artifactIds.has(artifactId)) {
+      return value;
+    }
+
+    changed = true;
+    return {
+      ...attachment,
+      status: "queued",
+      intelligenceStatus: "queued",
+      processing: {
+        ...readRecord(attachment["processing"]),
+        phase: "retry_requested",
+        status: "queued",
+      },
+      updatedAt: retryStartedAt,
+    };
+  });
+
+  if (!changed) {
+    return message;
+  }
 
   return {
     ...message,
@@ -633,4 +741,48 @@ function isAbortError(error: unknown) {
 
 function abortStatusStream(ref: RefObject<AbortController | null>) {
   ref.current?.abort();
+}
+
+function readRetryableFailedAttachments(messages: ChatMessage[]): ChatMessageAttachment[] {
+  const attachmentsByArtifactId = new Map<string, ChatMessageAttachment>();
+
+  for (const message of messages) {
+    for (const attachment of readChatMessageAttachments(message)) {
+      if (isRetryableFailedAttachment(attachment)) {
+        attachmentsByArtifactId.set(attachment.artifactId, attachment);
+      }
+    }
+  }
+
+  return Array.from(attachmentsByArtifactId.values());
+}
+
+function isRetryableFailedAttachment(attachment: ChatMessageAttachment) {
+  return !attachment.artifactId.startsWith("local-") &&
+    (attachment.status === "failed" || attachment.intelligenceStatus === "failed");
+}
+
+function formatAttachmentCount(count: number) {
+  return `${count} failed ${count === 1 ? "file" : "files"}`;
+}
+
+function formatRetryFailedArtifactsNotice(input: {
+  retriedCount: number;
+  skippedCount: number;
+  warningCount: number;
+}) {
+  if (input.retriedCount === 0) {
+    return input.skippedCount > 0
+      ? `${formatAttachmentCount(input.skippedCount)} could not be retried.`
+      : "No retryable failed files were found.";
+  }
+
+  const skippedText = input.skippedCount > 0
+    ? ` ${input.skippedCount} ${input.skippedCount === 1 ? "file was" : "files were"} skipped.`
+    : "";
+  const warningText = input.warningCount > 0
+    ? ` ${input.warningCount} ${input.warningCount === 1 ? "retry has" : "retries have"} a queue warning.`
+    : "";
+
+  return `${input.retriedCount} failed ${input.retriedCount === 1 ? "file is" : "files are"} queued for retry.${skippedText}${warningText}`;
 }

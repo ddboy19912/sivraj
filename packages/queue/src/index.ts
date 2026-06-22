@@ -17,6 +17,8 @@ export const WEEKLY_REFLECTION_QUEUE_NAME = "sivraj-weekly-reflection";
 export const GENERATE_WEEKLY_REFLECTION_JOB_NAME = "generate-weekly-reflection";
 export const CONNECTOR_SYNC_QUEUE_NAME = "sivraj-connector-sync";
 export const SYNC_CONNECTOR_JOB_NAME = "sync-connector";
+export const CONTEXT_WARMUP_QUEUE_NAME = "sivraj-context-warmup";
+export const WARM_CONTEXT_JOB_NAME = "warm-context";
 
 export type ArtifactProcessingJobData = {
   artifactId: string;
@@ -65,6 +67,34 @@ export type ConnectorSyncJobData = {
   mode: "initial" | "incremental" | "manual";
 };
 
+export type ContextWarmupSurface =
+  | "web_chat"
+  | "voice_chat"
+  | "onboarding_voice"
+  | "mcp"
+  | "cli"
+  | "external_api"
+  | "mobile"
+  | "desktop";
+
+export type ContextWarmupReason =
+  | "app_boot"
+  | "voice_start"
+  | "mcp_connect"
+  | "artifact_processed"
+  | "connector_sync_completed"
+  | "manual";
+
+export type ContextWarmupJobData = {
+  twinId: string;
+  requestedBy: string;
+  surface: ContextWarmupSurface;
+  reason: ContextWarmupReason;
+  scope?: string | null;
+  projectFingerprint?: Record<string, unknown> | null;
+  documentIds?: string[];
+};
+
 export type ArtifactProcessingQueue = {
   enqueueArtifactProcessing(data: ArtifactProcessingJobData): Promise<{ jobId: string }>;
   close(): Promise<void>;
@@ -104,6 +134,28 @@ export type ConnectorSyncQueue = {
   close(): Promise<void>;
 };
 
+export type ContextWarmupQueue = {
+  enqueueContextWarmup(data: ContextWarmupJobData): Promise<{ jobId: string }>;
+  close(): Promise<void>;
+};
+
+export type PrivateMemoryCiphertextCacheEntry = {
+  encryptedBytesBase64: string;
+  rawStorageRef: string;
+  ciphertextSha256: string;
+  byteLength: number;
+  cachedAt: string;
+  provider: "walrus";
+};
+
+export type PrivateMemoryCiphertextCache = {
+  putPrivateMemoryCiphertext(input: PrivateMemoryCiphertextCacheEntry & {
+    ttlSeconds?: number;
+  }): Promise<void>;
+  getPrivateMemoryCiphertext(ciphertextSha256: string): Promise<PrivateMemoryCiphertextCacheEntry | null>;
+  close(): Promise<void>;
+};
+
 export type ArtifactProcessingWorker = {
   close(): Promise<void>;
   onFailed(listener: (jobId: string | undefined, error: Error, attemptsMade: number | undefined) => void): void;
@@ -114,6 +166,7 @@ export type IntelligenceProcessingWorker = ArtifactProcessingWorker;
 export type CandidateMemoryArchiveWorker = ArtifactProcessingWorker;
 export type WeeklyReflectionWorker = ArtifactProcessingWorker;
 export type ConnectorSyncWorker = ArtifactProcessingWorker;
+export type ContextWarmupWorker = ArtifactProcessingWorker;
 
 export type ArtifactStatusEvent = {
   artifactId: string;
@@ -260,6 +313,31 @@ export function createConnectorSyncQueue(redisUrl: string): ConnectorSyncQueue {
   };
 }
 
+export function createContextWarmupQueue(redisUrl: string): ContextWarmupQueue {
+  const queue = new Queue<ContextWarmupJobData>(CONTEXT_WARMUP_QUEUE_NAME, {
+    connection: redisConnection(redisUrl),
+    defaultJobOptions: {
+      ...artifactJobOptions,
+      priority: 20,
+    },
+  });
+
+  return {
+    async enqueueContextWarmup(data) {
+      const job = await queue.add(WARM_CONTEXT_JOB_NAME, data, {
+        ...artifactJobOptions,
+        priority: 20,
+        jobId: contextWarmupJobId(data),
+      });
+
+      return { jobId: String(job.id) };
+    },
+    async close() {
+      await queue.close();
+    },
+  };
+}
+
 export function createLazyConnectorSyncQueue(
   redisUrl: string | undefined,
 ): ConnectorSyncQueue | undefined {
@@ -273,6 +351,27 @@ export function createLazyConnectorSyncQueue(
     async enqueueConnectorSync(data) {
       queue ??= createConnectorSyncQueue(redisUrl);
       return queue.enqueueConnectorSync(data);
+    },
+    async close() {
+      await queue?.close();
+      queue = null;
+    },
+  };
+}
+
+export function createLazyContextWarmupQueue(
+  redisUrl: string | undefined,
+): ContextWarmupQueue | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let queue: ContextWarmupQueue | null = null;
+
+  return {
+    async enqueueContextWarmup(data) {
+      queue ??= createContextWarmupQueue(redisUrl);
+      return queue.enqueueContextWarmup(data);
     },
     async close() {
       await queue?.close();
@@ -366,6 +465,87 @@ export function createTransientCiphertextCache(redisUrl: string): TransientCiphe
     },
     async close() {
       await redis.quit();
+    },
+  };
+}
+
+export function createPrivateMemoryCiphertextCache(redisUrl: string): PrivateMemoryCiphertextCache {
+  const redis = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+  });
+
+  return {
+    async putPrivateMemoryCiphertext(input) {
+      await redis.set(
+        privateMemoryCiphertextKey(input.ciphertextSha256),
+        JSON.stringify({
+          encryptedBytesBase64: input.encryptedBytesBase64,
+          rawStorageRef: input.rawStorageRef,
+          ciphertextSha256: input.ciphertextSha256,
+          byteLength: input.byteLength,
+          cachedAt: input.cachedAt,
+          provider: input.provider,
+        }),
+        "EX",
+        input.ttlSeconds ?? 24 * 60 * 60,
+      );
+    },
+    async getPrivateMemoryCiphertext(ciphertextSha256) {
+      const value = await redis.get(privateMemoryCiphertextKey(ciphertextSha256));
+
+      if (!value) {
+        return null;
+      }
+
+      try {
+        const parsed = JSON.parse(value) as Partial<PrivateMemoryCiphertextCacheEntry>;
+
+        return typeof parsed.encryptedBytesBase64 === "string" &&
+          typeof parsed.rawStorageRef === "string" &&
+          typeof parsed.ciphertextSha256 === "string" &&
+          typeof parsed.byteLength === "number" &&
+          typeof parsed.cachedAt === "string" &&
+          parsed.provider === "walrus"
+          ? {
+              encryptedBytesBase64: parsed.encryptedBytesBase64,
+              rawStorageRef: parsed.rawStorageRef,
+              ciphertextSha256: parsed.ciphertextSha256,
+              byteLength: parsed.byteLength,
+              cachedAt: parsed.cachedAt,
+              provider: parsed.provider,
+            }
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    async close() {
+      await redis.quit();
+    },
+  };
+}
+
+export function createLazyPrivateMemoryCiphertextCache(
+  redisUrl: string | undefined,
+): PrivateMemoryCiphertextCache | undefined {
+  if (!redisUrl) {
+    return undefined;
+  }
+
+  let cache: PrivateMemoryCiphertextCache | null = null;
+
+  return {
+    async putPrivateMemoryCiphertext(input) {
+      cache ??= createPrivateMemoryCiphertextCache(redisUrl);
+      await cache.putPrivateMemoryCiphertext(input);
+    },
+    async getPrivateMemoryCiphertext(ciphertextSha256) {
+      cache ??= createPrivateMemoryCiphertextCache(redisUrl);
+      return cache.getPrivateMemoryCiphertext(ciphertextSha256);
+    },
+    async close() {
+      await cache?.close();
+      cache = null;
     },
   };
 }
@@ -478,6 +658,19 @@ export function createConnectorSyncWorker(
 ): ConnectorSyncWorker {
   return createQueueWorker(
     CONNECTOR_SYNC_QUEUE_NAME,
+    redisUrl,
+    processor,
+    { concurrency: options.concurrency ?? 1 },
+  );
+}
+
+export function createContextWarmupWorker(
+  redisUrl: string,
+  processor: (data: ContextWarmupJobData, job: Job<ContextWarmupJobData>) => Promise<void>,
+  options: { concurrency?: number } = {},
+): ContextWarmupWorker {
+  return createQueueWorker(
+    CONTEXT_WARMUP_QUEUE_NAME,
     redisUrl,
     processor,
     { concurrency: options.concurrency ?? 1 },
@@ -612,10 +805,26 @@ function transientArtifactCiphertextKey(artifactId: string): string {
   return `sivraj:artifact-ciphertext:${artifactId}`;
 }
 
+function privateMemoryCiphertextKey(ciphertextSha256: string): string {
+  return `private-memory:ciphertext:v1:${ciphertextSha256.toLowerCase()}`;
+}
+
 function artifactProcessingJobId(data: ArtifactProcessingJobData): string {
   return data.jobKey
     ? `${data.artifactId}-${data.jobKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`
     : data.artifactId;
+}
+
+function contextWarmupJobId(data: ContextWarmupJobData): string {
+  const scope = data.scope?.replace(/[^a-zA-Z0-9_-]/g, "-") ?? "default";
+  const documents = data.documentIds?.length ? data.documentIds.join("-").slice(0, 80) : "all";
+  return [
+    data.twinId,
+    data.surface,
+    data.reason,
+    scope,
+    documents,
+  ].join(":");
 }
 
 function parseArtifactStatusEvent(message: string): ArtifactStatusEvent | null {

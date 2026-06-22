@@ -10,6 +10,8 @@ import type {
   TwinRuntimeInput,
 } from "@/types/twin.types";
 
+const SPEECH_REQUEST_TIMEOUT_MS = 45_000;
+
 export function useTwinRuntime({
   events,
   session,
@@ -72,6 +74,22 @@ export function useTwinRuntime({
 
     requestedSpeechEventIds.add(runtimeState.eventId);
     let cancelled = false;
+    let timedOut = false;
+    const abortController = new AbortController();
+    const timeout = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      timedOut = true;
+      getRequestedSpeechEventIds().delete(runtimeState.eventId);
+      abortController.abort();
+      dispatchRuntimeAction({
+        type: "speech.failed",
+        eventId: runtimeState.eventId,
+        reason: "Speech generation timed out.",
+      });
+    }, SPEECH_REQUEST_TIMEOUT_MS);
 
     void postAuthedAudio(
       `/v1/twins/${session.twinId}/voice/speak`,
@@ -82,9 +100,10 @@ export function useTwinRuntime({
       },
       session,
       setSession,
+      abortController.signal,
     )
       .then((audio) => {
-        if (cancelled) {
+        if (cancelled || timedOut) {
           return;
         }
 
@@ -97,7 +116,7 @@ export function useTwinRuntime({
         });
       })
       .catch((error: unknown) => {
-        if (cancelled) {
+        if (cancelled || timedOut) {
           return;
         }
 
@@ -107,10 +126,15 @@ export function useTwinRuntime({
           eventId: runtimeState.eventId,
           reason: error instanceof Error ? error.message : "Speech failed.",
         });
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
+      abortController.abort();
     };
   }, [
     audioUrls,

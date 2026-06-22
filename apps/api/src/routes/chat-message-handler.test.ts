@@ -115,6 +115,57 @@ describe("chat prompt identity context", () => {
     );
   });
 
+  it("tells the response model when document retrieval is degraded", () => {
+    const messages = buildPromptMessages({
+      currentMessage: "What is the launch strategy from the PDF?",
+      contextResolution: turnPlan({
+        standaloneQuery: "What is the launch strategy from the PDF?",
+        intent: "document_qa",
+        answerTarget: "document",
+        retrieval: "document",
+      }),
+      coreCommsContext: {
+        assistantName: "Jarvis",
+        displayName: "Fortune",
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+      },
+      memoryContext: { results: [] },
+      documentContext: {
+        results: [],
+        retrievalPlan: {
+          source: "llm",
+          mode: "document_qa",
+          inspectionMode: "semantic_passages",
+          task: "answer",
+          target: { kind: "whole_document" },
+          artifactIds: ["artifact-1"],
+          targetPages: [],
+          confidence: 1,
+          needsClarification: false,
+        },
+        inspectionSources: [],
+        passages: [],
+        degradation: {
+          reason: "timeout",
+          message: "The document is saved, but private document retrieval timed out before I could read it.",
+          artifactIds: ["artifact-1"],
+          failureCount: 1,
+          lastError: "chat_document_read_timeout:fragment-1",
+        },
+      },
+      recentMessages: [],
+      providerLabel: "OpenRouter",
+    });
+
+    expect(messages[0]?.content).toContain("Document retrieval status:");
+    expect(messages[0]?.content).toContain('"state":"degraded"');
+    expect(messages[0]?.content).toContain("do not say the user never sent a document");
+    expect(messages[0]?.content).toContain("temporarily unreadable");
+  });
+
   it("formats memory facts as structured user context for natural answers", () => {
     const messages = buildPromptMessages({
       currentMessage: "What is my job?",
@@ -739,7 +790,7 @@ describe("chat candidate memory retrieval helpers", () => {
       "I couldn’t retrieve that memory right now, so I can’t answer it safely.",
     );
     expect(buildRetrievalFallbackReply("document", "read_failed")).toBe(
-      "I couldn’t retrieve that document right now, so I can’t answer it safely.",
+      "I found that document, but I couldn’t read its private content right now. Please retry in a moment.",
     );
   });
 

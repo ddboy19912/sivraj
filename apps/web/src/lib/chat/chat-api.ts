@@ -145,6 +145,23 @@ export type ArtifactStatusEvent = {
   occurredAt: string;
 };
 
+export type FailedArtifactsRetryReceipt = {
+  limit: number;
+  matchedCount: number;
+  retriedCount: number;
+  skippedCount: number;
+  warningCount: number;
+  results: Array<{
+    artifactId: string;
+    sourceType: string;
+    status: ArtifactUploadReceipt["status"];
+    retried: boolean;
+    processingJobId?: string | null;
+    warning?: string | null;
+    reason?: string;
+  }>;
+};
+
 export type ChatTurn = {
   id: string;
   threadId: string;
@@ -421,6 +438,18 @@ export function uploadArtifact(
   return postAuthedJson<ArtifactUploadReceipt>(
     `/v1/twins/${session.twinId}/artifacts`,
     body,
+    session,
+    onSessionRefreshed,
+  );
+}
+
+export function retryFailedFileArtifacts(
+  session: Session,
+  onSessionRefreshed: SessionHandler,
+) {
+  return postAuthedJson<FailedArtifactsRetryReceipt>(
+    `/v1/twins/${session.twinId}/artifacts/retry-failed`,
+    {},
     session,
     onSessionRefreshed,
   );

@@ -9,10 +9,6 @@ import {
 } from "react";
 import { Terminal, X } from "lucide-react";
 import type { Session } from "@/lib/api";
-import { postAuthedJson } from "@/lib/api";
-import { applyTerminalEffects } from "@/lib/terminal/effects";
-import { formatHelpLines } from "@/lib/terminal/command-registry";
-import { parseTerminalCommand } from "@/lib/terminal/parse";
 import {
   initialTerminalState,
   isTerminalBusy,
@@ -20,11 +16,8 @@ import {
 } from "@/lib/terminal/reducer";
 import { liquidGlass } from "@/lib/ui/liquid-glass";
 import { cn } from "@/lib/ui/utils";
-import type {
-  ParsedTerminalCommand,
-  TerminalCommandResult,
-  TerminalOutputLine,
-} from "@/types/terminal.types";
+import type { TerminalOutputLine } from "@/types/terminal.types";
+import { useTerminalCommandRunner } from "./use-terminal-command-runner";
 
 type TerminalOverlayProps = {
   enabled: boolean;
@@ -61,6 +54,13 @@ export function TerminalOverlay({
   const dragRef = useRef<DragState>(null);
   const latestPositionRef = useRef<Position | null>(null);
   const isOpen = enabled && open;
+  const { runCommand } = useTerminalCommandRunner({
+    state,
+    dispatch,
+    session,
+    onSessionRefreshed,
+    inputRef,
+  });
 
   useEffect(() => {
     if (!enabled) {
@@ -149,57 +149,6 @@ export function TerminalOverlay({
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [isOpen]);
-
-  async function runCommand(rawInput: string) {
-    const input = rawInput.trim();
-    if (!input || isTerminalBusy(state)) {
-      return;
-    }
-
-    dispatch({ type: "command.started", input });
-
-    const parsed = parseTerminalCommand(input);
-    if (!parsed.ok) {
-      dispatch({
-        type: "command.failed",
-        lines: [{ kind: "error", text: parsed.message }],
-      });
-      focusTerminalInput();
-      return;
-    }
-
-    try {
-      const result = await executeParsedCommand({
-        command: parsed.command,
-        session,
-        onSessionRefreshed,
-      });
-
-      dispatch({
-        type: result.status === "success" ? "command.completed" : "command.failed",
-        lines: result.lines,
-      });
-      applyTerminalEffects(result.effects);
-      focusTerminalInput();
-    } catch (error) {
-      dispatch({
-        type: "command.failed",
-        lines: [
-          {
-            kind: "error",
-            text: error instanceof Error ? error.message : "Command failed.",
-          },
-        ],
-      });
-      focusTerminalInput();
-    }
-  }
-
-  function focusTerminalInput() {
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
-  }
 
   function handleInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowUp") {
@@ -333,7 +282,7 @@ export function TerminalOverlay({
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          placeholder={busy ? "running..." : "help"}
+          placeholder={busy ? "running..." : state.pendingConfirmation ? "Y / N" : "help"}
           className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-white/28 disabled:text-white/38"
           onChange={(event) =>
             dispatch({ type: "input.changed", value: event.target.value })
@@ -344,83 +293,6 @@ export function TerminalOverlay({
     </section>
   );
 
-}
-
-async function executeParsedCommand(input: {
-  command: ParsedTerminalCommand;
-  session: Session | null;
-  onSessionRefreshed: (session: Session) => void;
-}): Promise<TerminalCommandResult> {
-  if (input.command.kind === "client") {
-    return executeClientCommand(input.command.commandId, input.session);
-  }
-
-  if (!input.session) {
-    return {
-      commandId: input.command.commandId,
-      status: "failed",
-      lines: [{ kind: "error", text: "Sign in with your wallet first." }],
-    };
-  }
-
-  return postAuthedJson<TerminalCommandResult>(
-    `/v1/twins/${input.session.twinId}/terminal/commands`,
-    {
-      commandId: input.command.commandId,
-      args: input.command.args,
-      flags: input.command.flags,
-    },
-    input.session,
-    input.onSessionRefreshed,
-  );
-}
-
-function executeClientCommand(
-  commandId: "help" | "clear" | "whoami" | "session.clear",
-  session: Session | null,
-): TerminalCommandResult {
-  if (commandId === "help") {
-    return {
-      commandId,
-      status: "success",
-      lines: formatHelpLines(),
-    };
-  }
-
-  if (commandId === "clear") {
-    return {
-      commandId,
-      status: "success",
-      lines: [],
-    };
-  }
-
-  if (commandId === "session.clear") {
-    return {
-      commandId,
-      status: "success",
-      lines: [{ kind: "success", text: "Session cleared." }],
-      effects: ["clearSessionAndReload"],
-    };
-  }
-
-  if (!session) {
-    return {
-      commandId,
-      status: "failed",
-      lines: [{ kind: "error", text: "No active session." }],
-    };
-  }
-
-  return {
-    commandId,
-    status: "success",
-    lines: [
-      { kind: "info", text: `Wallet: ${session.walletAddress}` },
-      { kind: "info", text: `Twin: ${session.twinId}` },
-      { kind: "info", text: `Session expires: ${session.expiresAt}` },
-    ],
-  };
 }
 
 function clampPosition(position: Position, rect: DOMRect): Position {

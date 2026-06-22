@@ -29,11 +29,12 @@ import { estimateMemoryTokenSavings } from "./token-accounting.js";
 import { sanitizeAssistantContent } from "./chat-sanitize.js";
 import { generateSemanticChatTitle } from "./thread-title.js";
 import {
+  buildRetrievalFallbackReply,
   resolveCoreCommsAnswer,
   shouldLoadMemoryContext,
 } from "./turn-policy.js";
 import { loadCachedCoreCommsContext } from "./chat-cache.js";
-import type { ConversationContextResolution, DocumentContext } from "./turn-types.js";
+import type { ChatRetrievalStatus, ConversationContextResolution, DocumentContext } from "./turn-types.js";
 import type { MemorySearchConfig } from "@sivraj/config";
 import type { AppDependencies } from "../../app.js";
 
@@ -123,6 +124,27 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     memoryContextPromise,
     documentContextPromise,
   ]);
+  if (
+    documentContext.degradation &&
+    (contextResolution.retrieval === "document" ||
+      contextResolution.answerTarget === "document" ||
+      contextResolution.intent === "document_qa") &&
+    documentContext.passages.length === 0 &&
+    documentContext.inspectionSources.length === 0
+  ) {
+    return buildStaticAssistantTurn({
+      content: buildRetrievalFallbackReply("document", documentContext.degradation.reason),
+      runtimeConfig: input.runtimeConfig,
+      contextResolution,
+      documentContext,
+      retrievalStatus: {
+        state: "degraded",
+        target: "document",
+        reason: documentContext.degradation.reason,
+        message: buildRetrievalFallbackReply("document", documentContext.degradation.reason),
+      },
+    });
+  }
   const promptMessages = buildPromptMessages({
     currentMessage: input.content,
     contextResolution,
@@ -175,9 +197,11 @@ export function buildStaticAssistantTurn(input: {
   content: string;
   runtimeConfig: ChatRuntimeConfig;
   contextResolution: ConversationContextResolution;
+  documentContext?: DocumentContext;
+  retrievalStatus?: ChatRetrievalStatus;
 }) {
   const memoryContext = emptyMemoryContext();
-  const documentContext = emptyDocumentContext();
+  const documentContext = input.documentContext ?? emptyDocumentContext();
   const citations = buildCitations(memoryContext, documentContext);
   const usage = {};
   const tokenSavings = estimateMemoryTokenSavings(memoryContext);
@@ -194,6 +218,7 @@ export function buildStaticAssistantTurn(input: {
     citations,
     usage,
     tokenSavings,
+    ...(input.retrievalStatus ? { retrievalStatus: input.retrievalStatus } : {}),
     title: {
       status: "failed" as const,
       errorMessage: "static_assistant_reply",

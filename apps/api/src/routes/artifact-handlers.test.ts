@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildArtifactContentResponse,
   formatArtifactSourceSummary,
+  isRetryableFileSourceType,
 } from "./artifact-handlers.js";
 
 describe("artifact source response helpers", () => {
@@ -68,6 +69,22 @@ describe("artifact source response helpers", () => {
       },
     });
     expect(response.content).toBe(exactContent);
+  });
+});
+
+describe("artifact retry helpers", () => {
+  it("limits bulk failed retries to uploaded file/source artifacts", () => {
+    expect(isRetryableFileSourceType("upload")).toBe(true);
+    expect(isRetryableFileSourceType("pdf")).toBe(true);
+    expect(isRetryableFileSourceType("ocr_pdf")).toBe(true);
+    expect(isRetryableFileSourceType("markdown")).toBe(true);
+    expect(isRetryableFileSourceType("docx")).toBe(true);
+    expect(isRetryableFileSourceType("csv")).toBe(true);
+    expect(isRetryableFileSourceType("image")).toBe(true);
+    expect(isRetryableFileSourceType("identity_profile")).toBe(false);
+    expect(isRetryableFileSourceType("onboarding")).toBe(false);
+    expect(isRetryableFileSourceType("chat_export")).toBe(false);
+    expect(isRetryableFileSourceType("voice_transcript")).toBe(false);
   });
 });
 

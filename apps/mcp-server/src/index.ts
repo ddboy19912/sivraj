@@ -20,6 +20,13 @@ import { createMcpWritebackEncryptor } from "./writeback-encryption.js";
 const config = loadMcpConfig();
 const client = new SivrajApiClient(config, createMcpWritebackEncryptor(config));
 const localRepoFingerprint = detectLocalRepoFingerprint();
+void client.warmContext({
+  surface: "mcp",
+  reason: "mcp_connect",
+  projectFingerprint: mergeRepoFingerprint(localRepoFingerprint, {}),
+}).catch((error) => {
+  console.error("Sivraj context warmup failed", error);
+});
 const server = new McpServer({
   name: "sivraj-mcp-server",
   version: "0.0.0",

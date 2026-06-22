@@ -3,7 +3,8 @@ import { useChatAttachmentUpload } from "@/hooks/chat/use-chat-attachment-upload
 import { useChatPageEffects } from "@/hooks/chat/use-chat-page-effects";
 import { useChatPageState } from "@/hooks/chat/use-chat-page-state";
 import { useChatThreadActions } from "@/hooks/chat/use-chat-thread-callbacks";
-import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
+import type { ChatMessage, ProviderConfigResponse } from "@/lib/chat/chat-api";
+import { readChatMessageAttachments } from "@/lib/chat/chat-attachments";
 import type { Session } from "@/lib/session";
 
 type UseChatPageInput = {
@@ -64,6 +65,7 @@ export function useChatPage(input: UseChatPageInput) {
   const attachmentUpload = useChatAttachmentUpload({
     session: input.session,
     activeThreadId: pageState.activeThreadId,
+    messages: pageState.messages,
     onSessionRefreshed: input.onSessionRefreshed,
     setActiveThreadId: pageState.setActiveThreadId,
     setMessages: pageState.setMessages,
@@ -124,7 +126,9 @@ export function useChatPage(input: UseChatPageInput) {
     attachmentUploadStatus: attachmentUpload.attachmentUploadStatus,
     draft: pageState.draft,
     attachFiles: attachmentUpload.attachFiles,
+    failedAttachmentCount: countFailedAttachments(pageState.messages),
     openAttachment: attachmentUpload.openAttachment,
+    retryFailedAttachments: attachmentUpload.retryFailedAttachments,
     handleComposerKeyDown: messageActions.handleComposerKeyDown,
     isLoading: pageState.isLoading,
     isSending: pageState.isSending,
@@ -148,4 +152,23 @@ export function useChatPage(input: UseChatPageInput) {
     deleteThread: threadActions.deleteThread,
     threads: pageState.threads,
   };
+}
+
+function countFailedAttachments(messages: ChatMessage[]) {
+  let count = 0;
+
+  for (const message of messages) {
+    for (const attachment of readChatMessageAttachments(message)) {
+      if (isFailedAttachment(attachment)) {
+        count += 1;
+      }
+    }
+  }
+
+  return count;
+}
+
+function isFailedAttachment(attachment: ReturnType<typeof readChatMessageAttachments>[number]) {
+  return !attachment.artifactId.startsWith("local-") &&
+    (attachment.status === "failed" || attachment.intelligenceStatus === "failed");
 }

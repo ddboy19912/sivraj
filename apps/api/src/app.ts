@@ -10,12 +10,16 @@ import {
   createLazyArtifactStatusPublisher,
   createLazyArtifactStatusSubscriber,
   createLazyConnectorSyncQueue,
+  createLazyContextWarmupQueue,
+  createLazyPrivateMemoryCiphertextCache,
   createLazyTransientCiphertextCache,
   createLazyWeeklyReflectionQueue,
   type ArtifactProcessingQueue,
   type ArtifactStatusPublisher,
   type ArtifactStatusSubscriber,
   type ConnectorSyncQueue,
+  type ContextWarmupQueue,
+  type PrivateMemoryCiphertextCache,
   type TransientCiphertextCache,
   type WeeklyReflectionQueue,
 } from "@sivraj/queue";
@@ -27,6 +31,7 @@ import { createCandidateMemoryRoutes } from "./routes/candidate-memories.js";
 import { createChatRoutes } from "./routes/chat.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { createConnectorRoutes } from "./routes/connectors.js";
+import { createContextRoutes } from "./routes/context.js";
 import { createEngineeringRoutes } from "./routes/engineering.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createGraphRoutes } from "./routes/graph.js";
@@ -70,7 +75,9 @@ export type AppDependencies = {
   artifactStatusPublisher?: ArtifactStatusPublisher;
   artifactStatusSubscriber?: ArtifactStatusSubscriber;
   transientCiphertextCache?: TransientCiphertextCache;
+  privateMemoryCiphertextCache?: PrivateMemoryCiphertextCache;
   connectorSyncQueue?: ConnectorSyncQueue;
+  contextWarmupQueue?: ContextWarmupQueue;
   githubImporter?: GitHubImporter;
   privateMemoryReader?: PrivateMemoryReader;
   weeklyReflectionQueue?: WeeklyReflectionQueue;
@@ -133,33 +140,7 @@ export type PrivateMemoryStorage = {
 };
 
 function createApp(
-  dependencies: AppDependencies = {
-    db,
-    privateMemoryStorage: createPrivateMemoryStorage(process.env),
-    artifactProcessingQueue: createLazyArtifactProcessingQueue(
-      process.env["REDIS_URL"],
-    ),
-    artifactStatusPublisher: createLazyArtifactStatusPublisher(
-      process.env["REDIS_URL"],
-    ),
-    artifactStatusSubscriber: createLazyArtifactStatusSubscriber(
-      process.env["REDIS_URL"],
-    ),
-    transientCiphertextCache: createLazyTransientCiphertextCache(
-      process.env["REDIS_URL"],
-    ),
-    connectorSyncQueue: createLazyConnectorSyncQueue(process.env["REDIS_URL"]),
-    privateMemoryReader: createConfiguredPrivateMemoryReader(process.env),
-    weeklyReflectionQueue: createLazyWeeklyReflectionQueue(
-      process.env["REDIS_URL"],
-    ),
-    memorySearchConfig: loadMemorySearchConfig(process.env),
-    voiceSynthesizer: createConfiguredVoiceSynthesizer(process.env),
-    speechToTextTranscriber: createConfiguredSpeechToTextTranscriber(process.env),
-    realtimeSpeechToTextTokenIssuer: createConfiguredRealtimeSpeechToTextTokenIssuer(process.env),
-    realtimeTextToSpeechTokenIssuer: createConfiguredRealtimeTextToSpeechTokenIssuer(process.env),
-    voicePreviewAssetDir: process.env["VOICE_PREVIEW_ASSET_DIR"],
-  },
+  dependencies: AppDependencies = createDefaultAppDependencies(),
 ) {
   const app = new Hono();
 
@@ -204,6 +185,7 @@ function createApp(
   );
   app.route("/v1/twins/:twinId/graph", createGraphRoutes(dependencies));
   app.route("/v1/twins/:twinId/memories", createMemoryRoutes(dependencies));
+  app.route("/v1/twins/:twinId/context", createContextRoutes(dependencies));
   app.route("/v1/twins/:twinId/feedback", createFeedbackRoutes(dependencies));
   app.route("/v1/twins/:twinId/chat", createChatRoutes(dependencies));
   app.route("/v1/twins/:twinId/voice", createVoiceRoutes(dependencies));
@@ -218,6 +200,33 @@ function createApp(
 }
 
 export const app = createApp();
+
+function createDefaultAppDependencies(): AppDependencies {
+  const redisUrl = process.env["REDIS_URL"];
+  const privateMemoryCiphertextCache = createLazyPrivateMemoryCiphertextCache(redisUrl);
+
+  return {
+    db,
+    privateMemoryStorage: createPrivateMemoryStorage(process.env),
+    artifactProcessingQueue: createLazyArtifactProcessingQueue(redisUrl),
+    artifactStatusPublisher: createLazyArtifactStatusPublisher(redisUrl),
+    artifactStatusSubscriber: createLazyArtifactStatusSubscriber(redisUrl),
+    transientCiphertextCache: createLazyTransientCiphertextCache(redisUrl),
+    privateMemoryCiphertextCache,
+    connectorSyncQueue: createLazyConnectorSyncQueue(redisUrl),
+    contextWarmupQueue: createLazyContextWarmupQueue(redisUrl),
+    privateMemoryReader: createConfiguredPrivateMemoryReader(process.env, {
+      ciphertextCache: privateMemoryCiphertextCache,
+    }),
+    weeklyReflectionQueue: createLazyWeeklyReflectionQueue(redisUrl),
+    memorySearchConfig: loadMemorySearchConfig(process.env),
+    voiceSynthesizer: createConfiguredVoiceSynthesizer(process.env),
+    speechToTextTranscriber: createConfiguredSpeechToTextTranscriber(process.env),
+    realtimeSpeechToTextTokenIssuer: createConfiguredRealtimeSpeechToTextTokenIssuer(process.env),
+    realtimeTextToSpeechTokenIssuer: createConfiguredRealtimeTextToSpeechTokenIssuer(process.env),
+    voicePreviewAssetDir: process.env["VOICE_PREVIEW_ASSET_DIR"],
+  };
+}
 
 function readCorsOrigins(value: string | undefined): string[] {
   return (value ?? "http://localhost:5173,http://127.0.0.1:5173")

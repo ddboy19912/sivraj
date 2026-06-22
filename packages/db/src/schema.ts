@@ -225,6 +225,23 @@ export const candidateMemoryArchiveStatusEnum = pgEnum(
   ],
 );
 
+export const contextRuntimePacketKindEnum = pgEnum(
+  "context_runtime_packet_kind",
+  [
+    "core_profile",
+    "personal_hot_memory",
+    "engineering_context",
+    "document_inventory",
+    "active_session",
+    "surface_warmup",
+  ],
+);
+
+export const contextRuntimePacketStatusEnum = pgEnum(
+  "context_runtime_packet_status",
+  ["ready", "stale", "refreshing", "failed"],
+);
+
 export const connectorProviderEnum = pgEnum("connector_provider", [
   "github",
   "notion",
@@ -1170,6 +1187,36 @@ export const contextPackets = pgTable(
   (t) => [
     index("context_packets_twin_id_idx").on(t.twinId),
     index("context_packets_expires_at_idx").on(t.expiresAt),
+  ],
+);
+
+export const contextRuntimePackets = pgTable(
+  "context_runtime_packets",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    kind: contextRuntimePacketKindEnum("kind").notNull(),
+    scopeKey: text("scope_key").notNull(),
+    status: contextRuntimePacketStatusEnum("status").notNull().default("ready"),
+    payload: jsonb("payload").$type<unknown>(),
+    sourceRefs: jsonb("source_refs").$type<unknown>(),
+    versionHash: text("version_hash").notNull(),
+    generatedAt: tzTimestamp("generated_at").notNull().defaultNow(),
+    staleAt: tzTimestamp("stale_at"),
+    expiresAt: tzTimestamp("expires_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("context_runtime_packets_twin_id_idx").on(t.twinId),
+    index("context_runtime_packets_kind_idx").on(t.kind),
+    index("context_runtime_packets_status_idx").on(t.status),
+    index("context_runtime_packets_expires_at_idx").on(t.expiresAt),
+    uniqueIndex("context_runtime_packets_twin_kind_scope_idx").on(
+      t.twinId,
+      t.kind,
+      t.scopeKey,
+    ),
   ],
 );
 

@@ -8,6 +8,10 @@ import { authorizeTwinScopedJsonBody } from "../lib/http/route-auth.js";
 import { optionalString } from "../lib/http/route-helpers.js";
 import { handleConnectorAccountSync } from "./connector-account-sync.js";
 import {
+  formatAccountWipeLines,
+  wipeTerminalAccount,
+} from "./terminal-account-wipe.js";
+import {
   formatOnboardingResetLines,
   formatOnboardingStatusLines,
   loadTerminalOnboardingStatus,
@@ -19,6 +23,10 @@ import type {
 } from "./terminal-types.js";
 
 type ParsedTerminalCommand =
+  | {
+      commandId: "account.wipe";
+      confirmed: boolean;
+    }
   | {
       commandId: "onboarding.status" | "connectors.list" | "audit.recent";
       limit?: number;
@@ -44,7 +52,7 @@ export async function handleTerminalCommandPost(
 
   const parsed = parseTerminalCommandBody(gate.value.body);
   if (!parsed.ok) {
-    return c.json(failedResponse("audit.recent", parsed.error), 400);
+    return c.json(failedResponse("account.wipe", parsed.error), 400);
   }
 
   await recordTerminalCommandAudit(dependencies.db, {
@@ -68,6 +76,16 @@ export function parseTerminalCommandBody(
   const commandId = optionalString(body["commandId"]);
   const args = readStringArray(body["args"]);
   const flags = readRecord(body["flags"]);
+
+  if (commandId === "account.wipe") {
+    return {
+      ok: true,
+      command: {
+        commandId,
+        confirmed: flags["confirm"] === true,
+      },
+    };
+  }
 
   if (commandId === "onboarding.status") {
     return { ok: true, command: { commandId } };
@@ -126,6 +144,33 @@ async function executeTerminalCommand(
   const command = input.command;
 
   switch (command.commandId) {
+    case "account.wipe": {
+      const result = await wipeTerminalAccount(dependencies.db, {
+        auth: input.auth,
+        twinId: input.twinId,
+        dryRun: !command.confirmed,
+      });
+
+      if (!result.ok) {
+        return failedResponse(command.commandId, result.error);
+      }
+
+      return {
+        commandId: command.commandId,
+        status: "success",
+        lines: [
+          ...formatAccountWipeLines(result.summary),
+          ...(command.confirmed
+            ? []
+            : [{
+                kind: "warning" as const,
+                text: "No data changed. Run account wipe and answer Y to apply.",
+              }]),
+        ],
+        ...(command.confirmed ? { effects: ["clearSessionAndReload" as const] } : {}),
+      };
+    }
+
     case "onboarding.status": {
       const status = await loadTerminalOnboardingStatus(dependencies.db, {
         userId: input.auth.sub,

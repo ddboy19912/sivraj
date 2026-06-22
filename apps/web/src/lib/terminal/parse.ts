@@ -32,6 +32,28 @@ export function parseTerminalCommand(input: string): TerminalParseResult {
     return { ok: true, command: { kind: "client", commandId: "session.clear" } };
   }
 
+  if ((root === "account" && subcommand === "wipe") || (root === "wipe" && subcommand === "account")) {
+    if (parsed.flags["confirm"] === true) {
+      return {
+        ok: false,
+        message: "Use account wipe and answer Y to confirm.",
+      };
+    }
+
+    return {
+      ok: true,
+      command: {
+        kind: "api",
+        commandId: "account.wipe",
+        args: parsed.args,
+        flags: {
+          dryRun: parsed.flags["dry-run"] === true,
+          confirm: false,
+        },
+      },
+    };
+  }
+
   if (root === "onboarding" && subcommand === "status") {
     return {
       ok: true,

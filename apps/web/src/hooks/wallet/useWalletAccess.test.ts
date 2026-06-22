@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   resolveActiveSession,
   resolveWalletAccessState,
+  resolveWalletSessionRestoreStatus,
   shouldHoldStoredSessionForWalletRestore,
 } from "@/hooks/wallet/wallet-access-resolve";
 import type { TwinBootstrap } from "@/types/wallet.types";
@@ -24,6 +25,7 @@ const baseSignals = {
   hasMatchingWalletSession: true,
   isBootstrapLoading: false,
   isSigning: false,
+  isWalletSessionRestorePending: false,
   isWalletSettling: false,
   retry: vi.fn(),
   session,
@@ -47,7 +49,7 @@ describe("resolveWalletAccessState", () => {
       ...baseSignals,
       accountSelected: false,
       hasMatchingWalletSession: false,
-      isWalletSettling: true,
+      isWalletSessionRestorePending: true,
     });
 
     expect(state).toMatchObject({
@@ -141,22 +143,24 @@ describe("resolveWalletAccessState", () => {
 });
 
 describe("shouldHoldStoredSessionForWalletRestore", () => {
-  it("holds a stored session before the wallet connection has been observed", () => {
+  it("holds a stored session while a matching persisted wallet restore is unresolved", () => {
     expect(
       shouldHoldStoredSessionForWalletRestore({
-        selectedWalletAddress: null,
         activeSession: session,
-        hasObservedWalletConnection: false,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: session.walletAddress,
       }),
     ).toBe(true);
   });
 
-  it("releases the hold after wallet connection has been observed", () => {
+  it("releases the hold after the restore timeout", () => {
     expect(
       shouldHoldStoredSessionForWalletRestore({
-        selectedWalletAddress: null,
         activeSession: session,
-        hasObservedWalletConnection: true,
+        hasTimedOut: true,
+        selectedWalletAddress: null,
+        storedWalletAddress: session.walletAddress,
       }),
     ).toBe(false);
   });
@@ -164,11 +168,89 @@ describe("shouldHoldStoredSessionForWalletRestore", () => {
   it("does not hold when a wallet address is already selected", () => {
     expect(
       shouldHoldStoredSessionForWalletRestore({
-        selectedWalletAddress: session.walletAddress,
         activeSession: session,
-        hasObservedWalletConnection: false,
+        hasTimedOut: false,
+        selectedWalletAddress: session.walletAddress,
+        storedWalletAddress: session.walletAddress,
       }),
     ).toBe(false);
+  });
+
+  it("does not hold when the persisted wallet target is missing", () => {
+    expect(
+      shouldHoldStoredSessionForWalletRestore({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not hold when the persisted wallet target is mismatched", () => {
+    expect(
+      shouldHoldStoredSessionForWalletRestore({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: "0x456",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveWalletSessionRestoreStatus", () => {
+  it("starts pending for a stored session with a matching persisted wallet target", () => {
+    expect(
+      resolveWalletSessionRestoreStatus({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: session.walletAddress,
+      }),
+    ).toBe("pending");
+  });
+
+  it("resolves when the matching wallet is selected", () => {
+    expect(
+      resolveWalletSessionRestoreStatus({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: session.walletAddress,
+        storedWalletAddress: session.walletAddress,
+      }),
+    ).toBe("resolved");
+  });
+
+  it("resolves instead of pending when the persisted target is missing or mismatched", () => {
+    expect(
+      resolveWalletSessionRestoreStatus({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: null,
+      }),
+    ).toBe("resolved");
+
+    expect(
+      resolveWalletSessionRestoreStatus({
+        activeSession: session,
+        hasTimedOut: false,
+        selectedWalletAddress: null,
+        storedWalletAddress: "0x456",
+      }),
+    ).toBe("resolved");
+  });
+
+  it("times out a matching persisted wallet target", () => {
+    expect(
+      resolveWalletSessionRestoreStatus({
+        activeSession: session,
+        hasTimedOut: true,
+        selectedWalletAddress: null,
+        storedWalletAddress: session.walletAddress,
+      }),
+    ).toBe("timed_out");
   });
 });
 

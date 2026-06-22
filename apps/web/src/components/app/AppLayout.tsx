@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router";
 import { AppAmbientStage } from "@/components/app/AppAmbientStage";
 import { AppGlobalOverlay } from "@/components/app/AppGlobalOverlay";
@@ -31,12 +31,34 @@ export function AppLayout() {
   const showMainNavigation = shouldShowMainNavigation(app.appOverlay);
   const setProviderOpen = app.setProviderOpen;
   const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();
+  const previousOverlayRef = useRef(app.appOverlay);
 
   useEffect(() => {
     if (hasOpenRouterOAuthCallback) {
       setProviderOpen(true);
     }
   }, [hasOpenRouterOAuthCallback, setProviderOpen]);
+
+  useEffect(() => {
+    const previousOverlay = previousOverlayRef.current;
+    previousOverlayRef.current = app.appOverlay;
+
+    if (
+      previousOverlay !== "onboarding" ||
+      app.appOverlay !== null ||
+      app.onboarding.firstMeetIntroStatus !== "issued" ||
+      activeTab === "home"
+    ) {
+      return;
+    }
+
+    navigate(getPathForNavigationTab("home"), { replace: true });
+  }, [
+    activeTab,
+    app.appOverlay,
+    app.onboarding.firstMeetIntroStatus,
+    navigate,
+  ]);
 
   function selectTab(tab: NavigationTabId) {
     if (tab !== "settings") {

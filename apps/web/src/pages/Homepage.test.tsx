@@ -86,6 +86,93 @@ describe("Homepage", () => {
     expect(screen.getByText("Sivraj")).toBeInTheDocument();
   });
 
+  it("renders runtime speech subtitles for the onboarding intro", () => {
+    render(
+      <Homepage
+        statusHud={null}
+        twinName="Nova"
+        runtimeState={{
+          status: "speaking",
+          eventId: "first-meet",
+          dedupeKey: "first-meet",
+          text: "Hi Fortune, it's nice to meet you. I'm Nova, and I'm ready to start learning your world with you.",
+          clips: ["blob:http://localhost/voice"],
+          clipCursor: 0,
+          streamClosed: false,
+          sourceEventId: "first-meet",
+          processedEventIds: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Voice transcript")).toBeInTheDocument();
+    expect(screen.getByText("Nova")).toBeInTheDocument();
+    expect(
+      screen.getByText("Hi Fortune, it's nice to meet you. I'm Nova, and I'm ready to start learning your world with you."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render runtime speech while audio is being prepared", () => {
+    render(
+      <Homepage
+        statusHud={null}
+        runtimeState={{
+          status: "preparing_speech",
+          eventId: "first-meet",
+          dedupeKey: "first-meet",
+          text: "I'm getting ready to speak.",
+          voiceStyle: "energetic",
+          sourceEventId: "first-meet",
+          processedEventIds: [],
+        }}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Voice transcript")).not.toBeInTheDocument();
+    expect(screen.queryByText("I'm getting ready to speak.")).not.toBeInTheDocument();
+  });
+
+  it("prefers active push-to-talk assistant subtitles over runtime speech", () => {
+    render(
+      <Homepage
+        statusHud={null}
+        runtimeState={{
+          status: "speaking",
+          eventId: "first-meet",
+          dedupeKey: "first-meet",
+          text: "This runtime intro should wait.",
+          clips: ["blob:http://localhost/voice"],
+          clipCursor: 0,
+          streamClosed: false,
+          sourceEventId: "first-meet",
+          processedEventIds: [],
+        }}
+        voiceChat={{
+          state: {
+            phase: "thinking",
+            activeEventId: "voice-1",
+            activeThreadId: null,
+            settings: null,
+            settingsStatus: "ready",
+            profile: null,
+            userTranscript: "What should I do next?",
+            assistantTranscript: null,
+            partialAssistantTranscript: "Use the active voice chat answer.",
+            error: null,
+            wakeSupported: false,
+          },
+          beginPushToTalk: vi.fn(),
+          endPushToTalk: vi.fn(),
+          cancelVoiceTurn: vi.fn(),
+          saveSettings: vi.fn(),
+        } as never}
+      />,
+    );
+
+    expect(screen.getByText("Use the active voice chat answer.")).toBeInTheDocument();
+    expect(screen.queryByText("This runtime intro should wait.")).not.toBeInTheDocument();
+  });
+
   it("keeps voice subtitles compact", () => {
     const longTranscript = `${"memory ".repeat(40)}done`;
 

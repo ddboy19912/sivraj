@@ -4,19 +4,27 @@ import {
 } from "@/components/ai/AgentStatusHud";
 import type { useHomepageVoiceChat } from "@/hooks/voice/use-homepage-voice-chat";
 import { cn } from "@/lib/ui/utils";
+import type { TwinRuntimeState } from "@/types/twin.types";
 import type { HomepageVoiceState } from "@/types/voice.types";
 
 type HomepageProps = {
   statusHud?: AgentStatusHudState | null;
+  runtimeState?: TwinRuntimeState | null;
   voiceChat?: ReturnType<typeof useHomepageVoiceChat> | null;
   twinName?: string | null;
 };
 
 const DEFAULT_TWIN_NAME = "Sivraj";
 
-export function Homepage({ statusHud, voiceChat, twinName }: HomepageProps) {
+export function Homepage({
+  statusHud,
+  runtimeState,
+  voiceChat,
+  twinName,
+}: HomepageProps) {
   const subtitleLines = voiceSubtitleLines(
     voiceChat?.state ?? null,
+    runtimeState ?? null,
     twinName?.trim() || DEFAULT_TWIN_NAME,
   );
 
@@ -80,18 +88,31 @@ function VoiceSubtitleOverlay({ lines }: { lines: VoiceSubtitleLine[] }) {
 }
 
 function voiceSubtitleLines(
-  state: HomepageVoiceState | null,
+  voiceState: HomepageVoiceState | null,
+  runtimeState: TwinRuntimeState | null,
   assistantName: string,
 ): VoiceSubtitleLine[] {
-  if (!state) {
+  if (!voiceState && !runtimeState) {
     return [];
   }
 
-  const userTranscript = latestSubtitle(state.userTranscript, 72);
-  const assistantTranscript = latestSubtitle(
-    state.partialAssistantTranscript || state.assistantTranscript,
+  const userTranscript = latestSubtitle(voiceState?.userTranscript, 72);
+  const voiceAssistantTranscript = latestSubtitle(
+    voiceState?.partialAssistantTranscript || voiceState?.assistantTranscript,
     118,
   );
+  const voiceAssistantLine = voiceAssistantTranscript
+    ? {
+        id: "assistant" as const,
+        speaker: assistantName,
+        text: voiceAssistantTranscript,
+        active: voiceState?.phase === "thinking" || voiceState?.phase === "speaking",
+      }
+    : null;
+  const runtimeAssistantLine = runtimeSpeechSubtitleLine(runtimeState, assistantName);
+  const assistantLine = voiceAssistantLine?.active
+    ? voiceAssistantLine
+    : runtimeAssistantLine ?? voiceAssistantLine;
 
   return [
     ...(userTranscript
@@ -99,18 +120,30 @@ function voiceSubtitleLines(
           id: "user" as const,
           speaker: "You",
           text: userTranscript,
-          active: state.phase === "recording_push_to_talk" || state.phase === "transcribing",
+          active: voiceState?.phase === "recording_push_to_talk" || voiceState?.phase === "transcribing",
         }]
       : []),
-    ...(assistantTranscript
-      ? [{
-          id: "assistant" as const,
-          speaker: assistantName,
-          text: assistantTranscript,
-          active: state.phase === "thinking" || state.phase === "speaking",
-        }]
-      : []),
+    ...(assistantLine ? [assistantLine] : []),
   ].slice(-2);
+}
+
+function runtimeSpeechSubtitleLine(
+  state: TwinRuntimeState | null,
+  assistantName: string,
+): VoiceSubtitleLine | null {
+  if (state?.status !== "speaking") {
+    return null;
+  }
+
+  const text = latestSubtitle(state.text, 118);
+  return text
+    ? {
+        id: "assistant",
+        speaker: assistantName,
+        text,
+        active: true,
+      }
+    : null;
 }
 
 // Keep the most recent words visible (subtitle behaviour) and signal that

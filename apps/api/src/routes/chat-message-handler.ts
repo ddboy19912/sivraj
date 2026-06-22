@@ -413,6 +413,8 @@ export async function handlePostThreadMessage(
       model: assistantMessage.model,
       providerKind: assistantMessage.providerKind,
       memoryIntent,
+      contextResolution,
+      retrievedMemoryCount: turn.memoryContext.results.length,
     });
   }
   return c.json(

@@ -43,6 +43,7 @@ export type ResolveWalletAccessStateInput = {
   hasMatchingWalletSession: boolean;
   isBootstrapLoading: boolean;
   isSigning: boolean;
+  isWalletSessionRestorePending: boolean;
   isWalletSettling: boolean;
   retry: () => void;
   session: Session | null;
@@ -59,3 +60,9 @@ export type ActiveSessionResolution =
   | { status: "unchanged" }
   | { status: "clear_active" }
   | { status: "restore_stored"; session: Session };
+
+export type WalletSessionRestoreStatus =
+  | "idle"
+  | "pending"
+  | "resolved"
+  | "timed_out";

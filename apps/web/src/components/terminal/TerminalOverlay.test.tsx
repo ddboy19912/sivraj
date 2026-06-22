@@ -73,6 +73,54 @@ describe("TerminalOverlay", () => {
     expect(screen.getByLabelText("Terminal command")).toHaveFocus();
   });
 
+  it("prompts before wiping the account and only posts after Y", async () => {
+    const user = userEvent.setup();
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (url, init) => {
+      calls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+
+      return new Response(JSON.stringify({
+        commandId: "account.wipe",
+        status: "success",
+        lines: [{ kind: "success", text: "Account wipe complete." }],
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      render(
+        <TerminalOverlay
+          enabled
+          session={session}
+          onSessionRefreshed={vi.fn()}
+        />,
+      );
+
+      fireEvent.keyDown(window, { ctrlKey: true, code: "Backquote" });
+
+      await user.type(screen.getByLabelText("Terminal command"), "account wipe{Enter}");
+      expect(await screen.findByText("Type Y to confirm or N to cancel.")).toBeInTheDocument();
+      expect(calls).toHaveLength(0);
+
+      await user.type(screen.getByLabelText("Terminal command"), "Y{Enter}");
+      expect(await screen.findByText("Account wipe complete.")).toBeInTheDocument();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toContain("/v1/twins/twin-1/terminal/commands");
+      expect(calls[0]?.body).toMatchObject({
+        commandId: "account.wipe",
+        flags: { confirm: true, dryRun: false },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("updates position while dragging and clamps to the viewport", () => {
     render(
       <TerminalOverlay

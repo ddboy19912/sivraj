@@ -5,6 +5,7 @@ import {
   createConfiguredTextEmbedder,
 } from "@sivraj/llm";
 import { createIntelligenceProcessingQueue } from "@sivraj/queue";
+import { createPrivateMemoryCiphertextCache } from "@sivraj/queue";
 import { createWorkerDb } from "./db.js";
 import {
   createCanonicalMemoryMergeJudge,
@@ -44,6 +45,7 @@ export async function startWorker(serviceName: string): Promise<void> {
     candidateMemoryArchiveQueue: "sivraj-candidate-memory-archive",
     weeklyReflectionQueue: "sivraj-weekly-reflection",
     connectorSyncQueue: "sivraj-connector-sync",
+    contextWarmupQueue: "sivraj-context-warmup",
     concurrency: bootstrapInput.concurrency,
     entityExtraction: bootstrapInput.entityExtractor ? "enabled" : "disabled",
     memoryExtraction: bootstrapInput.memoryExtractor ? "enabled" : "disabled",
@@ -76,7 +78,11 @@ function waitForShutdown(): Promise<void> {
 export async function prepareWorkerBootstrapInput(serviceName: string): Promise<WorkerBootstrapInput> {
   const { db, close } = createWorkerDb(resolveDatabaseUrl(process.env));
   const repository = createDrizzleArtifactRepository(db);
-  const privateMemoryReader = createConfiguredPrivateMemoryReader(process.env);
+  const redisUrl = readRequired(process.env["REDIS_URL"], "REDIS_URL");
+  const privateMemoryCiphertextCache = createPrivateMemoryCiphertextCache(redisUrl);
+  const privateMemoryReader = createConfiguredPrivateMemoryReader(process.env, {
+    ciphertextCache: privateMemoryCiphertextCache,
+  });
   const privateFragmentStorage = createConfiguredPrivateFragmentStorage(process.env);
   const privateSourceStorage = createConfiguredPrivateSourceStorage(process.env);
   const speechToTextTranscriber = createConfiguredSpeechToTextTranscriber(process.env);
@@ -94,7 +100,6 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
   const canonicalMemoryMergeJudge = structuredGenerator
     ? createCanonicalMemoryMergeJudge(structuredGenerator)
     : undefined;
-  const redisUrl = readRequired(process.env["REDIS_URL"], "REDIS_URL");
   const intelligenceQueue = createIntelligenceProcessingQueue(redisUrl);
 
   if (process.env["WORKER_DRAIN_EXISTING_ON_BOOT"] !== "false") {
@@ -116,6 +121,7 @@ export async function prepareWorkerBootstrapInput(serviceName: string): Promise<
     db,
     closeDb: close,
     repository,
+    privateMemoryCiphertextCache,
     privateMemoryReader,
     privateFragmentStorage,
     privateSourceStorage,

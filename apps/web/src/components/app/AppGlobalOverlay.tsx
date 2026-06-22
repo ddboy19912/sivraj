@@ -11,6 +11,8 @@ interface AppGlobalOverlayProps {
 }
 
 export function AppGlobalOverlay({ flow, overlay }: AppGlobalOverlayProps) {
+  // console.log({ overlay });
+
   if (overlay === "pending") {
     return <AppPendingOverlay flow={flow} />;
   }

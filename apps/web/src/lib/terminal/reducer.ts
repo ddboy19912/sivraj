@@ -1,8 +1,14 @@
 import type {
+  ParsedTerminalCommand,
   TerminalCommandStatus,
   TerminalHistoryCursor,
   TerminalOutputLine,
 } from "@/types/terminal.types";
+
+export type TerminalPendingConfirmation = {
+  command: Extract<ParsedTerminalCommand, { kind: "api" }>;
+  lines: TerminalOutputLine[];
+};
 
 export type TerminalState = {
   lines: TerminalOutputLine[];
@@ -10,6 +16,7 @@ export type TerminalState = {
   history: string[];
   historyCursor: TerminalHistoryCursor;
   status: TerminalCommandStatus;
+  pendingConfirmation: TerminalPendingConfirmation | null;
 };
 
 export type TerminalAction =
@@ -17,6 +24,9 @@ export type TerminalAction =
   | { type: "command.started"; input: string }
   | { type: "command.completed"; lines: TerminalOutputLine[] }
   | { type: "command.failed"; lines: TerminalOutputLine[] }
+  | { type: "confirmation.requested"; confirmation: TerminalPendingConfirmation }
+  | { type: "confirmation.invalid"; lines: TerminalOutputLine[] }
+  | { type: "confirmation.cancelled"; lines: TerminalOutputLine[] }
   | { type: "history.previous" }
   | { type: "history.next" }
   | { type: "clear" };
@@ -33,6 +43,7 @@ export const initialTerminalState: TerminalState = {
   history: [],
   historyCursor: null,
   status: "idle",
+  pendingConfirmation: null,
 };
 
 export function terminalReducer(
@@ -68,6 +79,7 @@ export function terminalReducer(
       return {
         ...state,
         status: "success",
+        pendingConfirmation: null,
         lines: action.lines.length === 0
           ? initialTerminalState.lines
           : [...state.lines, ...withTerminalLineIds(action.lines, state.lines.length)],
@@ -77,6 +89,33 @@ export function terminalReducer(
       return {
         ...state,
         status: "failed",
+        pendingConfirmation: null,
+        lines: [...state.lines, ...withTerminalLineIds(action.lines, state.lines.length)],
+      };
+
+    case "confirmation.requested":
+      return {
+        ...state,
+        status: "success",
+        pendingConfirmation: action.confirmation,
+        lines: [
+          ...state.lines,
+          ...withTerminalLineIds(action.confirmation.lines, state.lines.length),
+        ],
+      };
+
+    case "confirmation.invalid":
+      return {
+        ...state,
+        status: "success",
+        lines: [...state.lines, ...withTerminalLineIds(action.lines, state.lines.length)],
+      };
+
+    case "confirmation.cancelled":
+      return {
+        ...state,
+        status: "success",
+        pendingConfirmation: null,
         lines: [...state.lines, ...withTerminalLineIds(action.lines, state.lines.length)],
       };
 

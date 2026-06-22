@@ -5,6 +5,10 @@ import type { AppDependencies } from "../app.js";
 import { createTerminalRoutes } from "./terminal.js";
 import { parseTerminalCommandBody } from "./terminal-handlers.js";
 import {
+  formatAccountWipeLines,
+  wipeTerminalAccount,
+} from "./terminal-account-wipe.js";
+import {
   formatOnboardingResetLines,
   resetTerminalOnboarding,
 } from "./terminal-onboarding.js";
@@ -21,6 +25,19 @@ describe("terminal command body parsing", () => {
       command: {
         commandId: "onboarding.reset",
         dryRun: false,
+        confirmed: true,
+      },
+    });
+
+    expect(
+      parseTerminalCommandBody({
+        commandId: "account.wipe",
+        flags: { confirm: true },
+      }),
+    ).toMatchObject({
+      ok: true,
+      command: {
+        commandId: "account.wipe",
         confirmed: true,
       },
     });
@@ -81,6 +98,127 @@ describe("terminal route authorization", () => {
     });
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe("terminal account wipe", () => {
+  it("reports dry-run counts without mutating the account", async () => {
+    const mutations: string[] = [];
+    const result = await wipeTerminalAccount(
+      createAccountWipeDb({
+        counts: [1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        mutations,
+      }),
+      {
+        auth: {
+          type: "user",
+          sub: "user-1",
+          twinId: "twin-1",
+          walletAddress: "0xabc",
+          scopes: [],
+        },
+        twinId: "twin-1",
+        dryRun: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        dryRun: true,
+        deletedUsers: 1,
+        deletedWalletAccounts: 1,
+        deletedTwins: 1,
+        deletedRefreshSessions: 2,
+        deletedAuditEvents: 3,
+        deletedChatThreads: 4,
+        deletedChatMessages: 5,
+        deletedSourceArtifacts: 6,
+        deletedMemoryFragments: 7,
+        deletedCanonicalMemories: 8,
+        deletedCandidateMemories: 9,
+        deletedConnectorAccounts: 10,
+        deletedContextPackets: 11,
+        deletedContextRuntimePackets: 12,
+        deletedDocumentRows: 42,
+        deletedGraphNodes: 16,
+      },
+    });
+    expect(mutations).toEqual([]);
+  });
+
+  it("deletes audit events before deleting the user root on confirmed wipe", async () => {
+    const mutations: string[] = [];
+    const result = await wipeTerminalAccount(
+      createAccountWipeDb({
+        counts: Array.from({ length: 18 }, () => 1),
+        mutations,
+      }),
+      {
+        auth: {
+          type: "user",
+          sub: "user-1",
+          twinId: "twin-1",
+          walletAddress: "0xabc",
+          scopes: [],
+        },
+        twinId: "twin-1",
+        dryRun: false,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mutations).toEqual(["delete:audit_events", "delete:users"]);
+  });
+
+  it("requires a wallet-backed user session", async () => {
+    const result = await wipeTerminalAccount(
+      createAccountWipeDb({ counts: [], mutations: [] }),
+      {
+        auth: {
+          type: "agent",
+          sub: "agent-1",
+          twinId: "twin-1",
+          scopes: [],
+        },
+        twinId: "twin-1",
+        dryRun: false,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 403,
+      error: "user_wallet_required",
+    });
+  });
+
+  it("formats wipe output lines", () => {
+    expect(
+      formatAccountWipeLines({
+        dryRun: true,
+        walletAddress: "0xabc",
+        userId: "user-1",
+        twinId: "twin-1",
+        deletedUsers: 1,
+        deletedWalletAccounts: 1,
+        deletedTwins: 1,
+        deletedRefreshSessions: 2,
+        deletedAuditEvents: 3,
+        deletedChatThreads: 4,
+        deletedChatMessages: 5,
+        deletedSourceArtifacts: 6,
+        deletedMemoryFragments: 7,
+        deletedCanonicalMemories: 8,
+        deletedCandidateMemories: 9,
+        deletedConnectorAccounts: 10,
+        deletedContextPackets: 11,
+        deletedContextRuntimePackets: 12,
+        deletedDocumentRows: 13,
+        deletedGraphNodes: 14,
+        walrusNote: "Walrus note.",
+      }),
+    ).toContainEqual({ kind: "info", text: "Connector accounts removed: 10" });
   });
 });
 
@@ -199,6 +337,60 @@ function createResetDb(counts: number[], mutations: string[]): AppDependencies["
       },
     }),
   } as never;
+}
+
+function createAccountWipeDb(input: {
+  counts: number[];
+  mutations: string[];
+  hasTwin?: boolean;
+  hasWallet?: boolean;
+}): AppDependencies["db"] {
+  let selectIndex = 0;
+  let countIndex = 0;
+  let deleteIndex = 0;
+  const rowsForSelect = () => {
+    if (selectIndex === 0) {
+      selectIndex += 1;
+      return input.hasTwin === false ? [] : [{ id: "twin-1" }];
+    }
+    if (selectIndex === 1) {
+      selectIndex += 1;
+      return input.hasWallet === false ? [] : [{ id: "wallet-1" }];
+    }
+    selectIndex += 1;
+    return [{ count: input.counts[countIndex++] ?? 0 }];
+  };
+
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => queryRows(rowsForSelect()),
+      }),
+    }),
+    delete: () => ({
+      where: async () => {
+        input.mutations.push(deleteIndex++ === 0 ? "delete:audit_events" : "delete:users");
+      },
+    }),
+    insert: () => ({
+      values: async () => undefined,
+    }),
+    update: () => ({
+      set: () => ({
+        where: async () => undefined,
+      }),
+    }),
+  } as never;
+}
+
+function queryRows(rows: unknown[]) {
+  return {
+    limit: async () => rows,
+    then: (
+      resolve: (value: unknown[]) => unknown,
+      reject?: (reason: unknown) => unknown,
+    ) => Promise.resolve(rows).then(resolve, reject),
+  };
 }
 
 function withAuthEnv() {

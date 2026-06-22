@@ -20,6 +20,13 @@ export type SearchMemoryArgs = {
   limit?: number;
 };
 
+export type ContextWarmupArgs = {
+  reason: "app_boot" | "voice_start" | "mcp_connect" | "artifact_processed" | "connector_sync_completed" | "manual";
+  surface?: "mcp" | "cli";
+  scope?: string;
+  projectFingerprint?: JsonObject;
+};
+
 export type AgentWritebackArgs = {
   agentName?: string;
   repo?: string;
@@ -74,6 +81,15 @@ export class SivrajApiClient {
 
   async searchMemory(args: SearchMemoryArgs): Promise<JsonObject> {
     return this.request("POST", `/v1/twins/${this.config.twinId}/memories/search`, args);
+  }
+
+  async warmContext(args: ContextWarmupArgs): Promise<JsonObject> {
+    return this.request("POST", `/v1/twins/${this.config.twinId}/context/warmup`, {
+      surface: args.surface ?? "mcp",
+      reason: args.reason,
+      scope: args.scope,
+      projectFingerprint: args.projectFingerprint,
+    });
   }
 
   async getProjectProfile(args: EngineeringContextArgs = {}): Promise<JsonObject> {

@@ -60,6 +60,60 @@ describe("loadMemoryContext", () => {
     vi.clearAllMocks();
   });
 
+  it("returns hot current-truth facts without archived decrypt for specific memory questions", async () => {
+    const currentTruth = memoryCandidate(
+      "canonical-current-truth:occupation-1",
+      "Current profile fact: Fortune's occupation is software engineer.",
+    );
+
+    memoryRetrievalMocks.loadCanonicalCurrentTruthSearchCandidates.mockResolvedValue({
+      candidates: [currentTruth],
+      canonicalMemoryIdsByCandidateId: new Map([[currentTruth.id, "canonical-occupation-1"]]),
+      tokenAccountingByCandidateId: new Map(),
+    });
+    memoryRetrievalMocks.selectCurrentTruthMemoryResults.mockReturnValue([
+      { memory: currentTruth, score: 30, matchedTerms: ["current-truth"] },
+    ]);
+    memoryRetrievalMocks.shouldUseHotCurrentTruthFallback.mockReturnValue(true);
+    memoryRetrievalMocks.rankChatMemoryResults.mockResolvedValue([
+      { memory: currentTruth, score: 0.98, matchedTerms: ["occupation"] },
+    ]);
+
+    const context = await loadMemoryContext({
+      db: {} as any,
+      privateMemoryReader: { readPrivateMemory: vi.fn() } as any,
+      memorySearchConfig: memorySearchConfig(),
+      twinId: "twin-1",
+      query: "Do you know my occupation?",
+      contextResolution: {
+        retrieval: "hot_memory",
+        answerTarget: "memory",
+        intent: "memory_qa",
+        memoryRequest: {
+          kind: "specific_fact",
+          query: "Do you know my occupation?",
+          scope: "profile",
+          searchTerms: ["occupation"],
+        },
+      },
+      runtimeConfig: {
+        id: "provider-1",
+        providerKind: "openai",
+        displayName: "OpenAI",
+        baseUrl: "https://example.com/v1",
+        model: "gpt-test",
+        apiKey: "test-key",
+        source: "user",
+      },
+    });
+
+    expect(memoryRetrievalMocks.loadSearchRows).not.toHaveBeenCalled();
+    expect(memoryRetrievalMocks.loadCandidateMemorySearchCandidates).not.toHaveBeenCalled();
+    expect(context.results.map((result) => result.memory.content)).toEqual([
+      "Current profile fact: Fortune's occupation is software engineer.",
+    ]);
+  });
+
   it("continues to archived candidate memories when memory QA has no current-truth hit", async () => {
     const candidate = memoryCandidate(
       "candidate-1",
@@ -127,6 +181,83 @@ describe("loadMemoryContext", () => {
     expect(context.results.map((result) => result.memory.content)).toEqual([
       "professional profile_fact memory: Fortune is a software engineer.",
     ]);
+  });
+
+  it("drops cross-twin candidate memories before semantic ranking and prompt context", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const otherTwinCandidate = memoryCandidate(
+      "candidate-other-twin",
+      "professional profile_fact memory: The user is a Full Stack Developer.",
+      "twin-other",
+    );
+
+    memoryRetrievalMocks.loadCanonicalCurrentTruthSearchCandidates.mockResolvedValue({
+      candidates: [],
+      canonicalMemoryIdsByCandidateId: new Map(),
+      tokenAccountingByCandidateId: new Map(),
+    });
+    memoryRetrievalMocks.selectCurrentTruthMemoryResults.mockReturnValue([]);
+    memoryRetrievalMocks.shouldUseHotCurrentTruthFallback.mockReturnValue(true);
+    memoryRetrievalMocks.loadSearchRows.mockResolvedValue({
+      rows: [],
+      mode: "recent_fallback",
+      indexMatchCount: 0,
+    });
+    memoryRetrievalMocks.loadCanonicalMemoryIdsByFragmentId.mockResolvedValue(new Map());
+    memoryRetrievalMocks.loadCandidateMemorySearchCandidates.mockResolvedValue({
+      candidates: [otherTwinCandidate],
+      canonicalMemoryIdsByCandidateId: new Map([[otherTwinCandidate.id, "canonical-other"]]),
+      tokenAccountingByCandidateId: new Map(),
+    });
+    memoryRetrievalMocks.rankChatMemoryResults.mockImplementation(async ({ candidates }) =>
+      candidates.map((memory: MemoryCandidate) => ({
+        memory,
+        score: 0.91,
+        matchedTerms: ["semantic"],
+      }))
+    );
+
+    const context = await loadMemoryContext({
+      db: {} as any,
+      privateMemoryReader: {} as any,
+      memorySearchConfig: memorySearchConfig(),
+      twinId: "twin-1",
+      query: "What is my occupation?",
+      contextResolution: {
+        retrieval: "hot_memory",
+        answerTarget: "memory",
+        intent: "memory_qa",
+        memoryRequest: {
+          kind: "specific_fact",
+          query: "What is my occupation?",
+          scope: "profile",
+          searchTerms: ["occupation"],
+        },
+      },
+      runtimeConfig: {
+        id: "provider-1",
+        providerKind: "openai",
+        displayName: "OpenAI",
+        baseUrl: "https://example.com/v1",
+        model: "gpt-test",
+        apiKey: "test-key",
+        source: "user",
+      },
+    });
+
+    const rankedCandidates = memoryRetrievalMocks.rankChatMemoryResults.mock.calls
+      .flatMap(([input]) => input.candidates as MemoryCandidate[]);
+    expect(rankedCandidates.map((candidate) => candidate.id)).not.toContain(otherTwinCandidate.id);
+    expect(context.results).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "chat memory candidate rejected for twin mismatch",
+      expect.objectContaining({
+        requestedTwinId: "twin-1",
+        memoryId: otherTwinCandidate.id,
+        memoryTwinId: "twin-other",
+      }),
+    );
+    warnSpy.mockRestore();
   });
 
   it("does not let current-truth fallback block archived candidate memories", async () => {
@@ -275,10 +406,10 @@ describe("loadMemoryContext", () => {
   });
 });
 
-function memoryCandidate(id: string, content: string): MemoryCandidate {
+function memoryCandidate(id: string, content: string, twinId = "twin-1"): MemoryCandidate {
   return {
     id,
-    twinId: "twin-1",
+    twinId,
     sourceArtifactId: "artifact-1",
     content,
     summary: content,

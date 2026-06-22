@@ -15,6 +15,7 @@ export default function HomeRoute() {
   return (
     <Homepage
       statusHud={onboarding.canUseProtectedApp ? homeStatusHud : null}
+      runtimeState={twinRuntime.runtimeState}
       voiceChat={onboarding.canUseProtectedApp ? voiceChat : null}
       twinName={onboarding.twinName}
     />

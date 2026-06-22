@@ -615,6 +615,8 @@ try {
             model: output.model,
             providerKind: runtimeConfig.providerKind,
             memoryIntent,
+            contextResolution,
+            retrievedMemoryCount: memoryContext.results.length,
         });
     }
 }
@@ -706,7 +708,9 @@ async function loadDocumentContextForTurn(input: {
         }));
         return {
             documentContext,
-            retrievalStatus: documentContext.passages.length > 0 || documentContext.inspectionSources.length > 0
+            retrievalStatus: documentContext.degradation
+                ? degradedRetrievalStatus("document", documentContext.degradation.reason)
+                : documentContext.passages.length > 0 || documentContext.inspectionSources.length > 0
                 ? retrievedRetrievalStatus("document")
                 : emptyRetrievalStatus("document"),
         };

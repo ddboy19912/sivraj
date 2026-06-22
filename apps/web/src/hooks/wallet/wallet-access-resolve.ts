@@ -4,6 +4,7 @@ import type {
   ResolveActiveSessionInput,
   ResolveWalletAccessStateInput,
   TwinBootstrap,
+  WalletSessionRestoreStatus,
 } from "@/types/wallet.types";
 import { errorMessage, isAuthError } from "@/lib/api";
 import { normalizeTwinName } from "@/lib/onboarding/flow-selectors";
@@ -41,9 +42,10 @@ export function resolveWalletAccessState(
 }
 
 function resolveWalletPendingState({
+  isWalletSessionRestorePending,
   isWalletSettling,
 }: ResolveWalletAccessStateInput): AppAccessState | null {
-  if (!isWalletSettling) {
+  if (!isWalletSettling && !isWalletSessionRestorePending) {
     return null;
   }
 
@@ -201,17 +203,52 @@ export function resolveActiveSession({
 export function shouldHoldStoredSessionForWalletRestore({
   selectedWalletAddress,
   activeSession,
-  hasObservedWalletConnection,
+  hasTimedOut,
+  storedWalletAddress,
 }: {
   selectedWalletAddress: string | null;
   activeSession: Session | null;
-  hasObservedWalletConnection: boolean;
+  hasTimedOut: boolean;
+  storedWalletAddress: string | null;
 }) {
-  return Boolean(
-    activeSession &&
-      !selectedWalletAddress &&
-      !hasObservedWalletConnection,
+  return (
+    resolveWalletSessionRestoreStatus({
+      activeSession,
+      hasTimedOut,
+      selectedWalletAddress,
+      storedWalletAddress,
+    }) === "pending"
   );
+}
+
+export function resolveWalletSessionRestoreStatus({
+  activeSession,
+  hasTimedOut,
+  selectedWalletAddress,
+  storedWalletAddress,
+}: {
+  activeSession: Session | null;
+  hasTimedOut: boolean;
+  selectedWalletAddress: string | null;
+  storedWalletAddress: string | null;
+}): WalletSessionRestoreStatus {
+  if (selectedWalletAddress) {
+    return "resolved";
+  }
+
+  if (!activeSession) {
+    return "idle";
+  }
+
+  if (!storedWalletAddress) {
+    return "resolved";
+  }
+
+  if (!addressesMatch(activeSession.walletAddress, storedWalletAddress)) {
+    return "resolved";
+  }
+
+  return hasTimedOut ? "timed_out" : "pending";
 }
 
 export function isCompletedBootstrap({ profile, identity }: TwinBootstrap) {

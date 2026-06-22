@@ -40,7 +40,7 @@ export type BuildPromptMessagesInput = {
   contextResolution?: ConversationContextResolution;
   coreCommsContext: CoreCommsContext;
   memoryContext: ChatMemoryContext;
-  documentContext?: Pick<DocumentContext, "passages" | "inspectionSources" | "retrievalPlan"> | null;
+  documentContext?: Pick<DocumentContext, "passages" | "inspectionSources" | "retrievalPlan" | "degradation"> | null;
   recentMessages: ChatMessageRow[];
   excludeMessageIds?: Set<string>;
   providerLabel: string;
@@ -66,6 +66,7 @@ export function buildPromptMessages(input: BuildPromptMessagesInput): ChatMessag
   const documentPlanBlock = JSON.stringify(
     input.documentContext?.retrievalPlan ?? SKIPPED_DOCUMENT_RETRIEVAL_PLAN,
   );
+  const documentRetrievalStatusBlock = formatDocumentRetrievalStatus(input.documentContext ?? null);
   const conversationResolution = input.contextResolution
     ?? fallbackConversationContextResolution(input.currentMessage);
   const coreCommsBlock = formatCoreCommsContext(input.coreCommsContext);
@@ -96,6 +97,7 @@ export function buildPromptMessages(input: BuildPromptMessagesInput): ChatMessag
         "When document inspection sources are available, use them as primary document evidence. Page-range inspection sources are authoritative for questions about those pages.",
         "When exact-search or query-scan inspection reports are available, use their reported counts and evidence directly for broad document questions such as occurrence counts, structure, summaries, and details across a resolved span.",
         "When only document source passages are available, answer only from those passages and their page ranges.",
+        "If document retrieval status is degraded, do not say the user never sent a document. Say the document is saved but temporarily unreadable, and ask the user to retry.",
         "For document questions, do not add plausible details that are not present in document inspection sources or document source passages. If the provided document evidence does not contain the answer, say you do not have enough information from the uploaded document.",
         "Document labels like [DOC_1] are internal grounding markers; never include them in user-facing text.",
         "Use resolved conversation context to understand follow-up references. When standaloneQuery differs from the raw user message, answer the standaloneQuery while preserving the user's intent.",
@@ -122,11 +124,32 @@ export function buildPromptMessages(input: BuildPromptMessagesInput): ChatMessag
         "",
         "Document retrieval plan:",
         documentPlanBlock,
+        "",
+        "Document retrieval status:",
+        documentRetrievalStatusBlock,
       ].join("\n"),
     },
     ...recent,
     { role: "user", content: formatCurrentUserPrompt(input.currentMessage, conversationResolution) },
   ];
+}
+
+function formatDocumentRetrievalStatus(
+  documentContext: Pick<DocumentContext, "passages" | "inspectionSources" | "degradation"> | null,
+): string {
+  if (documentContext?.degradation) {
+    return JSON.stringify({
+      state: "degraded",
+      reason: documentContext.degradation.reason,
+      message: documentContext.degradation.message,
+      artifactIds: documentContext.degradation.artifactIds,
+      failureCount: documentContext.degradation.failureCount,
+    });
+  }
+  if ((documentContext?.passages.length ?? 0) > 0 || (documentContext?.inspectionSources.length ?? 0) > 0) {
+    return JSON.stringify({ state: "retrieved" });
+  }
+  return JSON.stringify({ state: "not_available_for_turn" });
 }
 
 function formatMemoryPromptBlock(

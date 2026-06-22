@@ -37,6 +37,49 @@ test("getEngineeringContext uses the configured preset unless a tool call overri
   }
 });
 
+test("warmContext posts the MCP surface warmup request", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (url, init) => {
+    calls.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+
+    return new Response(JSON.stringify({ status: "queued", packetIds: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = new SivrajApiClient({
+      apiUrl: "http://api.test",
+      twinId: "twin-1",
+      token: "token-1",
+      agentPreset: "codex",
+      includeCandidates: false,
+      maxItemsPerSection: 12,
+      writebackEncryption: "api",
+    });
+
+    await client.warmContext({
+      reason: "mcp_connect",
+      projectFingerprint: {
+        projectName: "sivraj",
+      },
+    });
+
+    assert.equal(calls[0]?.url, "http://api.test/v1/twins/twin-1/context/warmup");
+    assert.equal(calls[0]?.body["surface"], "mcp");
+    assert.equal(calls[0]?.body["reason"], "mcp_connect");
+    assert.deepEqual(calls[0]?.body["projectFingerprint"], { projectName: "sivraj" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("recordAgentWriteback sends client-encrypted payload when enabled", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const originalFetch = globalThis.fetch;

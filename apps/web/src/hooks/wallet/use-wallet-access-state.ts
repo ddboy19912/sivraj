@@ -11,6 +11,7 @@ type WalletAccessStateInput = {
   hasMatchingWalletSession: boolean;
   isBootstrapLoading: boolean;
   isSigning: boolean;
+  isWalletSessionRestorePending: boolean;
   isWalletSettling: boolean;
   refetchBootstrap: () => void;
   session: Session | null;
@@ -28,6 +29,7 @@ export function useWalletAccessState(input: WalletAccessStateInput) {
     hasMatchingWalletSession: input.hasMatchingWalletSession,
     isBootstrapLoading: input.isBootstrapLoading,
     isSigning: input.isSigning,
+    isWalletSessionRestorePending: input.isWalletSessionRestorePending,
     isWalletSettling: input.isWalletSettling,
     retry: input.refetchBootstrap,
     session: input.session,

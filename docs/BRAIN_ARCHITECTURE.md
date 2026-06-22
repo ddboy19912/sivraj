@@ -30,17 +30,25 @@ Sivraj brain is the backend-owned knowledge system behind chat, voice, uploads, 
    - `candidate_memories` stores evidence and extraction provenance.
    - Memory intake must classify, reconcile, supersede, or ignore; it must not blindly append.
 
-4. Knowledge Graph
+4. Private Context Runtime
+   - `context_runtime_packets` stores safe, derived packets for fast cross-surface context such as core profile, personal hot memory, engineering context, document inventory, active session, and surface warmup.
+   - Walrus/Seal remains the encrypted cold archive for raw private statements and source evidence.
+   - Live surfaces should resolve hot context from canonical facts and ready runtime packets first; warm/cold evidence retrieval belongs behind explicit policy or background warmup.
+   - Redis may cache ciphertext bytes for repeated encrypted archive reads, but durable plaintext caches are not allowed.
+
+5. Knowledge Graph
    - `graph_nodes` and `graph_edges` connect user, assistant, projects, documents, people, tools, decisions, and concepts.
    - Graph is supporting structure for broad questions like "what do you know about my project?"
 
-5. Brain Planner
+6. Brain Planner
    - One LLM planner chooses actions using typed JSON.
    - Planner inputs include current message, recent conversation, core identity, memory hints, document inventory, and available tools.
    - Planner output names tool calls, not route branches.
    - If the planner is unavailable, the backend should preserve the user query and fail/answer cautiously; it must not use keyword fallbacks that pretend to understand document or memory intent.
 
-6. Brain Tools
+7. Brain Tools
+   - `resolve_twin_context`
+   - `warm_context`
    - `get_core_profile`
    - `search_memory`
    - `list_documents`
@@ -56,7 +64,7 @@ Sivraj brain is the backend-owned knowledge system behind chat, voice, uploads, 
    - `write_memory`
    - `supersede_memory`
 
-7. Answer Composer
+8. Answer Composer
    - Final response model receives tool results and evidence only.
    - It must distinguish saved user memory from public knowledge.
    - It must not invent facts absent from selected evidence.
@@ -70,7 +78,7 @@ Sivraj brain is the backend-owned knowledge system behind chat, voice, uploads, 
 - "How many chapters?" uses `document_structure_items` if present; otherwise triggers full-document structure extraction/scan.
 - "How many times is Fagin mentioned?" uses `count_document_matches` over the stored extracted document/pages, with the LLM choosing the literal term and match mode.
 - "Summarize chapter 4" resolves chapter structure to page/char range, then reads/scans that range.
-- Chat and voice must call the same brain path.
+- Chat, voice, onboarding voice, MCP, CLI, mobile, desktop, and external APIs must call the same private context runtime for memory context.
 - Duplicate document uploads reuse existing artifacts.
 - Duplicate memories merge or supersede existing canonical memories.
 
@@ -82,3 +90,4 @@ Sivraj brain is the backend-owned knowledge system behind chat, voice, uploads, 
 4. Add on-demand document structure extraction for old artifacts without structure rows. *(Implemented for chat document retrieval: global whole-document structure/count plans can read stored pages, ask the configured LLM for structure, persist `document_structure_items`, and answer from the refreshed inventory in the same turn.)*
 5. Add memory reconciliation planner/tool for all memory writes.
 6. Add brain inspection API/UI for known facts, sources, structure, duplicates, contradictions, and failed extractions.
+7. Move every communication surface onto `resolveTwinContext` policies, starting with hot canonical facts and runtime packets, then warm/cold evidence only when explicitly requested.

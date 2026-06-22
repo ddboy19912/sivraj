@@ -35,8 +35,33 @@ import {
   insertQueuedSourceArtifact,
   loadPrimaryMemoryFragment,
   optionalString,
+  readQueryLimit,
   type StoredPrivateMemory,
 } from "../lib/http/route-helpers.js";
+
+const RETRYABLE_FILE_SOURCE_TYPES = [
+  "upload",
+  "pdf",
+  "ocr_pdf",
+  "markdown",
+  "docx",
+  "csv",
+  "image",
+] as const;
+
+type FailedArtifactRetryResult = {
+  artifactId: string;
+  sourceType: string;
+  status: (typeof sourceArtifacts.$inferSelect)["ingestionStatus"];
+  retried: boolean;
+  processingJobId?: string | null;
+  warning?: string | null;
+  reason?: string;
+};
+
+export function isRetryableFileSourceType(sourceType: string) {
+  return (RETRYABLE_FILE_SOURCE_TYPES as readonly string[]).includes(sourceType);
+}
 
 export async function handleArtifactUpload(
   c: Context<AuthEnv>,
@@ -197,6 +222,94 @@ export async function handleArtifactRetry(
     status: retried?.ingestionStatus ?? "queued",
     processingJobId: queueResult.processingJobId,
     warning: queueResult.warning,
+  });
+}
+
+export async function handleArtifactRetryFailed(
+  c: Context<AuthEnv>,
+  deps: AppDependencies,
+  { auth, twinId }: { auth: AuthorizedTwin["auth"]; twinId: string },
+) {
+  const { db, artifactProcessingQueue } = deps;
+  const limit = readQueryLimit(c.req.query("limit"), 50, 200);
+  const artifacts = await db
+    .select()
+    .from(sourceArtifacts)
+    .where(and(
+      eq(sourceArtifacts.twinId, twinId),
+      eq(sourceArtifacts.ingestionStatus, "failed"),
+      inArray(sourceArtifacts.sourceType, [...RETRYABLE_FILE_SOURCE_TYPES]),
+    ))
+    .orderBy(desc(sourceArtifacts.updatedAt))
+    .limit(limit);
+
+  const results: FailedArtifactRetryResult[] = [];
+  for (const artifact of artifacts) {
+    if (!artifact.rawStorageRef) {
+      results.push({
+        artifactId: artifact.id,
+        sourceType: artifact.sourceType,
+        status: artifact.ingestionStatus,
+        retried: false,
+        reason: "artifact_source_storage_missing",
+      });
+      continue;
+    }
+
+    const retried = await updateArtifactForRetry(db, deps.artifactStatusPublisher, {
+      auth,
+      twinId,
+      artifact,
+    });
+    const queueResult = await enqueueArtifactRetryJob({
+      db,
+      artifactProcessingQueue,
+      twinId,
+      artifactId: artifact.id,
+      sourceType: artifact.sourceType,
+    });
+
+    results.push({
+      artifactId: retried?.id ?? artifact.id,
+      sourceType: artifact.sourceType,
+      status: retried?.ingestionStatus ?? "queued",
+      retried: true,
+      processingJobId: queueResult.processingJobId,
+      warning: queueResult.warning,
+    });
+  }
+
+  const retriedCount = results.filter((result) => result.retried).length;
+  const skippedCount = results.length - retriedCount;
+  const warningCount = results.reduce(
+    (sum, result) => sum + (result.warning ? 1 : 0),
+    0,
+  );
+
+  await db.insert(auditEvents).values({
+    twinId,
+    actorType: auth.type,
+    actorId: auth.sub,
+    eventType: "artifact.failed_retries_requested",
+    resourceType: "twin",
+    resourceId: twinId,
+    metadata: {
+      limit,
+      matchedCount: artifacts.length,
+      retriedCount,
+      skippedCount,
+      warningCount,
+      sourceTypes: RETRYABLE_FILE_SOURCE_TYPES,
+    },
+  });
+
+  return c.json({
+    limit,
+    matchedCount: artifacts.length,
+    retriedCount,
+    skippedCount,
+    warningCount,
+    results,
   });
 }
 

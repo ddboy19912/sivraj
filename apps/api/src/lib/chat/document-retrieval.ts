@@ -22,7 +22,9 @@ import type {
   DocumentContext,
   DocumentInspectionSource,
   DocumentInventoryItem,
+  DocumentRetrievalDegradation,
   DocumentRetrievalPlan,
+  ChatRetrievalDegradationReason,
 } from "./turn-types.js";
 import { isUuid } from "./attachments.js";
 import { parseJsonObject } from "./chat-json.js";
@@ -51,7 +53,8 @@ import { rankChatMemoryResults } from "./memory-ranking.js";
 import { withTimeout } from "./chat-promise-timeout.js";
 
 const CHAT_MEMORY_READABLE_STATUSES = ["verified_available", "renewed"] as const;
-const CHAT_DOCUMENT_DECRYPT_TIMEOUT_DEFAULT_MS = 30_000;
+const CHAT_DOCUMENT_DECRYPT_TIMEOUT_DEFAULT_MS = 12_000;
+const CHAT_DOCUMENT_DECRYPT_TIMEOUT_MAX_DEFAULT_MS = 12_000;
 const CHAT_DOCUMENT_CONTEXT_CACHE_TTL_DEFAULT_MS = 10 * 60 * 1000;
 const CHAT_DOCUMENT_RECENT_LIMIT_DEFAULT = 3;
 const CHAT_DOCUMENT_PASSAGE_LIMIT_DEFAULT = 4;
@@ -74,6 +77,18 @@ const CHAT_DOCUMENT_EXACT_SEARCH_PAGE_LIMIT_DEFAULT = 2_000;
 
 type PrivateMemoryReader = NonNullable<AppDependencies["privateMemoryReader"]>;
 
+type DocumentReadFailure = {
+  sourceArtifactId: string | null;
+  memoryFragmentId: string | null;
+  reason: ChatRetrievalDegradationReason;
+  errorMessage: string;
+};
+
+type DocumentRetrievalDiagnostics = {
+  failures: DocumentReadFailure[];
+  failedMemoryFragmentIds: Set<string>;
+};
+
 const chatDocumentSourceCache = new Map<string, {
   expiresAt: number;
   value?: Awaited<ReturnType<typeof toDocumentSourceCandidate>> | null;
@@ -93,9 +108,7 @@ export function shouldLoadDocumentContext(contextResolution: any) {
         contextResolution.intent === "document_qa";
 }
 async function loadDocumentContext(input: any) {
-    if (!input.privateMemoryReader) {
-        return emptyDocumentContext();
-    }
+    const diagnostics = createDocumentRetrievalDiagnostics();
     const thread = input.thread ?? await loadThreadForDocumentFocus({
         db: input.db,
         twinId: input.twinId,
@@ -129,16 +142,19 @@ async function loadDocumentContext(input: any) {
         runtimeConfig: input.runtimeConfig,
         llmFetch: input.llmFetch,
     });
-    const inventoryAfterOnDemandStructure = await ensureDocumentStructureForPlan({
-        db: input.db,
-        privateMemoryReader: input.privateMemoryReader,
-        rows,
-        inventory,
-        retrievalPlan,
-        runtimeConfig: input.runtimeConfig,
-        llmFetch: input.llmFetch,
-        documentReadTimeoutMs: input.documentReadTimeoutMs,
-    });
+    const inventoryAfterOnDemandStructure = input.privateMemoryReader
+        ? await ensureDocumentStructureForPlan({
+            db: input.db,
+            privateMemoryReader: input.privateMemoryReader,
+            rows,
+            inventory,
+            retrievalPlan,
+            runtimeConfig: input.runtimeConfig,
+            llmFetch: input.llmFetch,
+            documentReadTimeoutMs: input.documentReadTimeoutMs,
+            diagnostics,
+        })
+        : inventory;
     const metadataContext = buildDocumentMetadataContext({
         retrievalPlan,
         inventory: inventoryAfterOnDemandStructure,
@@ -152,6 +168,9 @@ async function loadDocumentContext(input: any) {
         inventory: inventoryAfterOnDemandStructure,
         focusedArtifactIds,
     });
+    if (!input.privateMemoryReader) {
+        return storageUnavailableDocumentContext(retrievalPlan, scopedArtifactIds);
+    }
     const scopedRows = rows.filter((row: any) => scopedArtifactIds.includes(row.sourceArtifact.id));
     const exactSearchSources = await loadDocumentExactSearchInspectionSources({
         db: input.db,
@@ -160,13 +179,14 @@ async function loadDocumentContext(input: any) {
         twinId: input.twinId,
         retrievalPlan,
         documentReadTimeoutMs: input.documentReadTimeoutMs,
+        diagnostics,
     });
     if (exactSearchSources.length > 0) {
-        return {
+        return withDocumentDegradation({
             ...emptyDocumentContext(),
             retrievalPlan,
             inspectionSources: exactSearchSources,
-        };
+        }, diagnostics, scopedArtifactIds);
     }
     const navigationScope = resolveDocumentNavigationPageScope({
         retrievalPlan,
@@ -182,6 +202,7 @@ async function loadDocumentContext(input: any) {
             ? navigationScope.pagesByArtifactId
             : new Map(),
         documentReadTimeoutMs: input.documentReadTimeoutMs,
+        diagnostics,
     });
     const queryInspectionSources = pageInspectionSources.length > 0
         ? []
@@ -198,6 +219,7 @@ async function loadDocumentContext(input: any) {
             runtimeConfig: input.runtimeConfig,
             llmFetch: input.llmFetch,
             documentReadTimeoutMs: input.documentReadTimeoutMs,
+            diagnostics,
         });
     const inspectionSources = [
         ...pageInspectionSources,
@@ -226,7 +248,7 @@ async function loadDocumentContext(input: any) {
         matchedTerms: ["page"],
     }));
     if (pageEvidenceResults.length > 0) {
-        return {
+        return withDocumentDegradation({
             results: pageEvidenceResults,
             retrievalPlan,
             inspectionSources,
@@ -245,7 +267,7 @@ async function loadDocumentContext(input: any) {
                     matchedTerms: result.matchedTerms,
                 };
             }),
-        };
+        }, diagnostics, scopedArtifactIds);
     }
     const queryScanResults = inspectionSources
         .filter((source: any) => source.scope === "llm_query_report" && source.includedFullText && source.content.trim().length > 0)
@@ -270,7 +292,7 @@ async function loadDocumentContext(input: any) {
         matchedTerms: ["query_scan"],
     }));
     if (queryScanResults.length > 0) {
-        return {
+        return withDocumentDegradation({
             results: queryScanResults,
             retrievalPlan,
             inspectionSources,
@@ -289,7 +311,7 @@ async function loadDocumentContext(input: any) {
                     matchedTerms: result.matchedTerms,
                 };
             }),
-        };
+        }, diagnostics, scopedArtifactIds);
     }
     const chunkContext = await loadDocumentContextFromIndexedChunks({
         db: input.db,
@@ -301,18 +323,19 @@ async function loadDocumentContext(input: any) {
         llmFetch: input.llmFetch,
         retrievalPlan,
         documentReadTimeoutMs: input.documentReadTimeoutMs,
+        diagnostics,
     });
     if (chunkContext.passages.length > 0) {
-        return {
+        return withDocumentDegradation({
             ...chunkContext,
             inspectionSources,
-        };
+        }, diagnostics, scopedArtifactIds);
     }
-    return {
+    return withDocumentDegradation({
         ...emptyDocumentContext(),
         retrievalPlan,
         inspectionSources,
-    };
+    }, diagnostics, scopedArtifactIds);
 }
 function buildDocumentMetadataContext(input: {
     retrievalPlan: DocumentRetrievalPlan;
@@ -382,6 +405,7 @@ async function ensureDocumentStructureForPlan(input: {
     runtimeConfig: ChatRuntimeConfig | null | undefined;
     llmFetch?: typeof fetch;
     documentReadTimeoutMs?: number;
+    diagnostics?: DocumentRetrievalDiagnostics;
 }) {
     if (!shouldExtractDocumentStructureOnDemand(input.retrievalPlan) || !input.runtimeConfig) {
         return input.inventory;
@@ -401,7 +425,7 @@ async function ensureDocumentStructureForPlan(input: {
         return input.inventory;
     }
     const extractedCounts = await Promise.all(rowsToExtract.map(async (row) => {
-        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs);
+        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs, input.diagnostics);
         if (!source) {
             return 0;
         }
@@ -907,6 +931,7 @@ async function loadDocumentContextFromIndexedChunks(input: any) {
         rows: rankedRows.rows,
         privateMemoryReader: input.privateMemoryReader,
         documentReadTimeoutMs: input.documentReadTimeoutMs,
+        diagnostics: input.diagnostics,
     });
     const rankedChunks = await rankChatMemoryResults({
         candidates,
@@ -969,6 +994,7 @@ export function emptyDocumentContext(): DocumentContext {
         },
         inspectionSources: [],
         passages: [],
+        degradation: null,
     };
 }
 async function loadDocumentExactSearchInspectionSources(input: {
@@ -978,6 +1004,7 @@ async function loadDocumentExactSearchInspectionSources(input: {
     twinId: string;
     retrievalPlan: DocumentRetrievalPlan;
     documentReadTimeoutMs?: number;
+    diagnostics?: DocumentRetrievalDiagnostics;
 }): Promise<DocumentInspectionSource[]> {
     const exactQuery = input.retrievalPlan.exactQuery?.trim();
     if (
@@ -997,7 +1024,7 @@ async function loadDocumentExactSearchInspectionSources(input: {
     );
     const sources = [];
     for (const row of input.rows) {
-        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs);
+        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs, input.diagnostics);
         if (!source) {
             continue;
         }
@@ -1065,7 +1092,7 @@ async function loadDocumentQueryInspectionSources(input: any) {
             artifactIds: [row.sourceArtifact.id],
             targetPages,
         });
-        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs);
+        const source = await readDocumentSourceCandidateOrNull(row, input.privateMemoryReader, input.documentReadTimeoutMs, input.diagnostics);
         if (!source || pageRows.length === 0) {
             continue;
         }
@@ -1193,7 +1220,7 @@ async function loadDocumentPageInspectionSources(input: any) {
         const source = await readDocumentSourceCandidateOrNull({
             memoryFragment: first.memoryFragment,
             sourceArtifact: first.sourceArtifact,
-        }, input.privateMemoryReader, input.documentReadTimeoutMs);
+        }, input.privateMemoryReader, input.documentReadTimeoutMs, input.diagnostics);
         if (!source) {
             return [];
         }
@@ -1415,7 +1442,7 @@ async function loadIndexedDocumentChunkCandidates(input: any) {
         const source = await readDocumentSourceCandidateOrNull({
             memoryFragment: first.memoryFragment,
             sourceArtifact: first.sourceArtifact,
-        }, input.privateMemoryReader, input.documentReadTimeoutMs);
+        }, input.privateMemoryReader, input.documentReadTimeoutMs, input.diagnostics);
         if (!source) {
             return [];
         }
@@ -1471,7 +1498,7 @@ function toIndexedDocumentChunkCandidate(source: any, row: any) {
     };
 }
 async function toDocumentSourceCandidateWithTimeout(row: any, privateMemoryReader: any, timeoutMsOverride?: number) {
-    const timeoutMs = timeoutMsOverride ?? readPositiveInteger(process.env["CHAT_DOCUMENT_DECRYPT_TIMEOUT_MS"], CHAT_DOCUMENT_DECRYPT_TIMEOUT_DEFAULT_MS);
+    const timeoutMs = resolveDocumentReadTimeoutMs(timeoutMsOverride);
     const cacheTtlMs = readPositiveInteger(process.env["CHAT_DOCUMENT_CONTEXT_CACHE_TTL_MS"], CHAT_DOCUMENT_CONTEXT_CACHE_TTL_DEFAULT_MS);
     const cacheKey = chatDocumentSourceCacheKey(row);
     const now = Date.now();
@@ -1502,8 +1529,22 @@ async function toDocumentSourceCandidateWithTimeout(row: any, privateMemoryReade
     });
     return withTimeout(readPromise, timeoutMs, `chat_document_read_timeout:${row.memoryFragment.id}`);
 }
-async function readDocumentSourceCandidateOrNull(row: any, privateMemoryReader: any, timeoutMsOverride?: number) {
+async function readDocumentSourceCandidateOrNull(
+    row: any,
+    privateMemoryReader: any,
+    timeoutMsOverride?: number,
+    diagnostics?: DocumentRetrievalDiagnostics,
+) {
+    const memoryFragmentId = optionalString(row.memoryFragment?.id);
+    if (memoryFragmentId && diagnostics?.failedMemoryFragmentIds.has(memoryFragmentId)) {
+        console.warn("chat document source read skipped after prior turn failure", {
+            sourceArtifactId: row.sourceArtifact?.id,
+            memoryFragmentId,
+        });
+        return null;
+    }
     return toDocumentSourceCandidateWithTimeout(row, privateMemoryReader, timeoutMsOverride).catch((error: unknown) => {
+        recordDocumentReadFailure(diagnostics, row, error);
         console.warn("chat document source read skipped", {
             sourceArtifactId: row.sourceArtifact?.id,
             memoryFragmentId: row.memoryFragment?.id,
@@ -1547,6 +1588,148 @@ function chatDocumentSourceCacheKey(row: any) {
         row.memoryFragment.contentSha256 ?? "no-sha",
         row.memoryFragment.contentStorageRef ?? "no-storage-ref",
     ].join(":");
+}
+
+function resolveDocumentReadTimeoutMs(timeoutMsOverride?: number) {
+    const configuredTimeoutMs = timeoutMsOverride ??
+        readPositiveInteger(process.env["CHAT_DOCUMENT_DECRYPT_TIMEOUT_MS"], CHAT_DOCUMENT_DECRYPT_TIMEOUT_DEFAULT_MS);
+    const maxTimeoutMs = readPositiveInteger(
+        process.env["CHAT_DOCUMENT_DECRYPT_TIMEOUT_MAX_MS"],
+        CHAT_DOCUMENT_DECRYPT_TIMEOUT_MAX_DEFAULT_MS,
+    );
+    return Math.min(configuredTimeoutMs, maxTimeoutMs);
+}
+
+function createDocumentRetrievalDiagnostics(): DocumentRetrievalDiagnostics {
+    return {
+        failures: [],
+        failedMemoryFragmentIds: new Set(),
+    };
+}
+
+function recordDocumentReadFailure(
+    diagnostics: DocumentRetrievalDiagnostics | undefined,
+    row: any,
+    error: unknown,
+) {
+    if (!diagnostics) {
+        return;
+    }
+    const sourceArtifactId = optionalString(row.sourceArtifact?.id);
+    const memoryFragmentId = optionalString(row.memoryFragment?.id);
+    if (memoryFragmentId) {
+        diagnostics.failedMemoryFragmentIds.add(memoryFragmentId);
+    }
+    diagnostics.failures.push({
+        sourceArtifactId,
+        memoryFragmentId,
+        reason: classifyDocumentReadFailure(error),
+        errorMessage: errorMessage(error),
+    });
+}
+
+function withDocumentDegradation(
+    context: Omit<DocumentContext, "degradation"> & { degradation?: DocumentRetrievalDegradation | null },
+    diagnostics: DocumentRetrievalDiagnostics,
+    artifactIds: string[],
+): DocumentContext {
+    return {
+        ...context,
+        degradation: buildDocumentRetrievalDegradation(diagnostics, artifactIds),
+    };
+}
+
+function storageUnavailableDocumentContext(
+    retrievalPlan: DocumentRetrievalPlan,
+    artifactIds: string[],
+): DocumentContext {
+    return {
+        ...emptyDocumentContext(),
+        retrievalPlan,
+        degradation: {
+            reason: "storage_unavailable",
+            message: buildDocumentRetrievalDegradationMessage("storage_unavailable"),
+            artifactIds,
+            failureCount: 1,
+            lastError: "private_memory_reader_not_configured",
+        },
+    };
+}
+
+function buildDocumentRetrievalDegradation(
+    diagnostics: DocumentRetrievalDiagnostics,
+    artifactIds: string[],
+): DocumentRetrievalDegradation | null {
+    if (diagnostics.failures.length === 0) {
+        return null;
+    }
+    const lastFailure = diagnostics.failures[diagnostics.failures.length - 1];
+    const reason = prioritizeDocumentFailureReason(diagnostics.failures);
+    return {
+        reason,
+        message: buildDocumentRetrievalDegradationMessage(reason),
+        artifactIds: Array.from(new Set([
+            ...artifactIds,
+            ...diagnostics.failures
+                .map((failure) => failure.sourceArtifactId)
+                .filter((artifactId): artifactId is string => Boolean(artifactId)),
+        ])),
+        failureCount: diagnostics.failures.length,
+        lastError: lastFailure?.errorMessage ?? "Unknown document retrieval failure",
+    };
+}
+
+function prioritizeDocumentFailureReason(failures: DocumentReadFailure[]): ChatRetrievalDegradationReason {
+    if (failures.some((failure) => failure.reason === "timeout")) {
+        return "timeout";
+    }
+    if (failures.some((failure) => failure.reason === "storage_unavailable")) {
+        return "storage_unavailable";
+    }
+    if (failures.some((failure) => failure.reason === "read_failed")) {
+        return "read_failed";
+    }
+    return failures[0]?.reason ?? "unknown";
+}
+
+function classifyDocumentReadFailure(error: unknown): ChatRetrievalDegradationReason {
+    const message = errorMessage(error).toLowerCase();
+    if (
+        message.includes("timeout") ||
+        message.includes("timed out") ||
+        message.includes("aborted")
+    ) {
+        return "timeout";
+    }
+    if (
+        message.includes("gateway timeout") ||
+        message.includes("service unavailable") ||
+        message.includes("unavailable") ||
+        message.includes("cannot connect") ||
+        message.includes("connect timeout") ||
+        message.includes("fetch failed")
+    ) {
+        return "storage_unavailable";
+    }
+    if (
+        message.includes("read") ||
+        message.includes("decrypt") ||
+        message.includes("seal") ||
+        message.includes("walrus")
+    ) {
+        return "read_failed";
+    }
+    return "unknown";
+}
+
+function buildDocumentRetrievalDegradationMessage(reason: ChatRetrievalDegradationReason) {
+    if (reason === "timeout") {
+        return "The document is saved, but private document retrieval timed out before I could read it.";
+    }
+    if (reason === "storage_unavailable") {
+        return "The document is saved, but private document storage is temporarily unavailable.";
+    }
+    return "The document is saved, but I could not read its private content right now.";
 }
 export async function updateThreadDocumentFocusFromContext(input: any) {
     const firstPassage = input.documentContext.passages[0];

@@ -26,7 +26,9 @@ export function ChatConversationPanel({
   onSendMessage,
   onStopStreaming,
   onRetryLastMessage,
+  failedAttachmentCount,
   onAttachFiles,
+  onRetryFailedAttachments,
   onOpenAttachment,
   onSaveDraftAsSource,
   onSaveMessageAsSource,
@@ -53,6 +55,7 @@ export function ChatConversationPanel({
         onSaveCodeBlockAsSource={onSaveCodeBlockAsSource}
       />
       <ChatComposer
+        autoFocus
         draft={draft}
         memoryIntent={memoryIntent}
         twinName={twinName}
@@ -66,7 +69,9 @@ export function ChatConversationPanel({
         onSendMessage={onSendMessage}
         onStopStreaming={onStopStreaming}
         onRetryLastMessage={onRetryLastMessage}
+        failedAttachmentCount={failedAttachmentCount}
         onAttachFiles={onAttachFiles}
+        onRetryFailedAttachments={onRetryFailedAttachments}
         onSaveDraftAsSource={onSaveDraftAsSource}
       />
     </div>

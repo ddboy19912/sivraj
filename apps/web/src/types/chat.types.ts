@@ -39,7 +39,7 @@ export type ChatPageStatus =
   | "disconnected";
 
 export type ChatAttachmentUploadStatus = {
-  phase: "idle" | "encrypting" | "uploading" | "processing";
+  phase: "idle" | "encrypting" | "uploading" | "processing" | "retrying";
   fileName: string | null;
 };
 
@@ -64,7 +64,9 @@ export type ChatConversationPanelProps = {
   onSendMessage: () => void;
   onStopStreaming: () => void;
   onRetryLastMessage: () => void;
+  failedAttachmentCount: number;
   onAttachFiles: (files: FileList | null) => void;
+  onRetryFailedAttachments: () => void;
   onOpenAttachment: (attachment: ChatMessageAttachment) => void;
   onSaveDraftAsSource: (fileName: string) => void;
   onSaveMessageAsSource: (

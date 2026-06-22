@@ -136,6 +136,7 @@ export type ChatTurnResult = {
   citations: ChatCitation[];
   usage: Record<string, unknown>;
   tokenSavings: TokenSavingsEstimate;
+  retrievalStatus?: ChatRetrievalStatus;
   title: GeneratedChatTitle;
 };
 

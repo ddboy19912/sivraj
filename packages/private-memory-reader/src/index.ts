@@ -25,6 +25,26 @@ export type PrivateMemoryReader = {
   }): Promise<string>;
 };
 
+export type PrivateMemoryCiphertextCache = {
+  getPrivateMemoryCiphertext(ciphertextSha256: string): Promise<{
+    encryptedBytesBase64: string;
+    rawStorageRef: string;
+    ciphertextSha256: string;
+    byteLength: number;
+    cachedAt: string;
+    provider: "walrus";
+  } | null>;
+  putPrivateMemoryCiphertext(input: {
+    encryptedBytesBase64: string;
+    rawStorageRef: string;
+    ciphertextSha256: string;
+    byteLength: number;
+    cachedAt: string;
+    provider: "walrus";
+    ttlSeconds?: number;
+  }): Promise<void>;
+};
+
 type PrivateMemoryReaderConfig = {
   suiRpcUrl: string;
   suiPrivateKey: string;
@@ -39,6 +59,10 @@ type PrivateMemoryReaderConfig = {
 export function createPrivateMemoryReader(params: {
   walrus: WalrusReader;
   seal: SealDecryptor;
+  ciphertextCache?: PrivateMemoryCiphertextCache;
+  ciphertextCacheEnabled?: boolean;
+  ciphertextCacheTtlMs?: number;
+  ciphertextCacheMaxBytes?: number;
   logger?: Partial<Pick<Console, "info" | "warn">>;
 }): PrivateMemoryReader {
   const decoder = new TextDecoder();
@@ -50,16 +74,14 @@ export function createPrivateMemoryReader(params: {
   return {
     async readPrivateMemory(input) {
       const totalStartedAt = Date.now();
-      const encryptedBytes = await retryPrivateMemoryStage({
-        stage: "walrus_read",
-        artifactId: input.artifactId,
-        rawStorageRef: input.rawStorageRef,
+      const encryptedBytes = await readEncryptedBytes({
+        ...input,
+        walrus: params.walrus,
+        cache: params.ciphertextCache,
+        cacheEnabled: params.ciphertextCacheEnabled ?? true,
+        cacheTtlMs: params.ciphertextCacheTtlMs,
+        cacheMaxBytes: params.ciphertextCacheMaxBytes,
         logger,
-        operation: () =>
-          params.walrus.read({
-            rawStorageRef: input.rawStorageRef,
-            expectedSha256: input.expectedCiphertextSha256,
-          }),
       });
       const decrypted = await retryPrivateMemoryStage({
         stage: "seal_decrypt",
@@ -108,6 +130,148 @@ export function createPrivateMemoryReader(params: {
       return decoder.decode(decrypted.plaintext);
     },
   };
+}
+
+async function readEncryptedBytes(params: {
+  rawStorageRef: string;
+  artifactId: string;
+  expectedCiphertextSha256?: string | null;
+  walrus: WalrusReader;
+  cache?: PrivateMemoryCiphertextCache;
+  cacheEnabled: boolean;
+  cacheTtlMs?: number;
+  cacheMaxBytes?: number;
+  logger: Pick<Console, "info" | "warn">;
+}): Promise<Uint8Array> {
+  const expectedSha = params.expectedCiphertextSha256?.toLowerCase() ?? null;
+  const cached = expectedSha && params.cacheEnabled && params.cache
+    ? await readCachedCiphertext({
+        cache: params.cache,
+        expectedSha,
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        logger: params.logger,
+      })
+    : null;
+
+  if (cached) {
+    return cached;
+  }
+
+  const encryptedBytes = await retryPrivateMemoryStage({
+    stage: "walrus_read",
+    artifactId: params.artifactId,
+    rawStorageRef: params.rawStorageRef,
+    logger: params.logger,
+    operation: () =>
+      params.walrus.read({
+        rawStorageRef: params.rawStorageRef,
+        expectedSha256: params.expectedCiphertextSha256,
+      }),
+  });
+
+  if (expectedSha && params.cacheEnabled && params.cache) {
+    await cacheCiphertext({
+      cache: params.cache,
+      encryptedBytes,
+      expectedSha,
+      rawStorageRef: params.rawStorageRef,
+      artifactId: params.artifactId,
+      ttlMs: params.cacheTtlMs,
+      maxBytes: params.cacheMaxBytes,
+      logger: params.logger,
+    });
+  }
+
+  return encryptedBytes;
+}
+
+async function readCachedCiphertext(params: {
+  cache: PrivateMemoryCiphertextCache;
+  expectedSha: string;
+  artifactId: string;
+  rawStorageRef: string;
+  logger: Pick<Console, "info" | "warn">;
+}): Promise<Uint8Array | null> {
+  const cacheStartedAt = Date.now();
+  try {
+    const entry = await params.cache.getPrivateMemoryCiphertext(params.expectedSha);
+
+    if (!entry) {
+      return null;
+    }
+
+    const encryptedBytes = Buffer.from(entry.encryptedBytesBase64, "base64");
+    const actualSha = sha256Hex(encryptedBytes);
+    if (actualSha !== params.expectedSha || entry.ciphertextSha256.toLowerCase() !== params.expectedSha) {
+      params.logger.warn("private memory ciphertext cache rejected", {
+        artifactId: params.artifactId,
+        rawStorageRef: params.rawStorageRef,
+        expectedSha256: params.expectedSha,
+        actualSha256: actualSha,
+        cachedSha256: entry.ciphertextSha256,
+      });
+      return null;
+    }
+
+    params.logger.info("private memory ciphertext cache hit", {
+      artifactId: params.artifactId,
+      rawStorageRef: params.rawStorageRef,
+      encryptedBytes: encryptedBytes.length,
+      durationMs: Date.now() - cacheStartedAt,
+    });
+    return encryptedBytes;
+  } catch (error) {
+    params.logger.warn("private memory ciphertext cache read failed", {
+      artifactId: params.artifactId,
+      rawStorageRef: params.rawStorageRef,
+      errorMessage: errorMessage(error),
+    });
+    return null;
+  }
+}
+
+async function cacheCiphertext(params: {
+  cache: PrivateMemoryCiphertextCache;
+  encryptedBytes: Uint8Array;
+  expectedSha: string;
+  rawStorageRef: string;
+  artifactId: string;
+  ttlMs?: number;
+  maxBytes?: number;
+  logger: Pick<Console, "info" | "warn">;
+}) {
+  const maxBytes = params.maxBytes ?? 10 * 1024 * 1024;
+  if (params.encryptedBytes.length > maxBytes) {
+    return;
+  }
+
+  const actualSha = sha256Hex(params.encryptedBytes);
+  if (actualSha !== params.expectedSha) {
+    return;
+  }
+
+  try {
+    await params.cache.putPrivateMemoryCiphertext({
+      encryptedBytesBase64: Buffer.from(params.encryptedBytes).toString("base64"),
+      rawStorageRef: params.rawStorageRef,
+      ciphertextSha256: params.expectedSha,
+      byteLength: params.encryptedBytes.length,
+      cachedAt: new Date().toISOString(),
+      provider: "walrus",
+      ttlSeconds: Math.max(Math.floor((params.ttlMs ?? 24 * 60 * 60 * 1000) / 1000), 1),
+    });
+  } catch (error) {
+    params.logger.warn("private memory ciphertext cache write failed", {
+      artifactId: params.artifactId,
+      rawStorageRef: params.rawStorageRef,
+      errorMessage: errorMessage(error),
+    });
+  }
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function retryPrivateMemoryStage<T>(params: {
@@ -168,6 +332,9 @@ function errorMessage(error: unknown): string {
 
 export function createConfiguredPrivateMemoryReader(
   env: Record<string, string | undefined>,
+  options: {
+    ciphertextCache?: PrivateMemoryCiphertextCache;
+  } = {},
 ): PrivateMemoryReader | undefined {
   const config = readPrivateMemoryReaderConfig(env);
 
@@ -190,6 +357,10 @@ export function createConfiguredPrivateMemoryReader(
         aggregatorUrl: config.walrusAggregatorUrl,
       },
     }),
+    ciphertextCache: options.ciphertextCache,
+    ciphertextCacheEnabled: readBoolean(env["PRIVATE_MEMORY_CIPHERTEXT_CACHE_ENABLED"], true),
+    ciphertextCacheTtlMs: readInteger(env["PRIVATE_MEMORY_CIPHERTEXT_CACHE_TTL_MS"], 24 * 60 * 60 * 1000),
+    ciphertextCacheMaxBytes: readInteger(env["PRIVATE_MEMORY_CIPHERTEXT_CACHE_MAX_BYTES"], 10 * 1024 * 1024),
     seal: createSealDecryptor({
       suiClient,
       signer,
@@ -250,4 +421,12 @@ function readInteger(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+
+  return value === "true" ? true : value === "false" ? false : fallback;
 }

@@ -8,7 +8,7 @@ import {
   Square,
   VenetianMask,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentSkillSaveMenu } from "@/components/chat/AgentSkillSaveMenu";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,7 @@ import type { ChatMemoryIntent } from "@/lib/chat/chat-api";
 import type { ChatAttachmentUploadStatus, ChatNotice, ChatPageStatus } from "@/types/chat.types";
 
 type ChatComposerProps = {
+  autoFocus?: boolean;
   draft: string;
   memoryIntent: ChatMemoryIntent;
   twinName: string;
@@ -35,11 +36,14 @@ type ChatComposerProps = {
   onSendMessage: () => void;
   onStopStreaming: () => void;
   onRetryLastMessage: () => void;
+  failedAttachmentCount: number;
   onAttachFiles: (files: FileList | null) => void;
+  onRetryFailedAttachments: () => void;
   onSaveDraftAsSource: (fileName: string) => void;
 };
 
 export function ChatComposer({
+  autoFocus = false,
   draft,
   memoryIntent,
   twinName,
@@ -53,7 +57,9 @@ export function ChatComposer({
   onSendMessage,
   onStopStreaming,
   onRetryLastMessage,
+  failedAttachmentCount,
   onAttachFiles,
+  onRetryFailedAttachments,
   onSaveDraftAsSource,
 }: ChatComposerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -62,7 +68,16 @@ export function ChatComposer({
   const assistantName = twinName || "your twin";
   const canSend = status !== "failed" && draft.trim().length > 0;
   const isUploadingAttachment = attachmentUploadStatus.phase !== "idle";
+  const canRetryFailedAttachments = failedAttachmentCount > 0 && !isUploadingAttachment;
   const failureText = status === "failed" && notice?.tone === "error" ? notice.text : null;
+
+  useEffect(() => {
+    if (!autoFocus) {
+      return;
+    }
+
+    textareaRef.current?.focus();
+  }, [autoFocus]);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -76,7 +91,10 @@ export function ChatComposer({
   }, [draft]);
 
   return (
-    <footer className="relative z-1 shrink-0 border-t border-white/8 p-4">
+    <footer
+      className="relative z-1 shrink-0 border-t border-white/8 p-4"
+      data-chat-composer="true"
+    >
       {failureText ? (
         <div className="mx-auto mb-2 flex max-w-[860px] items-center justify-between gap-3 rounded-2xl border border-red-300/16 bg-red-500/8 px-4 py-2 text-sm text-red-100/78">
           <span className="min-w-0 flex-1 text-left">{failureText}</span>
@@ -118,6 +136,20 @@ export function ChatComposer({
             ? <Loader2 className="size-5 animate-spin" />
             : <Paperclip className="size-5" />}
         </button>
+        {failedAttachmentCount > 0 ? (
+          <button
+            type="button"
+            aria-label="Retry failed files"
+            title={`Retry ${failedAttachmentCount} failed ${failedAttachmentCount === 1 ? "file" : "files"}`}
+            disabled={!canRetryFailedAttachments}
+            onClick={onRetryFailedAttachments}
+            className="grid size-10 shrink-0 place-items-center rounded-full text-red-100/62 transition hover:bg-red-100/8 hover:text-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {attachmentUploadStatus.phase === "retrying"
+              ? <Loader2 className="size-5 animate-spin" />
+              : <RotateCcw className="size-5" />}
+          </button>
+        ) : null}
         <MemoryIntentSelector
           value={memoryIntent}
           disabled={isSending}
@@ -132,6 +164,7 @@ export function ChatComposer({
         />
         <textarea
           ref={textareaRef}
+          autoFocus={autoFocus}
           aria-label={`Message ${assistantName}`}
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}

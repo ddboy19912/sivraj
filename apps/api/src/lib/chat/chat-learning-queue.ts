@@ -7,7 +7,7 @@
 import { auditEvents } from "@sivraj/db";
 import type { ArtifactProcessingQueue } from "@sivraj/queue";
 import type { ApiDb, PrivateMemoryStorage } from "../../app.js";
-import type { ChatMemoryIntent, ChatThreadGate } from "../../types/chat.types.js";
+import type { ChatMemoryIntent, ChatThreadGate, ConversationContextResolution } from "../../types/chat.types.js";
 import {
   enqueueArtifactProcessingJob,
   insertQueuedSourceArtifact,
@@ -34,12 +34,28 @@ export type EnqueueCompletedChatTurnLearningInput = {
   model: string | null;
   providerKind: string | null;
   memoryIntent: ChatMemoryIntent;
+  contextResolution?: ConversationContextResolution | Record<string, unknown>;
+  retrievedMemoryCount?: number;
 };
 
 /** Queue a completed turn for worker-side memory extraction (skipped when storage is unset). */
 export async function enqueueCompletedChatTurnLearning(
   input: EnqueueCompletedChatTurnLearningInput,
 ): Promise<void> {
+  const skipReason = completedChatTurnLearningSkipReason(input);
+  if (skipReason) {
+    await recordChatLearningEvent(input.db, {
+      twinId: input.gate.twinId,
+      threadId: input.gate.thread.id,
+      turnId: input.turnId,
+      eventType: "chat.memory_learning.skipped",
+      metadata: {
+        reason: skipReason,
+        retrievedMemoryCount: input.retrievedMemoryCount ?? 0,
+      },
+    });
+    return;
+  }
   if (!input.privateMemoryStorage) {
     await recordChatLearningEvent(input.db, {
       twinId: input.gate.twinId,
@@ -152,6 +168,33 @@ export async function enqueueCompletedChatTurnLearning(
       },
     });
   }
+}
+
+export function completedChatTurnLearningSkipReason(
+  input: Pick<EnqueueCompletedChatTurnLearningInput, "contextResolution" | "retrievedMemoryCount">,
+): string | null {
+  const resolution = input.contextResolution as Record<string, unknown> | undefined;
+  const memoryWrite = typeof resolution?.["memoryWrite"] === "string"
+    ? resolution["memoryWrite"]
+    : null;
+  const intent = typeof resolution?.["intent"] === "string"
+    ? resolution["intent"]
+    : null;
+  const answerTarget = typeof resolution?.["answerTarget"] === "string"
+    ? resolution["answerTarget"]
+    : null;
+  const retrieval = typeof resolution?.["retrieval"] === "string"
+    ? resolution["retrieval"]
+    : null;
+
+  if (
+    memoryWrite === "skip" &&
+    (intent === "memory_qa" || answerTarget === "memory" || retrieval === "hot_memory")
+  ) {
+    return "assistant_derived_memory_answer";
+  }
+
+  return null;
 }
 
 async function recordChatLearningEvent(

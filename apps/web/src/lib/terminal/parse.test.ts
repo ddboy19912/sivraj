@@ -31,6 +31,22 @@ describe("parseTerminalCommand", () => {
       ok: true,
       command: { kind: "api", commandId: "audit.recent", args: ["3"] },
     });
+    expect(parseTerminalCommand("account wipe")).toMatchObject({
+      ok: true,
+      command: {
+        kind: "api",
+        commandId: "account.wipe",
+        flags: { confirm: false, dryRun: false },
+      },
+    });
+    expect(parseTerminalCommand("wipe account --dry-run")).toMatchObject({
+      ok: true,
+      command: {
+        kind: "api",
+        commandId: "account.wipe",
+        flags: { confirm: false, dryRun: true },
+      },
+    });
   });
 
   it("rejects unknown commands and flags", () => {
@@ -41,6 +57,10 @@ describe("parseTerminalCommand", () => {
     expect(parseTerminalCommand("onboarding reset --force")).toMatchObject({
       ok: false,
       message: expect.stringContaining("Unsupported flag"),
+    });
+    expect(parseTerminalCommand("account wipe --confirm")).toMatchObject({
+      ok: false,
+      message: "Use account wipe and answer Y to confirm.",
     });
   });
 });
