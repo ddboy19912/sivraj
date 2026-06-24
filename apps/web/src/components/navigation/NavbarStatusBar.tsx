@@ -1,7 +1,10 @@
+import { BookOpen } from "lucide-react";
 import { FaRegClock } from "react-icons/fa";
 import { FaMicrochip } from "react-icons/fa6";
 import { IoRadioSharp } from "react-icons/io5";
 import { useOnlineStatus } from "@/hooks/common/use-online-status";
+
+const DOCS_URL = "https://sivraj-docs.vercel.app/";
 
 interface NavbarStatusBarProps {
   color: string;
@@ -39,6 +42,16 @@ export function NavbarStatusBar({
             size={16}
           />
         </button>
+        <a
+          href={DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Open Sivraj docs"
+          title="Open Sivraj docs"
+          className="grid size-5 place-items-center rounded-full text-[#b9cacb66] transition hover:bg-white/6 hover:text-[rgb(var(--theme-color-rgb))] focus:outline-none focus-visible:ring-3 focus-visible:ring-[rgba(var(--theme-color-rgb),0.22)]"
+        >
+          <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
+        </a>
       </div>
       <hr className="h-4 w-px bg-[#b9cacb66] border-none" />
       <div className="flex items-center gap-3">
