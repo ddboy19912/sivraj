@@ -1,0 +1,25 @@
+{
+  "id": "DEVELOPMENT",
+  "title": "Development",
+  "description": "Use this page for local development commands. For the shorter first-run path, see Getting Started.",
+  "source": "@site/../../docs/DEVELOPMENT.md",
+  "sourceDirName": ".",
+  "slug": "/DEVELOPMENT",
+  "permalink": "/docs/DEVELOPMENT",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1779380541000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Security And Permissions",
+    "permalink": "/docs/SECURITY"
+  },
+  "next": {
+    "title": "Glossary",
+    "permalink": "/docs/GLOSSARY"
+  }
+}

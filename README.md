@@ -61,33 +61,19 @@ Founder OS remains an important expansion path for packaging Sivraj around start
 
 Start here:
 
-- [Roadmap](./docs/ROADMAP.md) - current product direction and next major product tracks.
-- [Product Requirements](./docs/PRD.md) - product thesis, target users, principles, and core capabilities.
-- [Product Foundation](./docs/PRODUCT_FOUNDATION.md) - brand language, persona, activation event, and demo strategy.
-- [Build Scope](./docs/BUILD_SCOPE.md) - implementation scope and product boundaries.
+- [Getting Started](./docs/GETTING_STARTED.md) - local setup and first product path.
+- [Roadmap](./docs/ROADMAP.md) - public product direction and upcoming tracks.
+- [API Usage](./docs/API.md) - scoped context requests and client expectations.
 
-Architecture and system design:
+Platform:
 
 - [Architecture](./docs/ARCHITECTURE.md) - high-level system overview and service boundaries.
-- [Brain Architecture](./docs/BRAIN_ARCHITECTURE.md) - memory, document, planner, and answer-composer architecture.
-- [Intelligence Layer](./docs/INTELLIGENCE.md) - extraction, graph, candidate memory, and processing semantics.
-- [Document Tools](./docs/DOCUMENT_TOOLS.md) - document inspection and retrieval tool behavior.
-- [Coding Agent Integrations](./docs/CODING_AGENT_INTEGRATIONS.md) - engineering context packets, agent scope, and MCP direction.
-- [API Design](./docs/API.md) - external API contracts.
-- [Data Model](./docs/DATA_MODEL.md) - database schema concepts and relationships.
-- [Application Stack](./docs/STACK.md) - app, API, worker, and package stack.
+- [Infrastructure](./docs/INFRASTRUCTURE.md) - apps, services, storage, and processing flow.
+- [External Integrations](./docs/INTEGRATIONS.md) - API, CLI, MCP, coding agents, and future SDKs.
 
 Security, operations, and development:
 
-- [Security and Permissions](./docs/SECURITY.md) - auth, scopes, storage, and access-control model.
-- [Seal Policy](./docs/SEAL_POLICY.md) - Sui Seal policy notes.
-- [Environment Contract](./docs/ENVIRONMENT.md) - required runtime configuration.
-- [Development Setup](./docs/DEVELOPMENT.md) - local development workflow.
-- [Decision Log](./docs/DECISIONS.md) - durable technical/product decisions.
-- [Backlog](./docs/TODO.md) - implementation tasks that have not graduated into roadmap items.
-
-Demo and collaboration:
-
-- [User Stories](./docs/USER_STORIES.md) - user-facing scenarios and acceptance context.
+- [Security and Permissions](./docs/SECURITY.md) - user control, scopes, and integration safety.
+- [Development](./docs/DEVELOPMENT.md) - local development commands and checks.
 - [Glossary](./docs/GLOSSARY.md) - shared terms.
 - [Contributing](./CONTRIBUTING.md) - contribution workflow.

@@ -1,0 +1,25 @@
+{
+  "id": "SECURITY",
+  "title": "Security And Permissions",
+  "description": "Sivraj stores sensitive long-term context. Security and user control are core product requirements, not optional add-ons.",
+  "source": "@site/../../docs/SECURITY.md",
+  "sourceDirName": ".",
+  "slug": "/SECURITY",
+  "permalink": "/docs/SECURITY",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1779834194000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Infrastructure",
+    "permalink": "/docs/INFRASTRUCTURE"
+  },
+  "next": {
+    "title": "Development",
+    "permalink": "/docs/DEVELOPMENT"
+  }
+}

@@ -28,6 +28,14 @@ The living identity graph that tracks people, goals, projects, beliefs, workflow
 
 A scoped bundle of relevant context returned to an AI app or agent.
 
+## Permission Scope
+
+The access boundary that determines what an app, agent, or user session can request from Sivraj.
+
+## Source Reference
+
+A durable reference to the source material behind a memory, answer, or context packet.
+
 ## Synthesis Engine
 
 The system that turns raw memory into strategic insight, pattern detection, reflection, and recommendations.

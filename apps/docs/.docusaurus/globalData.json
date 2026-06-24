@@ -1,0 +1,73 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/docs",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/docs",
+          "mainDocId": "GETTING_STARTED",
+          "docs": [
+            {
+              "id": "API",
+              "path": "/docs/API",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "ARCHITECTURE",
+              "path": "/docs/ARCHITECTURE",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "DEVELOPMENT",
+              "path": "/docs/DEVELOPMENT",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "GETTING_STARTED",
+              "path": "/docs/GETTING_STARTED",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "GLOSSARY",
+              "path": "/docs/GLOSSARY",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "INFRASTRUCTURE",
+              "path": "/docs/INFRASTRUCTURE",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "INTEGRATIONS",
+              "path": "/docs/INTEGRATIONS",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "ROADMAP",
+              "path": "/docs/ROADMAP",
+              "sidebar": "mainSidebar"
+            },
+            {
+              "id": "SECURITY",
+              "path": "/docs/SECURITY",
+              "sidebar": "mainSidebar"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "mainSidebar": {
+              "link": {
+                "path": "/docs/GETTING_STARTED",
+                "label": "GETTING_STARTED"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

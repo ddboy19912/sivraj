@@ -1,0 +1,25 @@
+{
+  "id": "API_MODULARIZATION_PLAN",
+  "title": "API Modularization And Typing Plan",
+  "description": "This plan breaks down the large API files and removes recovery-era any annotations without repeating the previous risky rewrite. Work should happen in small, verified batches. Do not use destructive git commands on dirty files.",
+  "source": "@site/../../docs/API_MODULARIZATION_PLAN.md",
+  "sourceDirName": ".",
+  "slug": "/API_MODULARIZATION_PLAN",
+  "permalink": "/docs/API_MODULARIZATION_PLAN",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Author",
+  "lastUpdatedAt": 1539502055000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Engineering Intelligence",
+    "permalink": "/docs/ENGINEERING_INTELLIGENCE"
+  },
+  "next": {
+    "title": "Codex Prompt: Recover and Continue Chat Handler Work",
+    "permalink": "/docs/CODEX_CHAT_HANDLER_RECOVERY"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "GLOSSARY",
+  "title": "Glossary",
+  "description": "Sivraj",
+  "source": "@site/../../docs/GLOSSARY.md",
+  "sourceDirName": ".",
+  "slug": "/GLOSSARY",
+  "permalink": "/docs/GLOSSARY",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1779145344000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Development",
+    "permalink": "/docs/DEVELOPMENT"
+  }
+}

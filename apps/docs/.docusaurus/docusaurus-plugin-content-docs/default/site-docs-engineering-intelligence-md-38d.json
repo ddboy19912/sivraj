@@ -1,0 +1,25 @@
+{
+  "id": "ENGINEERING_INTELLIGENCE",
+  "title": "Engineering Intelligence",
+  "description": "Purpose",
+  "source": "@site/../../docs/ENGINEERING_INTELLIGENCE.md",
+  "sourceDirName": ".",
+  "slug": "/ENGINEERING_INTELLIGENCE",
+  "permalink": "/docs/ENGINEERING_INTELLIGENCE",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Author",
+  "lastUpdatedAt": 1539502055000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "User Stories",
+    "permalink": "/docs/USER_STORIES"
+  },
+  "next": {
+    "title": "API Modularization And Typing Plan",
+    "permalink": "/docs/API_MODULARIZATION_PLAN"
+  }
+}

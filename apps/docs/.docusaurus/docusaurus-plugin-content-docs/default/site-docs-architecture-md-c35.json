@@ -1,0 +1,25 @@
+{
+  "id": "ARCHITECTURE",
+  "title": "Architecture",
+  "description": "Sivraj is a memory-first AI workspace built around a user-owned Twin. The system stores private context, processes source material, and returns permissioned context to first-party and external AI surfaces.",
+  "source": "@site/../../docs/ARCHITECTURE.md",
+  "sourceDirName": ".",
+  "slug": "/ARCHITECTURE",
+  "permalink": "/docs/ARCHITECTURE",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1778961905000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "External Integrations",
+    "permalink": "/docs/INTEGRATIONS"
+  },
+  "next": {
+    "title": "Infrastructure",
+    "permalink": "/docs/INFRASTRUCTURE"
+  }
+}

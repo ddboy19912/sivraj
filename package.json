@@ -9,6 +9,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "build:api": "pnpm --filter @sivraj/api build",
+    "build:docs": "pnpm --filter @sivraj/docs build",
     "build:web": "pnpm --filter @sivraj/web build",
     "build:worker": "pnpm --filter @sivraj/worker build",
     "check": "pnpm -r check",
@@ -20,6 +21,7 @@
     "db:studio": "pnpm --filter @sivraj/db studio",
     "dev": "pnpm --filter @sivraj/web dev",
     "dev:api": "pnpm --filter @sivraj/api dev",
+    "dev:docs": "pnpm --filter @sivraj/docs dev",
     "dev:worker": "pnpm --filter @sivraj/worker dev",
     "dev:mcp": "pnpm --filter @sivraj/mcp-server dev",
     "dev:cli": "pnpm --filter @sivraj/cli dev",

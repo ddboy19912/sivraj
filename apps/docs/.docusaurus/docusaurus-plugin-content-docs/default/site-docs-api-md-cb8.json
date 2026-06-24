@@ -1,0 +1,25 @@
+{
+  "id": "API",
+  "title": "API Usage",
+  "description": "The Sivraj API lets approved apps and agents request scoped context from a user's Twin. It is designed for permissioned memory access, source-backed retrieval, and integration workflows.",
+  "source": "@site/../../docs/API.md",
+  "sourceDirName": ".",
+  "slug": "/API",
+  "permalink": "/docs/API",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1781948537000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Roadmap",
+    "permalink": "/docs/ROADMAP"
+  },
+  "next": {
+    "title": "External Integrations",
+    "permalink": "/docs/INTEGRATIONS"
+  }
+}

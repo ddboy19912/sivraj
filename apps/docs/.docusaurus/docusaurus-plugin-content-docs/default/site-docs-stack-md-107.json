@@ -1,0 +1,25 @@
+{
+  "id": "STACK",
+  "title": "Application Stack",
+  "description": "Stack Decision",
+  "source": "@site/../../docs/STACK.md",
+  "sourceDirName": ".",
+  "slug": "/STACK",
+  "permalink": "/docs/STACK",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Author",
+  "lastUpdatedAt": 1539502055000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Data Model",
+    "permalink": "/docs/DATA_MODEL"
+  },
+  "next": {
+    "title": "Security and Permissions",
+    "permalink": "/docs/SECURITY"
+  }
+}

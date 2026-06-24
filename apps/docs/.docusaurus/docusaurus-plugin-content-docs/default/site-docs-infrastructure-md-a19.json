@@ -1,0 +1,25 @@
+{
+  "id": "INFRASTRUCTURE",
+  "title": "Infrastructure",
+  "description": "Sivraj is built as a TypeScript monorepo with separate apps for the web product, API, workers, command-line tools, and integration surfaces.",
+  "source": "@site/../../docs/INFRASTRUCTURE.md",
+  "sourceDirName": ".",
+  "slug": "/INFRASTRUCTURE",
+  "permalink": "/docs/INFRASTRUCTURE",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": null,
+  "lastUpdatedAt": null,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Architecture",
+    "permalink": "/docs/ARCHITECTURE"
+  },
+  "next": {
+    "title": "Security And Permissions",
+    "permalink": "/docs/SECURITY"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "DECISIONS",
+  "title": "Decision Log",
+  "description": "Use this file to record major product and technical decisions.",
+  "source": "@site/../../docs/DECISIONS.md",
+  "sourceDirName": ".",
+  "slug": "/DECISIONS",
+  "permalink": "/docs/DECISIONS",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Author",
+  "lastUpdatedAt": 1539502055000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Development Setup",
+    "permalink": "/docs/DEVELOPMENT"
+  },
+  "next": {
+    "title": "User Stories",
+    "permalink": "/docs/USER_STORIES"
+  }
+}

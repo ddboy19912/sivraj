@@ -1,0 +1,25 @@
+{
+  "id": "ROADMAP",
+  "title": "Roadmap",
+  "description": "This roadmap describes the public product direction for Sivraj. It avoids internal decision history and implementation notes.",
+  "source": "@site/../../docs/ROADMAP.md",
+  "sourceDirName": ".",
+  "slug": "/ROADMAP",
+  "permalink": "/docs/ROADMAP",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "lastUpdatedBy": "Fortune Ogunsusi",
+  "lastUpdatedAt": 1782170968000,
+  "frontMatter": {},
+  "sidebar": "mainSidebar",
+  "previous": {
+    "title": "Getting Started",
+    "permalink": "/docs/GETTING_STARTED"
+  },
+  "next": {
+    "title": "API Usage",
+    "permalink": "/docs/API"
+  }
+}
