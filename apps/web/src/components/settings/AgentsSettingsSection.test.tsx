@@ -10,6 +10,7 @@ import type {
   AgentClientsResponse,
   AgentContextResponse,
   AgentContextScope,
+  AgentEngineeringReviewQueueResponse,
 } from "@/types/agent-context.types";
 
 vi.mock("sonner", () => ({
@@ -32,18 +33,21 @@ describe("AgentsSettingsSection", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders packet metadata without quality or privacy clutter", async () => {
+  it("renders a compact skill download surface without packet clutter", async () => {
     globalThis.fetch = createAgentsFetchMock();
 
     renderAgentsSettings();
 
     expect(await screen.findAllByText("AGENTS.md")).toHaveLength(2);
-    expect(await screen.findByText("3 items")).toBeInTheDocument();
+    expect(screen.getByText("Agent skills")).toBeInTheDocument();
+    expect(screen.getByText("MCP")).toBeInTheDocument();
+    expect(screen.getByText("Access")).toBeInTheDocument();
+    expect(screen.queryByText("3 items")).not.toBeInTheDocument();
+    expect(screen.queryByText("4 memories")).not.toBeInTheDocument();
+    expect(screen.queryByText("2 files")).not.toBeInTheDocument();
     expect(screen.queryByText("Quality")).not.toBeInTheDocument();
     expect(screen.queryByText("82% good")).not.toBeInTheDocument();
     expect(screen.queryByText("Engineering context only")).not.toBeInTheDocument();
-    expect(screen.getByText("4 memories")).toBeInTheDocument();
-    expect(screen.getByText("2 files")).toBeInTheDocument();
     expect(screen.queryByText("Raw artifacts")).not.toBeInTheDocument();
     expect(screen.queryByText("Decrypted memory")).not.toBeInTheDocument();
     expect(screen.queryByText("Plaintext source statements")).not.toBeInTheDocument();
@@ -150,6 +154,57 @@ describe("AgentsSettingsSection", () => {
     });
   });
 
+  it("approves candidate engineering memories from the review modal", async () => {
+    const reviewRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = createAgentsFetchMock({
+      onReviewAction: (path, body) => reviewRequests.push({ path, body }),
+    });
+
+    renderAgentsSettings();
+    await screen.findByText("1 candidate memory waiting");
+
+    await userEvent.click(screen.getByRole("button", { name: "Review candidates" }));
+    expect(await screen.findByRole("heading", { name: "Package manager" })).toBeInTheDocument();
+    expect(await screen.findByText("Use pnpm for workspace commands.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(reviewRequests).toEqual([]);
+    expect(await screen.findByRole("heading", { name: "Approve this memory?" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve memory" }));
+
+    await waitFor(() => {
+      expect(reviewRequests).toEqual([{
+        path: "/v1/twins/twin-id/engineering/review-queue/candidate-1/action",
+        body: { action: "keep_active" },
+      }]);
+    });
+  });
+
+  it("confirms before rejecting candidate engineering memories", async () => {
+    const reviewRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = createAgentsFetchMock({
+      onReviewAction: (path, body) => reviewRequests.push({ path, body }),
+    });
+
+    renderAgentsSettings();
+    await screen.findByText("1 candidate memory waiting");
+
+    await userEvent.click(screen.getByRole("button", { name: "Review candidates" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    expect(reviewRequests).toEqual([]);
+    expect(await screen.findByRole("heading", { name: "Reject this memory?" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Reject memory" }));
+
+    await waitFor(() => {
+      expect(reviewRequests).toEqual([{
+        path: "/v1/twins/twin-id/engineering/review-queue/candidate-1/action",
+        body: { action: "reject" },
+      }]);
+    });
+  });
+
   it("renders loading and error states", async () => {
     globalThis.fetch = createAgentsFetchMock({ contextStatus: 500 });
 
@@ -180,12 +235,28 @@ function renderAgentsSettings() {
 function createAgentsFetchMock(options: {
   contextStatus?: number;
   onCreateToken?: (body: Record<string, unknown>) => string;
+  onReviewAction?: (path: string, body: Record<string, unknown>) => void;
   onRevoke?: (path: string) => void;
 } = {}) {
   return createAppFetchMock({
     handler: (url, init) => {
       if (url.pathname === "/v1/twins/twin-id/engineering/context") {
         return jsonResponse(createContextResponse(), options.contextStatus ?? 200);
+      }
+
+      if (url.pathname === "/v1/twins/twin-id/engineering/review-queue") {
+        return jsonResponse(createReviewQueueResponse());
+      }
+
+      if (url.pathname === "/v1/twins/twin-id/engineering/review-queue/candidate-1/action") {
+        const body = readJsonBody(init);
+        options.onReviewAction?.(url.pathname, body);
+        return jsonResponse({
+          candidateId: "candidate-1",
+          action: body.action,
+          status: "approved",
+          feedbackId: "feedback-1",
+        });
       }
 
       if (url.pathname === "/v1/twins/twin-id/agents/clients") {
@@ -275,6 +346,46 @@ function createContextResponse(): AgentContextResponse {
         exportableItemCount: 3,
       },
     },
+  };
+}
+
+function createReviewQueueResponse(): AgentEngineeringReviewQueueResponse {
+  return {
+    policy: {
+      rawArtifactsIncluded: false,
+      decryptedMemoryIncluded: false,
+      plaintextStatementsIncluded: false,
+      derivedEngineeringContextIncluded: true,
+      scope: "memory:read",
+      agentScopesAccepted: [
+        "agent:context:read",
+        "agent:project_profile:read",
+      ],
+    },
+    summary: {
+      totalEngineeringMemories: 1,
+      pendingCandidateCount: 1,
+      issueCount: 0,
+      quality: createQuality(),
+    },
+    repoFingerprint: {},
+    candidates: [{
+      id: "candidate-1",
+      memoryType: "fact",
+      engineeringMemoryType: "tool_preference",
+      scope: "project",
+      status: "candidate",
+      subject: "Package manager",
+      agentContextLine: "Use pnpm for workspace commands.",
+      confidenceScore: 0.92,
+      evidenceHash: "hash",
+      evidenceLength: 42,
+      statementStorageRef: "storage://candidate-1",
+      sourceArtifactId: "artifact-1",
+      memoryFragmentId: "fragment-1",
+      metadata: {},
+    }],
+    issues: [],
   };
 }
 

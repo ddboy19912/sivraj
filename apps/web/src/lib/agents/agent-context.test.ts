@@ -82,7 +82,36 @@ describe("agent context helpers", () => {
       apiUrl: "http://127.0.0.1:3000",
       includeMemorySearch: true,
       includeWriteback: false,
-    }).filename).toBe("generic_mcp-sivraj-mcp.json");
+    }).filename).toBe("sivraj-mcp-stdio.json");
+  });
+
+  it("builds client-specific MCP install artifacts", () => {
+    const codexConfig = createMcpConfigDownload({
+      preset: "codex",
+      client: "codex",
+      transport: "stdio",
+      token: "agent-token",
+      twinId: "twin-id",
+      apiUrl: "http://127.0.0.1:3000",
+      includeMemorySearch: false,
+      includeWriteback: false,
+    });
+    expect(codexConfig.filename).toBe("codex-sivraj-stdio.toml");
+    expect(codexConfig.content).toContain("[mcp_servers.sivraj_context]");
+    expect(codexConfig.content).toContain('SIVRAJ_AGENT_PRESET = "codex"');
+
+    const claudeConfig = createMcpConfigDownload({
+      preset: "claude_code",
+      client: "claude_code",
+      transport: "stdio",
+      token: "agent-token",
+      twinId: "twin-id",
+      apiUrl: "http://127.0.0.1:3000",
+      includeMemorySearch: false,
+      includeWriteback: false,
+    });
+    expect(claudeConfig.filename).toBe("claude-code-sivraj-stdio.sh");
+    expect(claudeConfig.content).toContain("claude mcp add --transport stdio");
   });
 
   it("downloads text files through object URLs", () => {

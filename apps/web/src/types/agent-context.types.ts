@@ -4,6 +4,17 @@ export type AgentContextPreset =
   | "cursor"
   | "generic_mcp";
 
+export type AgentMcpClient =
+  | "generic_json"
+  | "codex"
+  | "claude_code"
+  | "vscode"
+  | "cursor"
+  | "windsurf"
+  | "cline";
+
+export type AgentMcpTransport = "stdio" | "http";
+
 export type AgentContextExportFormat = "markdown" | "mdc" | "json";
 
 export type AgentContextTargetFile =
@@ -92,6 +103,66 @@ export type AgentContextResponse = {
   contextMarkdown: string;
   contextExport: AgentContextExport;
   profileSummary: AgentContextProfileSummary;
+};
+
+export type AgentEngineeringReviewCandidateStatus =
+  | "candidate"
+  | "approved"
+  | "rejected"
+  | "superseded";
+
+export type AgentEngineeringReviewAction =
+  | "keep_active"
+  | "reject"
+  | "supersede"
+  | "needs_review";
+
+export type AgentEngineeringReviewCandidate = {
+  id: string;
+  memoryType: string;
+  engineeringMemoryType: string;
+  scope: string;
+  status: AgentEngineeringReviewCandidateStatus;
+  subject: string | null;
+  agentContextLine: string | null;
+  confidenceScore: number | null;
+  evidenceHash: string | null;
+  evidenceLength: number | null;
+  statementStorageRef: string | null;
+  sourceArtifactId: string;
+  memoryFragmentId: string;
+  metadata: Record<string, unknown>;
+};
+
+export type AgentEngineeringReviewIssue = {
+  issueType: string;
+  reason: string;
+  severity: "low" | "medium" | "high" | string;
+  subject: string | null;
+  scope: string | null;
+  candidate: AgentEngineeringReviewCandidate | null;
+  existing: AgentEngineeringReviewCandidate | null;
+  metadata: Record<string, unknown>;
+};
+
+export type AgentEngineeringReviewQueueResponse = {
+  policy: AgentContextPolicy;
+  summary: {
+    totalEngineeringMemories: number;
+    pendingCandidateCount: number;
+    issueCount: number;
+    quality: AgentContextQuality;
+  };
+  repoFingerprint: Record<string, unknown>;
+  candidates: AgentEngineeringReviewCandidate[];
+  issues: AgentEngineeringReviewIssue[];
+};
+
+export type AgentEngineeringReviewActionResponse = {
+  candidateId: string;
+  action: AgentEngineeringReviewAction;
+  status: AgentEngineeringReviewCandidateStatus;
+  feedbackId: string | null;
 };
 
 export type AgentTokenResponse = {

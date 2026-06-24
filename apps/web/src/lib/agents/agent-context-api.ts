@@ -6,6 +6,9 @@ import type {
   AgentContextPreset,
   AgentContextResponse,
   AgentContextScope,
+  AgentEngineeringReviewAction,
+  AgentEngineeringReviewActionResponse,
+  AgentEngineeringReviewQueueResponse,
   AgentTokenResponse,
 } from "@/types/agent-context.types";
 
@@ -20,6 +23,27 @@ export function loadAgentContext(input: AuthedRequestInput & {
   const params = new URLSearchParams({ preset: input.preset });
   return getAuthedJson<AgentContextResponse>(
     `/v1/twins/${input.session.twinId}/engineering/context?${params.toString()}`,
+    input.session,
+    input.onSessionRefreshed,
+  );
+}
+
+export function loadEngineeringReviewQueue(input: AuthedRequestInput) {
+  const params = new URLSearchParams({ limit: "50" });
+  return getAuthedJson<AgentEngineeringReviewQueueResponse>(
+    `/v1/twins/${input.session.twinId}/engineering/review-queue?${params.toString()}`,
+    input.session,
+    input.onSessionRefreshed,
+  );
+}
+
+export function applyEngineeringReviewAction(input: AuthedRequestInput & {
+  candidateId: string;
+  action: AgentEngineeringReviewAction;
+}) {
+  return postAuthedJson<AgentEngineeringReviewActionResponse>(
+    `/v1/twins/${input.session.twinId}/engineering/review-queue/${input.candidateId}/action`,
+    { action: input.action },
     input.session,
     input.onSessionRefreshed,
   );

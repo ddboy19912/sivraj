@@ -6,7 +6,11 @@ import { auditEvents } from "@sivraj/db";
 import type { Context } from "hono";
 import type { AppDependencies } from "../app.js";
 import type { AuthEnv } from "../middleware/auth.js";
-import { authorizeEngineeringAgentRoute, authorizeTwinRouteWithAgentGrant, type AuthorizedTwin } from "../lib/http/route-auth.js";
+import {
+  authorizeTwinRoute,
+  authorizeTwinRouteWithAgentGrant,
+  type AuthorizedTwin,
+} from "../lib/http/route-auth.js";
 import { parseJsonObjectBody } from "../lib/http/route-helpers.js";
 import {
   buildEngineeringContextResponse,
@@ -29,7 +33,6 @@ import {
   readRepoFingerprintFromPayload,
   readTargetInstructionFile,
   toEngineeringReviewCandidate,
-  ENGINEERING_CONTEXT_AGENT_SCOPES,
 } from "../lib/engineering/helpers.js";
 import {
   buildEngineeringContextAuditMetadata,
@@ -139,6 +142,9 @@ export async function handleEngineeringReviewQueueGet(
   const includeTemporary = readBoolean(c.req.query("includeTemporary"), true);
   const repoFingerprint = readRepoFingerprint(c);
   const { rows, memories } = await loadEngineeringReviewBundle(db, twinId, limit);
+  const candidates = rows
+    .map(toEngineeringReviewCandidate)
+    .filter((candidate): candidate is NonNullable<ReturnType<typeof toEngineeringReviewCandidate>> => Boolean(candidate));
   const { contextPacket } = buildEngineeringContextResponse({
     repoFingerprint,
     memories,
@@ -169,10 +175,12 @@ export async function handleEngineeringReviewQueueGet(
     policy: engineeringContextPolicy(),
     summary: {
       totalEngineeringMemories: memories.length,
+      pendingCandidateCount: candidates.filter((candidate) => candidate.status === "candidate").length,
       issueCount: issueItems.length,
       quality: contextPacket.quality,
     },
     repoFingerprint: contextPacket.project.repoFingerprint,
+    candidates,
     issues: issueItems,
   });
 }
@@ -239,12 +247,13 @@ export async function handleEngineeringReviewActionPost(
   c: Context<AuthEnv>,
   db: AppDependencies["db"],
 ) {
-  const routeAuth = await authorizeEngineeringAgentRoute(c, db, {
-    scopes: ["memory:read"],
-    acceptedAgentScopes: ENGINEERING_CONTEXT_AGENT_SCOPES,
-  });
+  const routeAuth = authorizeTwinRoute(c, "memory:read");
   if (!routeAuth.ok) {
     return routeAuth.response;
+  }
+
+  if (routeAuth.value.auth.type !== "user") {
+    return c.json({ error: "user_review_required" }, 403);
   }
 
   return applyEngineeringReviewAction(c, db, routeAuth.value);
