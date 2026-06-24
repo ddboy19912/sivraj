@@ -42,6 +42,7 @@ describe("AgentsSettingsSection", () => {
     expect(screen.getByText("Agent skills")).toBeInTheDocument();
     expect(screen.getByText("MCP")).toBeInTheDocument();
     expect(screen.getByText("Access")).toBeInTheDocument();
+    expect(screen.getByText("Agents only receive approved engineering memories.")).toBeInTheDocument();
     expect(screen.queryByText("3 items")).not.toBeInTheDocument();
     expect(screen.queryByText("4 memories")).not.toBeInTheDocument();
     expect(screen.queryByText("2 files")).not.toBeInTheDocument();

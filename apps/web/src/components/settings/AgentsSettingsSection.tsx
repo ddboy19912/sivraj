@@ -363,10 +363,15 @@ function AgentSkillsSection({
         />
       </div>
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4">
-        <span className="text-sm font-medium text-white/48">
-          {pendingCandidateCount > 0
-            ? `${pendingCandidateCount} candidate ${pendingCandidateCount === 1 ? "memory" : "memories"} waiting`
-            : "No pending agent memories"}
+        <span className="grid gap-1 text-sm font-medium text-white/48">
+          <span>
+            {pendingCandidateCount > 0
+              ? `${pendingCandidateCount} candidate ${pendingCandidateCount === 1 ? "memory" : "memories"} waiting`
+              : "No pending agent memories"}
+          </span>
+          <span className="text-xs font-medium text-white/34">
+            Agents only receive approved engineering memories.
+          </span>
         </span>
         <Button
           type="button"
