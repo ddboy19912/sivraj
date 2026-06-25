@@ -181,6 +181,32 @@ describe("twinRuntimeReducer", () => {
     });
   });
 
+  it("consumes quiet speech failures and returns to idle", () => {
+    const greetingEvent = {
+      type: "speech.requested" as const,
+      eventId: "home-session-greeting-twin-with-you",
+      dedupeKey: "home-session-greeting-twin-with-you",
+      text: "Hi. How's your day going?",
+      voiceStyle: "energetic" as const,
+      failureMode: "quiet" as const,
+    };
+    const preparing = twinRuntimeReducer(
+      createInitialTwinRuntimeState(),
+      greetingEvent,
+    );
+
+    expect(
+      twinRuntimeReducer(preparing, {
+        type: "speech.failed",
+        eventId: greetingEvent.eventId,
+        reason: "Audio unavailable",
+      }),
+    ).toMatchObject({
+      status: "idle",
+      processedEventIds: [greetingEvent.eventId],
+    });
+  });
+
   it("re-enters speech preparation when a retryable event is requested again", () => {
     const preparing = twinRuntimeReducer(
       createInitialTwinRuntimeState(),

@@ -32,9 +32,11 @@ describe("useTwinRuntime", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     postAuthedAudioMock.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    vi.mocked(console.error).mockRestore();
     vi.useRealTimers();
   });
 
@@ -78,6 +80,96 @@ describe("useTwinRuntime", () => {
       eventId: firstMeetEvent.eventId,
       reason: "Speech generation timed out.",
       retryable: true,
+    });
+  });
+
+  it("keeps a pending speech request alive across equivalent session rerenders", () => {
+    postAuthedAudioMock.mockImplementation(
+      (_path, _body, _session, _onSessionRefreshed, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+
+    const { rerender } = renderHook(
+      ({ currentSession }) =>
+        useTwinRuntime({
+          events: firstMeetEvents,
+          session: currentSession,
+          setSession: vi.fn(),
+        }),
+      { initialProps: { currentSession: session } },
+    );
+
+    expect(postAuthedAudioMock).toHaveBeenCalledTimes(1);
+    const signal = postAuthedAudioMock.mock.lastCall?.[4] as AbortSignal;
+
+    rerender({ currentSession: { ...session } });
+
+    expect(signal.aborted).toBe(false);
+    expect(postAuthedAudioMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails pending speech when voice generation rejects", async () => {
+    postAuthedAudioMock.mockRejectedValue(
+      new Error("503: voice_service_unavailable"),
+    );
+
+    const { result } = renderHook(() =>
+      useTwinRuntime({
+        events: firstMeetEvents,
+        session,
+        setSession: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.runtimeState).toMatchObject({
+      status: "failed",
+      eventId: firstMeetEvent.eventId,
+      reason: "503: voice_service_unavailable",
+      retryable: true,
+    });
+  });
+
+  it("logs and returns to idle when a quiet greeting speech request rejects", async () => {
+    const greetingEvent = {
+      type: "speech.requested" as const,
+      eventId: "home-session-greeting-twin-test-with-you",
+      dedupeKey: "home-session-greeting-twin-test-with-you",
+      text: "Hi Fortune. How's your day going?",
+      voiceStyle: "energetic" as const,
+      failureMode: "quiet" as const,
+    };
+    const error = new Error("503: voice_service_unavailable");
+    postAuthedAudioMock.mockRejectedValue(error);
+
+    const { result } = renderHook(() =>
+      useTwinRuntime({
+        events: [greetingEvent],
+        session,
+        setSession: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(console.error).toHaveBeenCalledWith(
+      "Home greeting speech failed.",
+      error,
+    );
+    expect(result.current.runtimeState).toEqual({
+      status: "idle",
+      processedEventIds: [greetingEvent.eventId],
     });
   });
 });

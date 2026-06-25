@@ -25,6 +25,21 @@ export function useTwinRuntime({
   const requestedSpeechEventIdsRef = useRef<Set<string> | null>(null);
   const [audioUrls] = useState(() => new Set<string>());
   const runtimeStateRef = useRef(runtimeState);
+  const sessionRef = useRef(session);
+  const setSessionRef = useRef(setSession);
+  const speechEventId =
+    runtimeState.status === "preparing_speech" ? runtimeState.eventId : null;
+  const speechFailureMode =
+    runtimeState.status === "preparing_speech"
+      ? runtimeState.failureMode
+      : undefined;
+  const speechText =
+    runtimeState.status === "preparing_speech" ? runtimeState.text : null;
+  const speechVoiceStyle =
+    runtimeState.status === "preparing_speech"
+      ? runtimeState.voiceStyle
+      : null;
+  const sessionTwinId = session?.twinId ?? null;
 
   function getRequestedSpeechEventIds() {
     if (requestedSpeechEventIdsRef.current === null) {
@@ -47,6 +62,14 @@ export function useTwinRuntime({
   }, [runtimeState]);
 
   useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    setSessionRef.current = setSession;
+  }, [setSession]);
+
+  useEffect(() => {
     for (const event of events) {
       const eventId = getRuntimeEventId(event);
 
@@ -63,16 +86,25 @@ export function useTwinRuntime({
   }, [events]);
 
   useEffect(() => {
-    if (runtimeState.status !== "preparing_speech" || !session) {
+    if (!speechEventId || !speechText || !speechVoiceStyle || !sessionTwinId) {
       return;
     }
 
+    const activeSession = sessionRef.current;
+    if (!activeSession || activeSession.twinId !== sessionTwinId) {
+      return;
+    }
+
+    const eventId = speechEventId;
+    const failureMode = speechFailureMode;
+    const text = speechText;
+    const voiceStyle = speechVoiceStyle;
     const requestedSpeechEventIds = getRequestedSpeechEventIds();
-    if (requestedSpeechEventIds.has(runtimeState.eventId)) {
+    if (requestedSpeechEventIds.has(eventId)) {
       return;
     }
 
-    requestedSpeechEventIds.add(runtimeState.eventId);
+    requestedSpeechEventIds.add(eventId);
     let cancelled = false;
     let timedOut = false;
     const abortController = new AbortController();
@@ -82,24 +114,28 @@ export function useTwinRuntime({
       }
 
       timedOut = true;
-      getRequestedSpeechEventIds().delete(runtimeState.eventId);
+      getRequestedSpeechEventIds().delete(eventId);
       abortController.abort();
+      if (failureMode === "quiet") {
+        console.error("Home greeting speech timed out.");
+      }
       dispatchRuntimeAction({
         type: "speech.failed",
-        eventId: runtimeState.eventId,
+        eventId,
+        failureMode,
         reason: "Speech generation timed out.",
       });
     }, SPEECH_REQUEST_TIMEOUT_MS);
 
     void postAuthedAudio(
-      `/v1/twins/${session.twinId}/voice/speak`,
+      `/v1/twins/${sessionTwinId}/voice/speak`,
       {
-        text: runtimeState.text,
-        style: runtimeState.voiceStyle,
+        text,
+        style: voiceStyle,
         exaggeration: 0.72,
       },
-      session,
-      setSession,
+      activeSession,
+      setSessionRef.current,
       abortController.signal,
     )
       .then((audio) => {
@@ -111,7 +147,7 @@ export function useTwinRuntime({
         audioUrls.add(audioUrl);
         dispatchRuntimeAction({
           type: "speech.audio_ready",
-          eventId: runtimeState.eventId,
+          eventId,
           audioUrl,
         });
       })
@@ -120,10 +156,14 @@ export function useTwinRuntime({
           return;
         }
 
-        getRequestedSpeechEventIds().delete(runtimeState.eventId);
+        getRequestedSpeechEventIds().delete(eventId);
+        if (failureMode === "quiet") {
+          console.error("Home greeting speech failed.", error);
+        }
         dispatchRuntimeAction({
           type: "speech.failed",
-          eventId: runtimeState.eventId,
+          eventId,
+          failureMode,
           reason: error instanceof Error ? error.message : "Speech failed.",
         });
       })
@@ -138,9 +178,11 @@ export function useTwinRuntime({
     };
   }, [
     audioUrls,
-    runtimeState,
-    session,
-    setSession,
+    sessionTwinId,
+    speechEventId,
+    speechFailureMode,
+    speechText,
+    speechVoiceStyle,
   ]);
 
   useEffect(() => {

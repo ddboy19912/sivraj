@@ -90,6 +90,54 @@ describe("context runtime routes", () => {
     expect(db.insert).toHaveBeenCalled();
   });
 
+  it("keeps warmup usable when the context warmup queue enqueue fails", async () => {
+    const token = await userToken();
+    const db = createContextDb({
+      twinRows: [{ id: "twin-1", name: "Hulk", summary: null }],
+      identityRows: [{
+        id: "identity-1",
+        twinId: "twin-1",
+        displayName: "Fortune",
+        aliases: [],
+        emails: [],
+        phones: [],
+        handles: {},
+        selfDescriptionArtifactId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }],
+      canonicalRows: [canonicalOccupationRow()],
+    });
+    const enqueueContextWarmup = vi.fn(async () => {
+      throw new Error("Custom Id cannot contain :");
+    });
+    const app = createContextTestApp(db, {
+      contextWarmupQueue: {
+        enqueueContextWarmup,
+        close: vi.fn(),
+      } as never,
+    });
+
+    const response = await app.request("/v1/twins/twin-1/context/warmup", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        surface: "voice_chat",
+        reason: "voice_start",
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({
+      status: "already_warm",
+      warning: "context_warmup_queue_failed",
+    });
+    expect(payload.packetIds).toHaveLength(2);
+    expect(enqueueContextWarmup).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalled();
+  });
+
   it("requires agent memory-search scope for cold memory search context", async () => {
     const token = await signSessionToken(
       {
@@ -125,9 +173,15 @@ describe("context runtime routes", () => {
   });
 });
 
-function createContextTestApp(db: AppDependencies["db"]) {
+function createContextTestApp(
+  db: AppDependencies["db"],
+  overrides: Partial<AppDependencies> = {},
+) {
   const app = new Hono();
-  app.route("/v1/twins/:twinId/context", createContextRoutes({ db } as AppDependencies));
+  app.route("/v1/twins/:twinId/context", createContextRoutes({
+    db,
+    ...overrides,
+  } as AppDependencies));
   return app;
 }
 

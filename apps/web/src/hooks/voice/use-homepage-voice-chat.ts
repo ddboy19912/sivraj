@@ -77,21 +77,21 @@ export function useHomepageVoiceChat({
   const realtimeFallbackRecorderRef = useRef<MediaRecorder | null>(null);
   const realtimeFallbackChunksRef = useRef<Blob[]>([]);
   const realtimeFallbackStopRef = useRef<Promise<Blob | null> | null>(null);
-  const realtimeTranscriberRef = useRef<RealtimeSpeechToTextClient | null>(null);
+  const realtimeTranscriberRef = useRef<RealtimeSpeechToTextClient | null>(
+    null,
+  );
   const chunksRef = useRef<Blob[]>([]);
   const activeStreamAbortRef = useRef<AbortController | null>(null);
   const autoStopTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const pendingKeyboardStopRef = useRef(false);
-  const lastLoggedPhaseRef = useRef(state.phase);
   const sessionRef = useRef(session);
   const onSessionRefreshedRef = useRef(onSessionRefreshed);
   const beginPushToTalkRef = useRef<() => void>(() => undefined);
   const endPushToTalkRef = useRef<() => void>(() => undefined);
-  const startRecordingSessionRef = useRef<(
-    eventId: string,
-    options?: { autoStopMs?: number },
-  ) => void>(() => undefined);
+  const startRecordingSessionRef = useRef<
+    (eventId: string, options?: { autoStopMs?: number }) => void
+  >(() => undefined);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -100,19 +100,13 @@ export function useHomepageVoiceChat({
 
   useEffect(() => {
     stateRef.current = state;
-    if (lastLoggedPhaseRef.current !== state.phase) {
-      voiceDebug("phase", {
-        from: lastLoggedPhaseRef.current,
-        to: state.phase,
-        activeEventId: state.activeEventId,
-        error: state.error,
-      });
-      lastLoggedPhaseRef.current = state.phase;
-    }
   }, [state]);
 
   useEffect(() => {
-    dispatch({ type: "WAKE_SUPPORT_RESOLVED", supported: isWakePhraseSupported() });
+    dispatch({
+      type: "WAKE_SUPPORT_RESOLVED",
+      supported: isWakePhraseSupported(),
+    });
   }, []);
 
   useEffect(() => {
@@ -126,7 +120,9 @@ export function useHomepageVoiceChat({
 
     void Promise.all([
       loadVoiceSettings(activeSession, onSessionRefreshedRef.current),
-      loadVoiceProfile(activeSession, onSessionRefreshedRef.current).catch(() => null),
+      loadVoiceProfile(activeSession, onSessionRefreshedRef.current).catch(
+        () => null,
+      ),
     ])
       .then(([settings, profile]) => {
         if (!cancelled) {
@@ -155,7 +151,11 @@ export function useHomepageVoiceChat({
 
     const transcript = text.trim();
     if (!transcript) {
-      dispatch({ type: "FAILED", eventId, error: "No voice input was captured." });
+      dispatch({
+        type: "FAILED",
+        eventId,
+        error: "No voice input was captured.",
+      });
       return;
     }
 
@@ -254,7 +254,8 @@ export function useHomepageVoiceChat({
           label: "Transcribing",
         });
         completeListening(eventId);
-        void realtimeTranscriber.stop()
+        void realtimeTranscriber
+          .stop()
           .then(async (transcript) => {
             if (transcript.text.trim()) {
               await handleRealtimeTranscript(eventId, transcript.text);
@@ -263,11 +264,6 @@ export function useHomepageVoiceChat({
 
             const blob = await fallbackAudio;
             if (blob && blob.size > 0) {
-              voiceDebug("realtime transcript empty; falling back to batch STT", {
-                eventId,
-                bytes: blob.size,
-                type: blob.type,
-              });
               await processRecording(eventId, blob);
               return;
             }
@@ -281,12 +277,6 @@ export function useHomepageVoiceChat({
 
             const blob = await fallbackAudio;
             if (blob && blob.size > 0) {
-              voiceDebug("realtime transcription failed; falling back to batch STT", {
-                eventId,
-                error: describeVoiceError(error),
-                bytes: blob.size,
-                type: blob.type,
-              });
               await processRecording(eventId, blob);
               return;
             }
@@ -318,21 +308,22 @@ export function useHomepageVoiceChat({
         session,
         onSessionRefreshed,
       );
-      const realtimeTranscriber = await createCartesiaRealtimeSpeechToTextClient({
-        session: realtimeSession,
-        stream,
-        onTranscriptUpdate(transcript) {
-          dispatch({ type: "USER_TRANSCRIPT_UPDATED", eventId, text: transcript });
-        },
-      });
+      const realtimeTranscriber =
+        await createCartesiaRealtimeSpeechToTextClient({
+          session: realtimeSession,
+          stream,
+          onTranscriptUpdate(transcript) {
+            dispatch({
+              type: "USER_TRANSCRIPT_UPDATED",
+              eventId,
+              text: transcript,
+            });
+          },
+        });
 
       realtimeTranscriberRef.current = realtimeTranscriber;
       return true;
-    } catch (error) {
-      voiceDebug("realtime transcription unavailable", {
-        eventId,
-        error: describeVoiceError(error),
-      });
+    } catch {
       realtimeTranscriberRef.current?.cancel();
       realtimeTranscriberRef.current = null;
       return false;
@@ -344,16 +335,10 @@ export function useHomepageVoiceChat({
     options: { autoStopMs?: number } = {},
   ) => {
     if (!session) {
-      voiceDebug("recording skipped: no session", { eventId });
       return;
     }
 
     if (!isVoiceRecordingSupported()) {
-      voiceDebug("recording unsupported", {
-        hasMediaDevices: Boolean(navigator.mediaDevices),
-        hasGetUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
-        hasMediaRecorder: typeof globalThis.MediaRecorder === "function",
-      });
       dispatch({
         type: "UNSUPPORTED",
         error: "This browser does not support voice recording.",
@@ -361,12 +346,14 @@ export function useHomepageVoiceChat({
       return;
     }
 
-    voiceDebug("permission requested", { eventId, autoStopMs: options.autoStopMs ?? null });
     dispatch({ type: "PERMISSION_REQUESTED", eventId });
 
     function scheduleRecordingStop() {
       if (options.autoStopMs) {
-        autoStopTimerRef.current = window.setTimeout(stopRecording, options.autoStopMs);
+        autoStopTimerRef.current = window.setTimeout(
+          stopRecording,
+          options.autoStopMs,
+        );
       } else if (pendingKeyboardStopRef.current) {
         pendingKeyboardStopRef.current = false;
         window.setTimeout(stopRecording, 0);
@@ -384,7 +371,6 @@ export function useHomepageVoiceChat({
       chunksRef.current = [];
 
       recorder.addEventListener("dataavailable", (event) => {
-        voiceDebug("recorder data", { eventId, size: event.data.size });
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
         }
@@ -392,11 +378,6 @@ export function useHomepageVoiceChat({
       recorder.addEventListener(
         "stop",
         () => {
-          voiceDebug("recorder stopped", {
-            eventId,
-            chunks: chunksRef.current.length,
-            mimeType: recorder.mimeType,
-          });
           stopRecordingStream(recorder);
           const blob = new Blob(chunksRef.current, {
             type: recorder.mimeType || "audio/webm",
@@ -405,39 +386,25 @@ export function useHomepageVoiceChat({
           recorderRef.current = null;
 
           if (blob.size <= 0) {
-            voiceDebug("recording empty", { eventId });
             completeListening(eventId);
-            dispatch({ type: "FAILED", eventId, error: "No voice input was captured." });
+            dispatch({
+              type: "FAILED",
+              eventId,
+              error: "No voice input was captured.",
+            });
             return;
           }
 
-          voiceDebug("recording ready", { eventId, bytes: blob.size, type: blob.type });
           void processRecording(eventId, blob);
         },
         { once: true },
       );
 
       recorder.start();
-      voiceDebug("recorder started", {
-        eventId,
-        state: recorder.state,
-        mimeType: recorder.mimeType,
-      });
     }
 
     try {
-      await logAudioInputDevices("before permission");
       const stream = await requestVoiceAudioStream();
-      voiceDebug("audio stream acquired", {
-        eventId,
-        tracks: stream.getAudioTracks().map((track) => ({
-          id: track.id,
-          label: track.label,
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState,
-        })),
-      });
 
       if (isRealtimeVoiceRecordingSupported()) {
         // Show "listening" and start capturing immediately so the realtime
@@ -452,14 +419,15 @@ export function useHomepageVoiceChat({
         });
         enterListening();
 
-        const realtimeStarted = await startRealtimeRecordingSession(eventId, stream);
+        const realtimeStarted = await startRealtimeRecordingSession(
+          eventId,
+          stream,
+        );
         if (realtimeStarted) {
-          voiceDebug("realtime recorder started", { eventId });
           scheduleRecordingStop();
           return;
         }
 
-        voiceDebug("realtime unavailable; using batch recorder", { eventId });
         cancelRealtimeFallbackCapture({
           recorderRef: realtimeFallbackRecorderRef,
           chunksRef: realtimeFallbackChunksRef,
@@ -474,23 +442,21 @@ export function useHomepageVoiceChat({
       enterListening();
       scheduleRecordingStop();
     } catch (error) {
-      voiceDebug("recording failed", { eventId, error: describeVoiceError(error) });
       onRuntimeEvent({
         type: "runtime.cancelled",
         eventId,
         reason: "voice_microphone_unavailable",
       });
-      dispatch({ type: "FAILED", eventId, error: voiceRecordingErrorMessage(error) });
-      void logAudioInputDevices("after failure");
+      dispatch({
+        type: "FAILED",
+        eventId,
+        error: voiceRecordingErrorMessage(error),
+      });
     }
   };
 
   const beginPushToTalk = () => {
     if (!enabled || !session) {
-      voiceDebug("begin ignored: inactive", {
-        enabled,
-        hasSession: Boolean(session),
-      });
       return;
     }
 
@@ -501,15 +467,16 @@ export function useHomepageVoiceChat({
       currentPhase === "transcribing" ||
       currentPhase === "thinking"
     ) {
-      voiceDebug("begin ignored: busy", { phase: currentPhase });
       return;
     }
 
     const eventId = createVoiceEventId();
-    voiceDebug("begin push-to-talk", { eventId, phase: currentPhase });
     if (currentPhase === "speaking") {
       activeStreamAbortRef.current?.abort();
-      onRuntimeEvent({ type: "runtime.cancelled", reason: "voice_interrupted" });
+      onRuntimeEvent({
+        type: "runtime.cancelled",
+        reason: "voice_interrupted",
+      });
       dispatch({ type: "INTERRUPTED", eventId });
     }
 
@@ -517,10 +484,6 @@ export function useHomepageVoiceChat({
   };
 
   const endPushToTalk = () => {
-    voiceDebug("end push-to-talk", {
-      recorderState: recorderRef.current?.state ?? null,
-      phase: stateRef.current.phase,
-    });
     stopRecording();
   };
 
@@ -533,40 +496,17 @@ export function useHomepageVoiceChat({
   });
 
   useEffect(() => {
-    function handleInactiveSpace(event: KeyboardEvent) {
-      if (event.code === PUSH_TO_TALK_KEY_CODE && (!enabled || !session)) {
-        voiceDebug("space ignored: inactive shortcut", {
-          enabled,
-          hasSession: Boolean(session),
-          target: describeEventTarget(event.target),
-        });
-      }
-    }
-
-    window.addEventListener("keydown", handleInactiveSpace, { capture: true });
-    return () => window.removeEventListener("keydown", handleInactiveSpace, { capture: true });
-  }, [enabled, session]);
-
-  useEffect(() => {
     if (!enabled || !session) {
       pendingKeyboardStopRef.current = false;
-      voiceDebug("shortcut detached", { enabled, hasSession: Boolean(session) });
       return;
     }
-
-    voiceDebug("shortcut attached", {
-      mode: "toggle",
-      phase: stateRef.current.phase,
-    });
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.code !== PUSH_TO_TALK_KEY_CODE) {
         return;
       }
 
-      const target = describeEventTarget(event.target);
       if (isKeyboardShortcutTargetIgnored(event.target)) {
-        voiceDebug("space ignored: focused control", { target });
         return;
       }
 
@@ -575,13 +515,6 @@ export function useHomepageVoiceChat({
         phase: stateRef.current.phase,
         eventType: "keydown",
         repeat: event.repeat,
-      });
-      voiceDebug("space keydown", {
-        action,
-        mode: "toggle",
-        phase: stateRef.current.phase,
-        repeat: event.repeat,
-        target,
       });
 
       if (action === "stop") {
@@ -596,34 +529,11 @@ export function useHomepageVoiceChat({
       }
     }
 
-    function handleKeyUp(event: KeyboardEvent) {
-      if (event.code !== PUSH_TO_TALK_KEY_CODE) {
-        return;
-      }
-
-      const target = describeEventTarget(event.target);
-      const action = resolvePushToTalkKeyboardAction({
-        phase: stateRef.current.phase,
-        eventType: "keyup",
-        repeat: event.repeat,
-      });
-      voiceDebug("space keyup", {
-        action,
-        mode: "toggle",
-        phase: stateRef.current.phase,
-        repeat: event.repeat,
-        target,
-      });
-    }
-
     window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
       pendingKeyboardStopRef.current = false;
-      voiceDebug("shortcut detached", { enabled, hasSession: Boolean(session) });
     };
   }, [enabled, session]);
 
@@ -701,7 +611,9 @@ export function useHomepageVoiceChat({
       const eventId = createVoiceEventId();
       dispatch({ type: "WAKE_DETECTED", eventId });
       recognition.stop();
-      startRecordingSessionRef.current(eventId, { autoStopMs: WAKE_RECORDING_MS });
+      startRecordingSessionRef.current(eventId, {
+        autoStopMs: WAKE_RECORDING_MS,
+      });
     };
     recognition.onerror = () => undefined;
     recognition.onend = () => {
@@ -801,16 +713,21 @@ async function streamVoiceTurn(input: {
   activeThreadId: string | null;
   onSessionRefreshed: (session: Session) => void;
   onRuntimeEvent: (event: TwinRuntimeEvent) => void;
-  dispatch: Dispatch<import("@/lib/voice/voice-chat-reducer").HomepageVoiceAction>;
+  dispatch: Dispatch<
+    import("@/lib/voice/voice-chat-reducer").HomepageVoiceAction
+  >;
   activeStreamAbortRef: RefObject<AbortController | null>;
 }) {
-  const threadId = input.activeThreadId ??
-    (await createThread(
-      "Voice chat",
-      input.session,
-      input.onSessionRefreshed,
-      VOICE_CHAT_SURFACE,
-    )).thread.id;
+  const threadId =
+    input.activeThreadId ??
+    (
+      await createThread(
+        "Voice chat",
+        input.session,
+        input.onSessionRefreshed,
+        VOICE_CHAT_SURFACE,
+      )
+    ).thread.id;
   const abortController = new AbortController();
   input.activeStreamAbortRef.current = abortController;
   const realtimeSynthesisSession = await createRealtimeVoiceSynthesisSession(
@@ -821,7 +738,10 @@ async function streamVoiceTurn(input: {
   const audioPlayer = createRealtimePcmAudioPlayer({
     sampleRate: realtimeSynthesisSession.sampleRate,
     onStarted: () => {
-      input.onRuntimeEvent({ type: "agent.thinking_completed", eventId: input.eventId });
+      input.onRuntimeEvent({
+        type: "agent.thinking_completed",
+        eventId: input.eventId,
+      });
       input.dispatch({ type: "SPEAKING", eventId: input.eventId });
     },
   });
@@ -908,7 +828,8 @@ async function streamVoiceTurn(input: {
 
     if (!audioPlayer.started) {
       throw new Error(
-        streamer.error?.message ?? "The assistant could not produce speech audio.",
+        streamer.error?.message ??
+          "The assistant could not produce speech audio.",
       );
     }
 
@@ -966,9 +887,10 @@ function flushLongPhraseChunk(
   }
 
   const preferred = pending.search(/[,;:]\s/u);
-  const boundary = preferred >= MIN_SPOKEN_CHUNK_CHARS
-    ? preferred + 1
-    : lastWordBoundaryBefore(pending, MAX_UNSPOKEN_CHUNK_CHARS);
+  const boundary =
+    preferred >= MIN_SPOKEN_CHUNK_CHARS
+      ? preferred + 1
+      : lastWordBoundaryBefore(pending, MAX_UNSPOKEN_CHUNK_CHARS);
 
   if (boundary < MIN_SPOKEN_CHUNK_CHARS) {
     return fromIndex;
@@ -997,7 +919,6 @@ function startRealtimeFallbackCapture(input: {
   stopPromiseRef: RefObject<Promise<Blob | null> | null>;
 }) {
   if (typeof globalThis.MediaRecorder !== "function") {
-    voiceDebug("realtime fallback recorder unavailable", { eventId: input.eventId });
     return;
   }
 
@@ -1015,11 +936,12 @@ function startRealtimeFallbackCapture(input: {
       recorder.addEventListener(
         "stop",
         () => {
-          const blob = input.chunksRef.current.length > 0
-            ? new Blob(input.chunksRef.current, {
-              type: recorder.mimeType || "audio/webm",
-            })
-            : null;
+          const blob =
+            input.chunksRef.current.length > 0
+              ? new Blob(input.chunksRef.current, {
+                  type: recorder.mimeType || "audio/webm",
+                })
+              : null;
           input.chunksRef.current = [];
           if (input.recorderRef.current === recorder) {
             input.recorderRef.current = null;
@@ -1040,10 +962,6 @@ function startRealtimeFallbackCapture(input: {
     input.chunksRef.current = [];
     input.recorderRef.current = null;
     input.stopPromiseRef.current = null;
-    voiceDebug("realtime fallback recorder failed", {
-      eventId: input.eventId,
-      error: describeVoiceError(error),
-    });
   }
 }
 
@@ -1088,21 +1006,24 @@ function cancelRealtimeFallbackCapture(input: {
 function isVoiceRecordingSupported() {
   return Boolean(
     typeof navigator.mediaDevices?.getUserMedia === "function" &&
-      (typeof globalThis.MediaRecorder === "function" || isRealtimeVoiceRecordingSupported()),
+    (typeof globalThis.MediaRecorder === "function" ||
+      isRealtimeVoiceRecordingSupported()),
   );
 }
 
 function isRealtimeVoiceRecordingSupported() {
-  return typeof globalThis.AudioContext === "function" ||
-    typeof (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext === "function";
+  return (
+    typeof globalThis.AudioContext === "function" ||
+    typeof (
+      globalThis as unknown as { webkitAudioContext?: typeof AudioContext }
+    ).webkitAudioContext === "function"
+  );
 }
 
 async function requestVoiceAudioStream() {
   try {
-    voiceDebug("getUserMedia requested", { constraints: { audio: true } });
     return await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (error) {
-    voiceDebug("getUserMedia failed", { error: describeVoiceError(error) });
     const fallbackStream = await requestAvailableAudioInputStream(error);
     if (fallbackStream) {
       return fallbackStream;
@@ -1113,35 +1034,29 @@ async function requestVoiceAudioStream() {
 }
 
 async function requestAvailableAudioInputStream(error: unknown) {
-  if (!isMissingAudioInputError(error) || !navigator.mediaDevices.enumerateDevices) {
+  if (
+    !isMissingAudioInputError(error) ||
+    !navigator.mediaDevices.enumerateDevices
+  ) {
     return null;
   }
 
-  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const devices = await navigator.mediaDevices
+    .enumerateDevices()
+    .catch(() => []);
   const audioInputs = devices.filter(
     (device) => device.kind === "audioinput" && device.deviceId,
   );
-  voiceDebug("audio fallback candidates", {
-    count: audioInputs.length,
-    devices: audioInputs.map(formatMediaDeviceInfo),
-  });
 
   const fallbackResults = await Promise.all(
     audioInputs.slice(0, 4).map(async (device) => {
-      voiceDebug("getUserMedia fallback requested", {
-        device: formatMediaDeviceInfo(device),
-      });
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: { exact: device.deviceId },
-        },
-      }).catch((fallbackError: unknown) => {
-        voiceDebug("getUserMedia fallback failed", {
-          device: formatMediaDeviceInfo(device),
-          error: describeVoiceError(fallbackError),
-        });
-        return null;
-      });
+      const stream = await navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            deviceId: { exact: device.deviceId },
+          },
+        })
+        .catch(() => null);
 
       return { device, stream };
     }),
@@ -1149,9 +1064,6 @@ async function requestAvailableAudioInputStream(error: unknown) {
 
   const fallbackResult = fallbackResults.find((result) => result.stream);
   if (fallbackResult?.stream) {
-    voiceDebug("getUserMedia fallback acquired", {
-      device: formatMediaDeviceInfo(fallbackResult.device),
-    });
     return fallbackResult.stream;
   }
 
@@ -1171,8 +1083,10 @@ export function voiceRecordingErrorMessage(error: unknown) {
 }
 
 function isMissingAudioInputError(error: unknown) {
-  return isNamedDomError(error, ["NotFoundError", "DevicesNotFoundError"]) ||
-    errorMessage(error).toLowerCase().includes("requested device not found");
+  return (
+    isNamedDomError(error, ["NotFoundError", "DevicesNotFoundError"]) ||
+    errorMessage(error).toLowerCase().includes("requested device not found")
+  );
 }
 
 function isPermissionDeniedError(error: unknown) {
@@ -1180,27 +1094,10 @@ function isPermissionDeniedError(error: unknown) {
 }
 
 function isAbortError(error: unknown) {
-  return isNamedDomError(error, ["AbortError"]) ||
-    errorMessage(error).toLowerCase().includes("abort");
-}
-
-function describeVoiceError(error: unknown) {
-  if (error instanceof DOMException) {
-    return {
-      name: error.name,
-      message: error.message,
-      code: error.code,
-    };
-  }
-
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-    };
-  }
-
-  return { message: errorMessage(error) };
+  return (
+    isNamedDomError(error, ["AbortError"]) ||
+    errorMessage(error).toLowerCase().includes("abort")
+  );
 }
 
 function isNamedDomError(error: unknown, names: string[]) {
@@ -1243,59 +1140,15 @@ function isKeyboardShortcutTargetIgnored(target: EventTarget | null) {
   );
 }
 
-function describeEventTarget(target: EventTarget | null) {
-  if (!(target instanceof Element)) {
-    return null;
-  }
-
-  return {
-    tagName: target.tagName.toLowerCase(),
-    id: target.id || null,
-    className: typeof target.className === "string" ? target.className : null,
-    role: target.getAttribute("role"),
-    ariaLabel: target.getAttribute("aria-label"),
-    contentEditable: target.getAttribute("contenteditable"),
-  };
-}
-
-async function logAudioInputDevices(stage: string) {
-  if (!navigator.mediaDevices?.enumerateDevices) {
-    voiceDebug("audio devices unavailable", { stage });
-    return;
-  }
-
-  const devices = await navigator.mediaDevices.enumerateDevices().catch((error: unknown) => {
-    voiceDebug("audio devices failed", { stage, error: describeVoiceError(error) });
-    return [];
-  });
-  const audioInputs = devices.filter((device) => device.kind === "audioinput");
-  voiceDebug("audio devices", {
-    stage,
-    audioInputCount: audioInputs.length,
-    devices: audioInputs.map(formatMediaDeviceInfo),
-  });
-}
-
-function formatMediaDeviceInfo(device: MediaDeviceInfo) {
-  return {
-    kind: device.kind,
-    label: device.label || "(label hidden until permission)",
-    deviceId: device.deviceId ? `${device.deviceId.slice(0, 8)}...` : "",
-    groupId: device.groupId ? `${device.groupId.slice(0, 8)}...` : "",
-  };
-}
-
-function voiceDebug(event: string, details: Record<string, unknown> = {}) {
-  console.info("[voice-chat]", event, details);
-}
-
 function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   const candidate = globalThis as unknown as {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
 
-  return candidate.SpeechRecognition ?? candidate.webkitSpeechRecognition ?? null;
+  return (
+    candidate.SpeechRecognition ?? candidate.webkitSpeechRecognition ?? null
+  );
 }
 
 function stopRecordingStream(recorder: MediaRecorder) {
@@ -1337,5 +1190,9 @@ function includesWakePhrase(text: string, wakePhrase: string) {
 }
 
 function normalizeWakeText(value: string) {
-  return value.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

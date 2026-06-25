@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck",
     "lint": "echo \"queue lint not configured yet\"",
-    "test": "echo \"queue tests not configured yet\"",
+    "test": "vitest run src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
     "ioredis": "^5.10.1"
   },
   "devDependencies": {
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.6"
   }
 }

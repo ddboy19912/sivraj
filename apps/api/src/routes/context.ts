@@ -133,15 +133,28 @@ export function createContextRoutes({
       });
     }
 
-    const queued = await contextWarmupQueue.enqueueContextWarmup({
-      twinId,
-      requestedBy: c.get("auth").sub,
-      surface,
-      reason,
-      scope: readStringValue(body.body["scope"]),
-      projectFingerprint: readRecordValue(body.body["projectFingerprint"]),
-      documentIds: readStringList(body.body["documentIds"]),
-    });
+    const queued = await contextWarmupQueue
+      .enqueueContextWarmup({
+        twinId,
+        requestedBy: c.get("auth").sub,
+        surface,
+        reason,
+        scope: readStringValue(body.body["scope"]),
+        projectFingerprint: readRecordValue(body.body["projectFingerprint"]),
+        documentIds: readStringList(body.body["documentIds"]),
+      })
+      .catch((error: unknown) => {
+        console.error("context warmup queue enqueue failed", error);
+        return null;
+      });
+
+    if (!queued) {
+      return c.json({
+        status: "already_warm",
+        warning: "context_warmup_queue_failed",
+        packetIds: refreshed.packetIds,
+      });
+    }
 
     return c.json({
       status: "queued",

@@ -214,7 +214,7 @@ export function createArtifactProcessingQueue(redisUrl: string): ArtifactProcess
       const job = await queue.add(PROCESS_ARTIFACT_JOB_NAME, data, {
         ...artifactJobOptions,
         delay: data.delayMs,
-        jobId: artifactProcessingJobId(data),
+        jobId: safeBullMqJobId(artifactProcessingJobId(data)),
       });
 
       return { jobId: String(job.id) };
@@ -235,7 +235,7 @@ export function createIntelligenceProcessingQueue(redisUrl: string): Intelligenc
     async enqueueIntelligenceProcessing(data) {
       const job = await queue.add(PROCESS_INTELLIGENCE_JOB_NAME, data, {
         ...artifactJobOptions,
-        jobId: data.artifactId,
+        jobId: safeBullMqJobId(data.artifactId),
       });
 
       return { jobId: String(job.id) };
@@ -260,7 +260,9 @@ export function createCandidateMemoryArchiveQueue(redisUrl: string): CandidateMe
       const job = await queue.add(ARCHIVE_CANDIDATE_MEMORY_JOB_NAME, data, {
         ...artifactJobOptions,
         priority: 10,
-        jobId: data.archiveId ?? `${data.artifactId}:candidate-memory-archive:${data.contentSha256.slice(0, 16)}`,
+        jobId: safeBullMqJobId(
+          data.archiveId ?? candidateMemoryArchiveJobId(data),
+        ),
       });
 
       return { jobId: String(job.id) };
@@ -281,7 +283,7 @@ export function createWeeklyReflectionQueue(redisUrl: string): WeeklyReflectionQ
     async enqueueWeeklyReflection(data) {
       const job = await queue.add(GENERATE_WEEKLY_REFLECTION_JOB_NAME, data, {
         ...artifactJobOptions,
-        jobId: data.reflectionRunId,
+        jobId: safeBullMqJobId(data.reflectionRunId),
       });
 
       return { jobId: String(job.id) };
@@ -302,7 +304,7 @@ export function createConnectorSyncQueue(redisUrl: string): ConnectorSyncQueue {
     async enqueueConnectorSync(data) {
       const job = await queue.add(SYNC_CONNECTOR_JOB_NAME, data, {
         ...artifactJobOptions,
-        jobId: data.syncRunId,
+        jobId: safeBullMqJobId(data.syncRunId),
       });
 
       return { jobId: String(job.id) };
@@ -811,20 +813,49 @@ function privateMemoryCiphertextKey(ciphertextSha256: string): string {
 
 function artifactProcessingJobId(data: ArtifactProcessingJobData): string {
   return data.jobKey
-    ? `${data.artifactId}-${data.jobKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+    ? safeBullMqJobId(data.artifactId, data.jobKey)
     : data.artifactId;
 }
 
-function contextWarmupJobId(data: ContextWarmupJobData): string {
-  const scope = data.scope?.replace(/[^a-zA-Z0-9_-]/g, "-") ?? "default";
-  const documents = data.documentIds?.length ? data.documentIds.join("-").slice(0, 80) : "all";
-  return [
+export function candidateMemoryArchiveJobId(
+  data: Pick<CandidateMemoryArchiveJobData, "artifactId" | "contentSha256">,
+): string {
+  return safeBullMqJobId(
+    data.artifactId,
+    "candidate-memory-archive",
+    data.contentSha256.slice(0, 16),
+  );
+}
+
+export function contextWarmupJobId(data: ContextWarmupJobData): string {
+  const scope = data.scope ?? "default";
+  const documents = data.documentIds?.length
+    ? data.documentIds.join("-").slice(0, 80)
+    : "all";
+  return safeBullMqJobId(
     data.twinId,
     data.surface,
     data.reason,
     scope,
     documents,
-  ].join(":");
+  );
+}
+
+export function safeBullMqJobId(...parts: Array<string | null | undefined>): string {
+  const sanitized = parts
+    .flatMap((part) => {
+      const safe = safeBullMqJobIdPart(part);
+      return safe ? [safe] : [];
+    });
+
+  return sanitized.length > 0 ? sanitized.join("-") : "job";
+}
+
+export function safeBullMqJobIdPart(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
 }
 
 function parseArtifactStatusEvent(message: string): ArtifactStatusEvent | null {

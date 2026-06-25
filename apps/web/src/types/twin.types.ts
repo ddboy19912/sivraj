@@ -1,5 +1,7 @@
 import type { Session } from "@/lib/session";
 
+export type TwinSpeechFailureMode = "visible_retry" | "quiet";
+
 export type TwinRuntimeEvent =
   | {
       type: "first_meet_intro.requested";
@@ -15,6 +17,7 @@ export type TwinRuntimeEvent =
       text: string;
       voiceStyle: "energetic";
       sourceEventId?: string;
+      failureMode?: TwinSpeechFailureMode;
     }
   | {
       type: "speech.audio_chunk";
@@ -27,7 +30,12 @@ export type TwinRuntimeEvent =
   | { type: "speech.clip_advanced"; eventId: string }
   | { type: "speech.started"; eventId: string }
   | { type: "speech.completed"; eventId: string }
-  | { type: "speech.failed"; eventId: string; reason: string }
+  | {
+      type: "speech.failed";
+      eventId: string;
+      reason: string;
+      failureMode?: TwinSpeechFailureMode;
+    }
   | { type: "agent.thinking_started"; eventId: string; label?: string }
   | { type: "agent.thinking_completed"; eventId: string }
   | { type: "agent.listening_started"; eventId: string }
@@ -43,6 +51,7 @@ export type TwinRuntimeState =
       text: string;
       voiceStyle: "energetic";
       sourceEventId?: string;
+      failureMode?: TwinSpeechFailureMode;
       processedEventIds: string[];
     }
   | {
@@ -54,6 +63,7 @@ export type TwinRuntimeState =
       clipCursor: number;
       streamClosed: boolean;
       sourceEventId?: string;
+      failureMode?: TwinSpeechFailureMode;
       processedEventIds: string[];
     }
   | { status: "listening"; eventId: string; processedEventIds: string[] }

@@ -44,6 +44,7 @@ export function twinRuntimeReducer(
         clipCursor: 0,
         streamClosed: true,
         sourceEventId: state.sourceEventId,
+        failureMode: state.failureMode,
         processedEventIds: state.processedEventIds,
       };
     case "speech.audio_chunk":
@@ -90,6 +91,13 @@ export function twinRuntimeReducer(
     case "speech.failed":
       if (!isActiveRuntimeEvent(state, action.eventId)) {
         return state;
+      }
+
+      if (resolveSpeechFailureMode(state, action) === "quiet") {
+        return {
+          status: "idle",
+          processedEventIds: markProcessed(state.processedEventIds, action.eventId),
+        };
       }
 
       return {
@@ -161,6 +169,7 @@ function applySpeechRequest(
     text: string;
     voiceStyle: "energetic";
     sourceEventId?: string;
+    failureMode?: "visible_retry" | "quiet";
   },
 ): TwinRuntimeState {
   if (hasProcessedEvent(state, event.eventId)) {
@@ -179,6 +188,7 @@ function applySpeechRequest(
       text: event.text,
       voiceStyle: event.voiceStyle,
       sourceEventId: event.sourceEventId,
+      failureMode: event.failureMode,
       processedEventIds: state.processedEventIds,
     };
   }
@@ -194,6 +204,7 @@ function applySpeechRequest(
     text: event.text,
     voiceStyle: event.voiceStyle,
     sourceEventId: event.sourceEventId,
+    failureMode: event.failureMode,
     processedEventIds: state.processedEventIds,
   };
 }
@@ -221,6 +232,17 @@ function applySpeechChunk(
     sourceEventId: event.sourceEventId,
     processedEventIds: state.processedEventIds,
   };
+}
+
+function resolveSpeechFailureMode(
+  state: TwinRuntimeState,
+  action: Extract<TwinRuntimeAction, { type: "speech.failed" }>,
+) {
+  if (action.failureMode) {
+    return action.failureMode;
+  }
+
+  return "failureMode" in state ? state.failureMode ?? "visible_retry" : "visible_retry";
 }
 
 function hasProcessedEvent(state: TwinRuntimeState, eventId: string) {
