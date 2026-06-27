@@ -1,6 +1,6 @@
 [build]
 builder = "RAILPACK"
-buildCommand = "pnpm --filter @sivraj/worker build"
+buildCommand = "pnpm --filter @sivraj/worker install:walrus && pnpm --filter @sivraj/worker build"
 watchPatterns = [
   "/apps/worker/**",
   "/packages/**",

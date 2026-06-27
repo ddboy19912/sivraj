@@ -2,7 +2,8 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { promisify } from "node:util";
@@ -16,6 +17,10 @@ const DEFAULT_AGGREGATORS = {
   mainnet: "https://aggregator.walrus-mainnet.walrus.space",
   testnet: "https://aggregator.walrus-testnet.walrus.space",
 };
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const workerDir = path.resolve(scriptDir, "..");
+const DEFAULT_WALRUS_BIN = path.join(workerDir, "bin", process.platform === "win32" ? "walrus.exe" : "walrus");
+const DEFAULT_WALRUS_CONFIG = path.join(workerDir, "walrus", "client_config.yaml");
 const RENEWABLE_STATUSES = [
   "verified_available",
   "renewed",
@@ -31,6 +36,8 @@ if (options.help) {
   printUsage();
   process.exit(0);
 }
+
+prepareWalrusCliDefaults(options);
 
 if (!options.yes && !options.dryRun) {
   options.dryRun = await promptDryRunDefault();
@@ -91,9 +98,9 @@ function parseArgs(args) {
     limit: readInteger(process.env.WALRUS_MEMORY_RENEW_LIMIT, 25),
     renewBeforeEpochs: readInteger(process.env.WALRUS_MEMORY_RENEW_BEFORE_EPOCHS, 2),
     twinId: "",
-    walrusBin: process.env.WALRUS_CLI_BIN?.trim() || "walrus",
-    walrusConfig: process.env.WALRUS_CONFIG?.trim() || "",
-    walrusContext: process.env.WALRUS_CONTEXT?.trim() || "",
+    walrusBin: process.env.WALRUS_CLI_BIN?.trim() || (existsSync(DEFAULT_WALRUS_BIN) ? DEFAULT_WALRUS_BIN : "walrus"),
+    walrusConfig: process.env.WALRUS_CONFIG?.trim() || (existsSync(DEFAULT_WALRUS_CONFIG) ? DEFAULT_WALRUS_CONFIG : ""),
+    walrusContext: process.env.WALRUS_CONTEXT?.trim() || readWalrusContext(process.env.WALRUS_NETWORK ?? process.env.SUI_NETWORK),
     walrusRpcUrl: process.env.SUI_RPC_URL?.trim() || "",
     walrusWallet: process.env.WALRUS_WALLET?.trim() || "",
     yes: false,
@@ -125,6 +132,68 @@ function parseArgs(args) {
   assertNonNegativeInteger(parsed.renewBeforeEpochs, "--renew-before-epochs");
 
   return parsed;
+}
+
+function prepareWalrusCliDefaults(options) {
+  if (options.walrusWallet || !process.env.SUI_PRIVATE_KEY?.trim()) {
+    return;
+  }
+
+  const walletDir = path.join(os.tmpdir(), "sivraj-walrus-wallet");
+  const keystorePath = path.join(walletDir, "sui.keystore");
+  const walletPath = path.join(walletDir, "client.yaml");
+  const rpcUrl = options.walrusRpcUrl || readSuiRpcUrl(options.walrusContext);
+  const activeEnv = options.walrusContext || "testnet";
+
+  mkdirSync(walletDir, { recursive: true, mode: 0o700 });
+  chmodSync(walletDir, 0o700);
+  writeFileSync(keystorePath, `${JSON.stringify([process.env.SUI_PRIVATE_KEY.trim()], null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(keystorePath, 0o600);
+  writeFileSync(walletPath, [
+    "---",
+    "keystore:",
+    `  File: ${keystorePath}`,
+    "envs:",
+    `  - alias: ${activeEnv}`,
+    `    rpc: "${rpcUrl}"`,
+    "    ws: ~",
+    "    basic_auth: ~",
+    `active_env: ${activeEnv}`,
+    "",
+  ].join("\n"), {
+    mode: 0o600,
+  });
+  chmodSync(walletPath, 0o600);
+
+  options.walrusWallet = walletPath;
+}
+
+function readWalrusContext(value) {
+  return value === "mainnet" || value === "testnet" || value === "devnet" || value === "localnet"
+    ? value
+    : "testnet";
+}
+
+function readSuiRpcUrl(context) {
+  if (process.env.SUI_RPC_URL?.trim()) {
+    return process.env.SUI_RPC_URL.trim();
+  }
+
+  if (context === "mainnet") {
+    return "https://fullnode.mainnet.sui.io:443";
+  }
+
+  if (context === "devnet") {
+    return "https://fullnode.devnet.sui.io:443";
+  }
+
+  if (context === "localnet") {
+    return "http://127.0.0.1:9000";
+  }
+
+  return "https://fullnode.testnet.sui.io:443";
 }
 
 function applyOptionWithValue(parsed, arg, args, index) {
@@ -567,14 +636,18 @@ Options:
   --epochs <n>                 Number of epochs to extend. Default: WALRUS_MEMORY_EXTEND_EPOCHS, WALRUS_EPOCHS, or 30.
   --limit <n>                  Max fragments to renew. Default: 25.
   --twin <id>                  Restrict renewal to one twin.
-  --walrus-bin <path>          Walrus CLI binary. Default: walrus.
-  --walrus-config <path>       Walrus config file.
+  --walrus-bin <path>          Walrus CLI binary. Default: apps/worker/bin/walrus, then PATH.
+  --walrus-config <path>       Walrus config file. Default: apps/worker/walrus/client_config.yaml.
   --walrus-context <name>      Walrus config context.
-  --wallet <path>              Sui wallet config for Walrus CLI.
+  --wallet <path>              Sui wallet config for Walrus CLI. Default: temp wallet from SUI_PRIVATE_KEY.
 
 Environment:
   DATABASE_URL
   WALRUS_AGGREGATOR_URL
+  WALRUS_CLI_BIN
+  WALRUS_CONFIG
+  WALRUS_CONTEXT
+  WALRUS_WALLET
   WALRUS_MEMORY_EXTEND_EPOCHS
   WALRUS_MEMORY_RENEW_BEFORE_EPOCHS
   WALRUS_MEMORY_RENEW_LIMIT

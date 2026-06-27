@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "pnpm typecheck",
     "dev": "tsx watch src/index.ts",
+    "install:walrus": "node scripts/install-walrus-cli.mjs",
     "start": "tsx src/index.ts",
     "lint": "echo \"worker lint not configured yet\"",
     "memory:renew": "node scripts/renew-memory.mjs",

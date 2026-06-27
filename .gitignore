@@ -8,6 +8,7 @@ build/
 .next/
 out/
 coverage/
+apps/worker/bin/
 
 # Environment
 .env
