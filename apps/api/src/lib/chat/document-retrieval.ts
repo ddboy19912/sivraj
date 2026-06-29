@@ -133,6 +133,7 @@ async function loadDocumentContext(input: any) {
     }
     const inventory = await buildDocumentRetrievalInventory({
         db: input.db,
+        twinId: input.twinId,
         rows,
         focusedArtifactIds,
     });
@@ -145,6 +146,7 @@ async function loadDocumentContext(input: any) {
     const inventoryAfterOnDemandStructure = input.privateMemoryReader
         ? await ensureDocumentStructureForPlan({
             db: input.db,
+            twinId: input.twinId,
             privateMemoryReader: input.privateMemoryReader,
             rows,
             inventory,
@@ -398,6 +400,7 @@ function buildDocumentMetadataContext(input: {
 }
 async function ensureDocumentStructureForPlan(input: {
     db: ApiDb;
+    twinId: string;
     privateMemoryReader: PrivateMemoryReader;
     rows: any[];
     inventory: DocumentInventoryItem[];
@@ -455,6 +458,7 @@ async function ensureDocumentStructureForPlan(input: {
     }
     return buildDocumentRetrievalInventory({
         db: input.db,
+        twinId: input.twinId,
         rows: input.rows,
         focusedArtifactIds: input.inventory
             .filter((item) => item.isThreadFocus)
@@ -729,9 +733,9 @@ function readNullableConfidence(value: unknown): number | null {
 }
 async function buildDocumentRetrievalInventory(input: any) {
     const artifactIds = Array.from(new Set(input.rows.map((row: any) => row.sourceArtifact.id)));
-    const chunkCounts = await loadDocumentChunkCounts(input.db, artifactIds);
-    const subjectsByArtifactId = await loadDocumentSubjects(input.db, artifactIds);
-    const structureByArtifactId = await loadDocumentStructureSummaries(input.db, artifactIds);
+    const chunkCounts = await loadDocumentChunkCounts(input.db, input.twinId, artifactIds);
+    const subjectsByArtifactId = await loadDocumentSubjects(input.db, input.twinId, artifactIds);
+    const structureByArtifactId = await loadDocumentStructureSummaries(input.db, input.twinId, artifactIds);
     const focused = new Set(input.focusedArtifactIds);
     return input.rows.map((row: any) => {
         const metadata = readDocumentSourceMetadata(row.sourceArtifact.metadata);
@@ -749,7 +753,7 @@ async function buildDocumentRetrievalInventory(input: any) {
         };
     });
 }
-async function loadDocumentChunkCounts(db: any, artifactIds: any) {
+async function loadDocumentChunkCounts(db: any, twinId: string, artifactIds: any) {
     const ids = artifactIds.filter(isUuid);
     if (ids.length === 0) {
         return new Map();
@@ -760,11 +764,14 @@ async function loadDocumentChunkCounts(db: any, artifactIds: any) {
         count: sql `count(*)::int`,
     })
         .from(documentChunks)
-        .where(inArray(documentChunks.sourceArtifactId, ids))
+        .where(and(
+            eq(documentChunks.twinId, twinId),
+            inArray(documentChunks.sourceArtifactId, ids),
+        ))
         .groupBy(documentChunks.sourceArtifactId);
     return new Map(rows.map((row: any) => [row.sourceArtifactId, Number(row.count) || 0]));
 }
-async function loadDocumentSubjects(db: any, artifactIds: any) {
+async function loadDocumentSubjects(db: any, twinId: string, artifactIds: any) {
     const ids = artifactIds.filter(isUuid);
     if (ids.length === 0) {
         return new Map();
@@ -775,7 +782,10 @@ async function loadDocumentSubjects(db: any, artifactIds: any) {
         metadata: candidateMemories.metadata,
     })
         .from(candidateMemories)
-        .where(inArray(candidateMemories.sourceArtifactId, ids))
+        .where(and(
+            eq(candidateMemories.twinId, twinId),
+            inArray(candidateMemories.sourceArtifactId, ids),
+        ))
         .limit(120);
     const subjectsByArtifactId = new Map();
     for (const row of rows) {
@@ -791,7 +801,7 @@ async function loadDocumentSubjects(db: any, artifactIds: any) {
     }
     return subjectsByArtifactId;
 }
-async function loadDocumentStructureSummaries(db: any, artifactIds: any) {
+async function loadDocumentStructureSummaries(db: any, twinId: string, artifactIds: any) {
     const ids = artifactIds.filter(isUuid);
     if (ids.length === 0) {
         return new Map();
@@ -806,7 +816,10 @@ async function loadDocumentStructureSummaries(db: any, artifactIds: any) {
         pageEnd: documentStructureItems.pageEnd,
     })
         .from(documentStructureItems)
-        .where(inArray(documentStructureItems.sourceArtifactId, ids))
+        .where(and(
+            eq(documentStructureItems.twinId, twinId),
+            inArray(documentStructureItems.sourceArtifactId, ids),
+        ))
         .orderBy(documentStructureItems.sourceArtifactId, documentStructureItems.ordinal, documentStructureItems.pageStart);
     const byArtifactId = new Map();
     for (const row of rows) {

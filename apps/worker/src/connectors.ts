@@ -439,7 +439,10 @@ async function completePlaceholderSync(
         implementationStatus: "connector_foundation_ready",
       },
     })
-    .where(eq(connectorSyncRuns.id, data.syncRunId))
+    .where(and(
+      eq(connectorSyncRuns.id, data.syncRunId),
+      eq(connectorSyncRuns.twinId, data.twinId),
+    ))
     .returning();
 
   await db.insert(auditEvents).values({
@@ -602,4 +605,3 @@ function readRichText(value: unknown): string {
     .filter((item): item is string => typeof item === "string" && item.length > 0)
     .join("");
 }
-

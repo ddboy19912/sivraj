@@ -30,6 +30,8 @@ export async function loadCandidateMemorySearchCandidates(input: {
   twinId: string;
   query: string;
   queryTerms?: string[];
+  includeFallbackRows?: boolean;
+  requireSpecificFactTrust?: boolean;
 }) {
   if (!input.privateMemoryReader) {
     return emptyCandidateMemoryContext();
@@ -116,6 +118,8 @@ async function loadCandidateMemoryRows(input: {
   twinId: string;
   memorySearchConfig: MemorySearchConfig;
   queryTerms?: string[];
+  includeFallbackRows?: boolean;
+  requireSpecificFactTrust?: boolean;
 }) {
   const decryptLimit = readPositiveInteger(
     process.env["CHAT_CANDIDATE_MEMORY_DECRYPT_LIMIT"],
@@ -130,6 +134,7 @@ async function loadCandidateMemoryRows(input: {
     eq(candidateMemories.twinId, input.twinId),
     ne(candidateMemories.status, "superseded"),
     archivedCandidateMemoryFilter(),
+    ...(input.requireSpecificFactTrust ? [specificFactTrustedCandidateFilter()] : []),
   ];
   const queryTerms = input.queryTerms?.slice(0, 8) ?? [];
   const matchedRows = queryTerms.length > 0
@@ -140,20 +145,24 @@ async function loadCandidateMemoryRows(input: {
       .orderBy(desc(candidateMemories.createdAt))
       .limit(rowLimit)
     : [];
-  const fallbackRows = await input.db
-    .select()
-    .from(candidateMemories)
-    .where(and(...baseFilters))
-    .orderBy(desc(candidateMemories.createdAt))
-    .limit(Math.min(rowLimit, input.memorySearchConfig.fallbackLimit));
+  const fallbackRows = input.includeFallbackRows === false
+    ? []
+    : await input.db
+      .select()
+      .from(candidateMemories)
+      .where(and(...baseFilters))
+      .orderBy(desc(candidateMemories.createdAt))
+      .limit(Math.min(rowLimit, input.memorySearchConfig.fallbackLimit));
   return filterActiveCanonicalCandidateRows(
     input.db,
+    input.twinId,
     uniqueRowsById([...matchedRows, ...fallbackRows]).slice(0, rowLimit),
   );
 }
 
 async function filterActiveCanonicalCandidateRows(
   db: ApiDb,
+  twinId: string,
   rows: Array<typeof candidateMemories.$inferSelect>,
 ) {
   const canonicalIds = Array.from(new Set(
@@ -168,7 +177,10 @@ async function filterActiveCanonicalCandidateRows(
       metadata: canonicalMemories.metadata,
     })
     .from(canonicalMemories)
-    .where(inArray(canonicalMemories.id, canonicalIds));
+    .where(and(
+      eq(canonicalMemories.twinId, twinId),
+      inArray(canonicalMemories.id, canonicalIds),
+    ));
   const activeEvidenceHashByCanonicalId = new Map<string, string>();
   for (const row of canonicalRows) {
     const currentTruth = readRecord(readRecord(row.metadata)?.["currentTruth"]);
@@ -190,6 +202,14 @@ function archivedCandidateMemoryFilter() {
   return sql`${candidateMemories.statementStorageRef} not like 'pending://%'`;
 }
 
+function specificFactTrustedCandidateFilter() {
+  return sql`
+    ${candidateMemories.status} = 'approved'
+    or coalesce(${candidateMemories.metadata}->>'sourceEvidenceVerified', 'false') = 'true'
+    or coalesce(${candidateMemories.metadata}->>'sourceType', '') = 'onboarding_self_description'
+  `;
+}
+
 function candidateMemoryMatchesTerm(term: string) {
   const pattern = `%${escapeLike(term)}%`;
 
@@ -198,6 +218,8 @@ function candidateMemoryMatchesTerm(term: string) {
     or lower(coalesce(${candidateMemories.metadata}->>'subject', '')) like ${pattern} escape '\\'
     or lower(coalesce(${candidateMemories.metadata}->>'sourceType', '')) like ${pattern} escape '\\'
     or lower(coalesce(${candidateMemories.metadata}->'memoryMetadata'->>'category', '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->'memoryMetadata'->'currentTruth'->>'slot', '')) like ${pattern} escape '\\'
+    or lower(coalesce(${candidateMemories.metadata}->'memoryMetadata'->'currentTruth'->>'value', '')) like ${pattern} escape '\\'
     or lower(coalesce(${candidateMemories.metadata}->'conversationUnderstanding'->>'sourceType', '')) like ${pattern} escape '\\'
   `;
 }
@@ -335,6 +357,9 @@ export function formatCandidateMemorySearchContent(input: {
   const metadata = readRecord(input.metadata);
   const memoryMetadata = readRecord(metadata?.["memoryMetadata"]);
   const category = optionalString(memoryMetadata?.["category"]);
+  const currentTruth = readRecord(memoryMetadata?.["currentTruth"]);
+  const currentTruthSlot = optionalString(currentTruth?.["slot"]);
+  const currentTruthValue = optionalString(currentTruth?.["value"]);
   const subject = optionalString(metadata?.["subject"]);
   const categoryPrefix = category
     ? `${category} ${input.memoryType} memory`
@@ -343,6 +368,8 @@ export function formatCandidateMemorySearchContent(input: {
     `${categoryPrefix}: ${input.statement}`,
     subject ? `Subject: ${subject}` : null,
     category ? `Category: ${category}` : null,
+    currentTruthSlot ? `Inferred profile slot: ${currentTruthSlot}` : null,
+    currentTruthValue ? `Inferred profile value: ${currentTruthValue}` : null,
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 

@@ -199,6 +199,7 @@ export async function enqueueDueCandidateMemoryArchives(
       });
 
       await repository.markCandidateMemoryArchiveQueued({
+        twinId: archive.twinId,
         archiveId: archive.id,
         candidateMemoryIds: archive.candidateMemoryIds,
         jobId: queued.jobId,
@@ -765,6 +766,7 @@ export async function processCandidateMemoryArchive(
   }
 
   await repository.markCandidateMemoryArchiveArchiving({
+    twinId: input.twinId,
     archiveId: input.archiveId,
     candidateMemoryIds: input.candidateMemoryIds,
   });
@@ -787,6 +789,7 @@ export async function processCandidateMemoryArchive(
     const archiveMs = Date.now() - startedAt;
     const failure = candidateArchiveFailureMetadata(input, error, archiveMs);
     await repository.markCandidateMemoriesArchiveFailed({
+      twinId: input.twinId,
       archiveId: input.archiveId,
       candidateMemoryIds: input.candidateMemoryIds,
       metadata: failure.candidateMetadata,
@@ -829,6 +832,7 @@ export async function processCandidateMemoryArchive(
   const archiveMs = Date.now() - startedAt;
 
   await repository.markCandidateMemoriesArchived({
+    twinId: input.twinId,
     archiveId: input.archiveId,
     candidateMemoryIds: input.candidateMemoryIds,
     statementStorageRef: stored.contentStorageRef,
@@ -891,6 +895,7 @@ async function recordRetryableCandidateArchiveFailure(
   };
 
   await repository.markCandidateMemoriesArchiveFailed({
+    twinId: input.twinId,
     archiveId: input.archiveId,
     candidateMemoryIds: input.candidateMemoryIds,
     metadata,

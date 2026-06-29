@@ -1,5 +1,5 @@
 import { connectorAccounts, connectorSources, type Db } from "@sivraj/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ConnectorAccount, ConnectorSource } from "../types/connector.types.js";
 
 export function syncCadenceToMs(syncCadence: string): number | null {
@@ -49,7 +49,10 @@ export function updateConnectorSyncTimestamps(
         errorCode: null,
         updatedAt: input.completedAt,
       })
-      .where(eq(connectorAccounts.id, input.account.id)),
+      .where(and(
+        eq(connectorAccounts.id, input.account.id),
+        eq(connectorAccounts.twinId, input.account.twinId),
+      )),
     input.source
       ? db
           .update(connectorSources)
@@ -60,7 +63,10 @@ export function updateConnectorSyncTimestamps(
             errorCode: null,
             updatedAt: input.completedAt,
           })
-          .where(eq(connectorSources.id, input.source.id))
+          .where(and(
+            eq(connectorSources.id, input.source.id),
+            eq(connectorSources.twinId, input.source.twinId),
+          ))
       : Promise.resolve(),
   ]);
 }

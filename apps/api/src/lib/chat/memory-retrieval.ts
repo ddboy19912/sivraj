@@ -7,7 +7,7 @@
 import type { MemorySearchConfig } from "@sivraj/config";
 import type { MemoryCandidate } from "@sivraj/retrieval";
 import { memoryFragments } from "@sivraj/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ApiDb, AppDependencies } from "../../app.js";
 import type { ChatMemoryContext, ChatRuntimeConfig } from "../../types/chat.types.js";
 import type { ConversationContextResolution, MemoryRequestScope } from "./turn-types.js";
@@ -116,7 +116,10 @@ export async function loadMemoryContext(input: {
     return {
       results: dedupeRetrievalResults(
         filterResultsByMemoryRequestScope(
-          [...ownedHotCurrentTruthResults, ...currentTruthFallbackResults],
+          [
+            ...ownedHotCurrentTruthResults,
+            ...currentTruthFallbackResultsForRequest(memoryRequest, currentTruthFallbackResults),
+          ],
           memoryScope,
         ),
         5,
@@ -132,14 +135,18 @@ export async function loadMemoryContext(input: {
     queryTerms,
     config: input.memorySearchConfig,
   });
-  const candidateMemoryContext = await loadCandidateMemorySearchCandidates({
-    db: input.db,
-    privateMemoryReader: input.privateMemoryReader,
-    memorySearchConfig: input.memorySearchConfig,
-    twinId: input.twinId,
-    query: input.query,
-    queryTerms,
-  });
+  const candidateMemoryContext = shouldLoadCandidateMemoryContext(memoryRequest)
+    ? await loadCandidateMemorySearchCandidates({
+        db: input.db,
+        privateMemoryReader: input.privateMemoryReader,
+        memorySearchConfig: input.memorySearchConfig,
+        twinId: input.twinId,
+        query: input.query,
+        queryTerms,
+        includeFallbackRows: shouldUseCandidateMemoryFallbackRows(memoryRequest),
+        requireSpecificFactTrust: memoryRequest.kind === "specific_fact",
+      })
+    : emptyCandidateMemorySearchContext();
   const readableRows = rows
     .filter(isChatMemoryReadableRow)
     .filter((row) => memoryFragmentRowBelongsToTwin(row, input.twinId));
@@ -224,7 +231,10 @@ export async function loadMemoryContext(input: {
     [
       ...filterResultsByMemoryRequestScope(ownedHotCurrentTruthResults, memoryScope),
       ...ownedRawResults,
-      ...filterResultsByMemoryRequestScope(currentTruthFallbackResults, memoryScope),
+      ...filterResultsByMemoryRequestScope(
+        currentTruthFallbackResultsForRequest(memoryRequest, currentTruthFallbackResults),
+        memoryScope,
+      ),
     ],
     5,
     canonicalMemoryIdsByMemoryId,
@@ -315,6 +325,33 @@ export function memoryQueryTerms(
     query,
     memoryRequest: readMemoryRequestFromContext(contextResolution, query),
   });
+}
+
+function shouldLoadCandidateMemoryContext(
+  memoryRequest: ReturnType<typeof readMemoryRequestFromContext>,
+): boolean {
+  return memoryRequest.kind !== "none";
+}
+
+function shouldUseCandidateMemoryFallbackRows(
+  memoryRequest: ReturnType<typeof readMemoryRequestFromContext>,
+): boolean {
+  return memoryRequest.kind !== "specific_fact";
+}
+
+function currentTruthFallbackResultsForRequest(
+  memoryRequest: ReturnType<typeof readMemoryRequestFromContext>,
+  results: RankedMemoryResult[],
+): RankedMemoryResult[] {
+  return memoryRequest.kind === "specific_fact" ? [] : results;
+}
+
+function emptyCandidateMemorySearchContext(): Awaited<ReturnType<typeof loadCandidateMemorySearchCandidates>> {
+  return {
+    candidates: [],
+    canonicalMemoryIdsByCandidateId: new Map(),
+    tokenAccountingByCandidateId: new Map(),
+  };
 }
 
 function filterResultsByMemoryRequestScope(
@@ -423,7 +460,7 @@ function chatMemoryCandidateCacheKey(row: { twinId: string; id: string; contentS
 
 async function markRejectedMemoryReads(input: {
   db: ApiDb;
-  rows: Array<{ id: string }>;
+  rows: Array<{ id: string; twinId: string }>;
   candidateResults: PromiseSettledResult<Awaited<ReturnType<typeof toMemorySearchCandidate>> | null>[];
 }) {
   await Promise.all(input.candidateResults.map(async (result, index) => {
@@ -435,7 +472,7 @@ async function markRejectedMemoryReads(input: {
       return;
     }
     if (!isChatMemoryReadTimeout(result.reason)) {
-      await markMemoryFragmentReadFailed(input.db, row.id, result.reason);
+      await markMemoryFragmentReadFailed(input.db, row, result.reason);
     }
     console.warn("chat memory context fragment decrypt skipped", {
       memoryFragmentId: row.id,
@@ -448,7 +485,11 @@ function isChatMemoryReadTimeout(error: unknown) {
   return errorMessage(error).includes("chat_memory_read_timeout");
 }
 
-async function markMemoryFragmentReadFailed(db: ApiDb, memoryFragmentId: string, error: unknown) {
+async function markMemoryFragmentReadFailed(
+  db: ApiDb,
+  memoryFragment: { id: string; twinId: string },
+  error: unknown,
+) {
   await db
     .update(memoryFragments)
     .set({
@@ -458,7 +499,10 @@ async function markMemoryFragmentReadFailed(db: ApiDb, memoryFragmentId: string,
       storageLastReadErrorMessage: errorMessage(error).slice(0, 1000),
       updatedAt: new Date(),
     })
-    .where(eq(memoryFragments.id, memoryFragmentId));
+    .where(and(
+      eq(memoryFragments.id, memoryFragment.id),
+      eq(memoryFragments.twinId, memoryFragment.twinId),
+    ));
 }
 
 function classifyMemoryStorageReadError(error: unknown) {

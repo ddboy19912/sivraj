@@ -28,6 +28,15 @@ import type { GeneratedChatTitle } from "./turn-types.js";
 import { generateSemanticChatTitle, resolveThreadTitleUpdate } from "./thread-title.js";
 import { readChatErrorCode } from "./chat-errors.js";
 
+type ChatTurnAuditActor = {
+  type: string;
+  sub: string;
+};
+
+type ChatPersistTurnForActorInput = Omit<ChatPersistTurnInput, "c"> & {
+  actor: ChatTurnAuditActor;
+};
+
 function providerKindForDb(providerKind: string): ProviderKind {
   return providerKind as ProviderKind;
 }
@@ -40,6 +49,7 @@ export async function insertUserMessage(
   content: string,
   memoryIntent: ChatMemoryIntent = "auto",
   surface: ChatSurface = "web_chat",
+  metadata: Record<string, unknown> = {},
 ): Promise<ChatMessageRow> {
   const [userMessage] = await db
     .insert(chatMessages)
@@ -53,6 +63,7 @@ export async function insertUserMessage(
         contextSaved: memoryIntent !== "private",
         memoryIntent,
         surface,
+        ...metadata,
       },
     })
     .returning();
@@ -108,12 +119,22 @@ export async function createQueuedTurn(input: CreateQueuedTurnInput): Promise<Ch
 
 /** Persist a completed non-streaming assistant message and record turn audit metadata. */
 export async function persistChatTurn(input: ChatPersistTurnInput): Promise<ChatMessageRow> {
+  return persistChatTurnForActor({
+    ...input,
+    actor: input.c.get("auth"),
+  });
+}
+
+/** Persist a completed non-streaming assistant message for non-HTTP actors. */
+export async function persistChatTurnForActor(
+  input: ChatPersistTurnForActorInput,
+): Promise<ChatMessageRow> {
   const assistantMessage = await insertAssistantMessage(input);
-  await recordChatTurnAudit(input);
+  await recordChatTurnAuditForActor(input);
   return assistantMessage;
 }
 
-async function insertAssistantMessage(input: ChatPersistTurnInput): Promise<ChatMessageRow> {
+async function insertAssistantMessage(input: ChatPersistTurnForActorInput): Promise<ChatMessageRow> {
   const { output, memoryContext, documentContext, contextResolution, citations, usage, tokenSavings } = input.turn;
   const retrievalStatus = input.turn.retrievalStatus;
   const surface = input.surface ?? "web_chat";
@@ -147,6 +168,7 @@ async function insertAssistantMessage(input: ChatPersistTurnInput): Promise<Chat
           rawArtifactsIncluded: false,
           resolvedQuery: (contextResolution as { standaloneQuery?: string }).standaloneQuery ?? "",
         },
+        ...input.assistantMetadata,
       },
     })
     .returning();
@@ -408,7 +430,15 @@ export function buildChatMemoryIntakeOutcome(
 }
 
 export async function recordChatTurnAudit(input: ChatPersistTurnInput): Promise<void> {
-  const auth = input.c.get("auth");
+  return recordChatTurnAuditForActor({
+    ...input,
+    actor: input.c.get("auth"),
+  });
+}
+
+export async function recordChatTurnAuditForActor(
+  input: ChatPersistTurnForActorInput,
+): Promise<void> {
   const { output, memoryContext, documentContext, tokenSavings } = input.turn;
   const titleUpdate = resolveThreadTitleUpdate({
     currentTitle: input.gate.thread.title,
@@ -430,8 +460,8 @@ export async function recordChatTurnAudit(input: ChatPersistTurnInput): Promise<
     .where(and(eq(chatThreads.id, input.gate.thread.id), eq(chatThreads.twinId, input.gate.twinId)));
   await input.db.insert(auditEvents).values({
     twinId: input.gate.twinId,
-    actorType: auth.type,
-    actorId: auth.sub,
+    actorType: input.actor.type,
+    actorId: input.actor.sub,
     eventType: "chat.assistant_response_created",
     resourceType: "chat_thread",
     resourceId: input.gate.thread.id,

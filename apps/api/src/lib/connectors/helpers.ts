@@ -14,6 +14,7 @@ export const CONNECTOR_PROVIDERS = [
   "chatgpt",
   "codex",
   "claude",
+  "telegram",
   "other",
 ] as const;
 
@@ -35,6 +36,7 @@ export const CONNECTOR_SOURCE_TYPES: Record<
   chatgpt: "chat_export",
   codex: "chat_export",
   claude: "chat_export",
+  telegram: "telegram_message",
   other: "api",
 };
 
@@ -50,6 +52,7 @@ export const DEFAULT_CONNECTOR_SCOPES: Record<ConnectorProvider, string[]> = {
   chatgpt: ["chatgpt:history:import"],
   codex: ["codex:history:import"],
   claude: ["claude:history:import"],
+  telegram: ["telegram:messages:capture"],
   other: ["connector:read"],
 };
 

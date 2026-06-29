@@ -2,7 +2,7 @@ import { chatThreads } from "@sivraj/db";
 import { sql } from "drizzle-orm";
 import type { ChatMemoryIntent } from "./memory-intake.js";
 
-export type ChatSurface = "web_chat" | "voice_chat";
+export type ChatSurface = "web_chat" | "voice_chat" | "telegram";
 
 export const NORMAL_CHAT_THREAD_FILTER =
   sql`coalesce(${chatThreads.metadata}->>'surface', 'web_chat') = 'web_chat'`;

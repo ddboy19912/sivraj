@@ -29,9 +29,21 @@ export function handleConnectorsAvailableGet(c: Context<AuthEnv>) {
       provider,
       sourceType: CONNECTOR_SOURCE_TYPES[provider],
       defaultScopes: DEFAULT_CONNECTOR_SCOPES[provider],
-      authModel: provider === "browser_history" ? "import" : "oauth_or_token",
+      authModel: connectorAuthModel(provider),
     })),
   });
+}
+
+function connectorAuthModel(provider: (typeof CONNECTOR_PROVIDERS)[number]) {
+  if (provider === "browser_history") {
+    return "import";
+  }
+
+  if (provider === "telegram") {
+    return "bot_link";
+  }
+
+  return "oauth_or_token";
 }
 
 export async function handleConnectorsListGet(
@@ -134,7 +146,10 @@ export async function handleConnectorSyncRunGet(
   const items = await db
     .select()
     .from(connectorSyncItems)
-    .where(eq(connectorSyncItems.connectorSyncRunId, syncRunId))
+    .where(and(
+      eq(connectorSyncItems.connectorSyncRunId, syncRunId),
+      eq(connectorSyncItems.twinId, twinId),
+    ))
     .orderBy(desc(connectorSyncItems.createdAt))
     .limit(100);
 

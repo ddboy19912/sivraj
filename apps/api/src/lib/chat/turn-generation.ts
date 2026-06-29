@@ -52,6 +52,7 @@ export type GenerateChatTurnInput = {
   planningMemoryHints?: Awaited<ReturnType<typeof loadTurnPlanningMemoryHints>>;
   recentMessages?: Awaited<ReturnType<typeof loadThreadMessages>>;
   contextResolution?: ConversationContextResolution;
+  freshMemoryContext?: ChatMemoryContext;
   excludeMessageIds?: Set<string>;
 };
 
@@ -120,10 +121,11 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
         llmFetch: input.llmFetch,
       })
     : Promise.resolve(emptyDocumentContext());
-  const [memoryContext, documentContext] = await Promise.all([
+  const [retrievedMemoryContext, documentContext] = await Promise.all([
     memoryContextPromise,
     documentContextPromise,
   ]);
+  const memoryContext = mergeFreshMemoryContext(input.freshMemoryContext, retrievedMemoryContext);
   if (
     documentContext.degradation &&
     (contextResolution.retrieval === "document" ||
@@ -189,6 +191,36 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     usage,
     tokenSavings,
     title,
+  };
+}
+
+function mergeFreshMemoryContext(
+  freshMemoryContext: ChatMemoryContext | undefined,
+  retrievedMemoryContext: ChatMemoryContext,
+): ChatMemoryContext {
+  if (!freshMemoryContext || freshMemoryContext.results.length === 0) {
+    return retrievedMemoryContext;
+  }
+
+  const seenMemoryIds = new Set<string>();
+  const results = [...freshMemoryContext.results, ...retrievedMemoryContext.results]
+    .filter((result) => {
+      if (seenMemoryIds.has(result.memory.id)) {
+        return false;
+      }
+      seenMemoryIds.add(result.memory.id);
+      return true;
+    })
+    .slice(0, 8);
+  const tokenAccountingByMemoryId = new Map(retrievedMemoryContext.tokenAccountingByMemoryId);
+
+  for (const [memoryId, accounting] of freshMemoryContext.tokenAccountingByMemoryId) {
+    tokenAccountingByMemoryId.set(memoryId, accounting);
+  }
+
+  return {
+    results,
+    tokenAccountingByMemoryId,
   };
 }
 

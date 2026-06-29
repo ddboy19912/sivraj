@@ -8,6 +8,27 @@ import type {
 
 const MEMORY_REQUEST_SCOPES = ["all", "profile", "preferences", "engineering"] as const;
 const MEMORY_FOLLOWUP_RELATIONS = ["other", "same_topic", "clarify"] as const;
+const MEMORY_QUERY_FILLER_TERMS = new Set([
+  "what",
+  "whats",
+  "is",
+  "are",
+  "am",
+  "my",
+  "me",
+  "i",
+  "you",
+  "do",
+  "does",
+  "did",
+  "the",
+  "a",
+  "an",
+  "about",
+  "saved",
+  "memory",
+  "remember",
+]);
 
 type MemoryPlanningContext = Pick<
   ConversationContextResolution,
@@ -74,10 +95,17 @@ export function memorySearchTerms(input: {
   query: string;
   memoryRequest: MemoryRequest;
 }): string[] {
-  if (
-    (input.memoryRequest.kind === "specific_fact" || input.memoryRequest.kind === "followup") &&
-    input.memoryRequest.searchTerms.length > 0
-  ) {
+  if (input.memoryRequest.kind === "specific_fact") {
+    const terms = input.memoryRequest.searchTerms.length > 0
+      ? input.memoryRequest.searchTerms
+      : deriveSpecificFactSearchTerms(input.memoryRequest.query);
+
+    if (terms.length > 0) {
+      return terms.slice(0, 8);
+    }
+  }
+
+  if (input.memoryRequest.kind === "followup" && input.memoryRequest.searchTerms.length > 0) {
     return input.memoryRequest.searchTerms.slice(0, 8);
   }
 
@@ -175,8 +203,34 @@ export function deriveMemoryRequest(
     kind: "specific_fact",
     query,
     scope,
-    searchTerms: [],
+    searchTerms: deriveSpecificFactSearchTerms(query),
   };
+}
+
+function deriveSpecificFactSearchTerms(query: string): string[] {
+  const normalized = query.toLowerCase();
+  const semanticTerms: string[] = [];
+
+  if (/\b(name|called|who am i)\b/u.test(normalized)) {
+    semanticTerms.push("name", "identity", "profile");
+  }
+  if (/\b(occupation|profession|job|career|role|work as|do for work|what do i do)\b/u.test(normalized)) {
+    semanticTerms.push("occupation", "profession", "job", "career", "role");
+  }
+  if (/\b(workplace|company|employer|where do i work|work at|work for)\b/u.test(normalized)) {
+    semanticTerms.push("workplace", "company", "employer", "work");
+  }
+  if (/\b(location|live|based|city|country|where am i)\b/u.test(normalized)) {
+    semanticTerms.push("location", "city", "country", "based");
+  }
+  if (/\b(prefer|preference|like|favorite|favourite|dislike)\b/u.test(normalized)) {
+    semanticTerms.push("preference", "prefer", "favorite", "like");
+  }
+
+  const fallbackTerms = tokenize(query)
+    .filter((term) => !MEMORY_QUERY_FILLER_TERMS.has(term));
+
+  return Array.from(new Set([...semanticTerms, ...fallbackTerms])).slice(0, 8);
 }
 
 function readMemoryRequestScope(value: unknown, query: string): MemoryRequestScope {

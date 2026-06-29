@@ -82,6 +82,7 @@ export function createGraphRoutes({ db }: AppDependencies) {
     ].slice(0, limit);
     const nodes = await filterVisibleGraphNodes({
       db,
+      twinId,
       nodes: candidateNodes,
     });
     const visibleNodeIds = new Set(nodes.map((node) => node.id));
@@ -304,11 +305,12 @@ function formatNode(
 
 async function filterVisibleGraphNodes(input: {
   db: AppDependencies["db"];
+  twinId: string;
   nodes: GraphRouteNode[];
 }) {
   const patternCandidateMemoryIds = collectPatternCandidateMemoryIds(input.nodes);
   const canonicalMemoryIdsByCandidateId = patternCandidateMemoryIds.length > 0
-    ? await loadCanonicalMemoryIdsByCandidateId(input.db, patternCandidateMemoryIds)
+    ? await loadCanonicalMemoryIdsByCandidateId(input.db, input.twinId, patternCandidateMemoryIds)
     : new Map<string, string>();
 
   return filterVisibleGraphNodesByPatternEvidence(
@@ -326,6 +328,7 @@ function orderGraphRouteNodes(nodes: GraphRouteNode[]) {
 
 async function loadCanonicalMemoryIdsByCandidateId(
   db: AppDependencies["db"],
+  twinId: string,
   candidateMemoryIds: string[],
 ) {
   const rows = await db
@@ -334,7 +337,10 @@ async function loadCanonicalMemoryIdsByCandidateId(
       canonicalMemoryId: candidateMemories.canonicalMemoryId,
     })
     .from(candidateMemories)
-    .where(inArray(candidateMemories.id, candidateMemoryIds));
+    .where(and(
+      eq(candidateMemories.twinId, twinId),
+      inArray(candidateMemories.id, candidateMemoryIds),
+    ));
 
   return new Map(
     rows

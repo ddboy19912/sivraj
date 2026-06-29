@@ -45,6 +45,7 @@ import { createMemoryRoutes } from "./routes/memories.js";
 import { createReflectionRoutes } from "./routes/reflections.js";
 import { createSecurityRoutes } from "./routes/security.js";
 import { createTerminalRoutes } from "./routes/terminal.js";
+import { createTelegramRoutes } from "./routes/telegram.js";
 import { createSpeakerMappingRoutes } from "./routes/speaker-mappings.js";
 import { createTwinProfileRoutes } from "./routes/twin-profile.js";
 import { createVoiceRoutes } from "./routes/voice.js";
@@ -65,6 +66,10 @@ import {
   type RealtimeSpeechToTextTokenIssuer,
   type VoiceSynthesizer,
 } from "./services/voice-service-client.js";
+import {
+  createConfiguredTelegramClient,
+  type TelegramClient,
+} from "./services/telegram-client.js";
 
 export type ApiDb = Pick<typeof db, "delete" | "insert" | "select" | "update">;
 
@@ -86,6 +91,7 @@ export type AppDependencies = {
   speechToTextTranscriber?: SpeechToTextTranscriber | null;
   realtimeSpeechToTextTokenIssuer?: RealtimeSpeechToTextTokenIssuer;
   realtimeTextToSpeechTokenIssuer?: RealtimeTextToSpeechTokenIssuer;
+  telegramClient?: TelegramClient | null;
   voicePreviewAssetDir?: string;
   llmFetch?: typeof fetch;
 };
@@ -105,6 +111,7 @@ export type SupportedArtifactSourceType =
   | "csv"
   | "email"
   | "calendar"
+  | "telegram_message"
   | "chat_export"
   | "slack_export"
   | "whatsapp_export"
@@ -195,6 +202,11 @@ function createApp(
     createReflectionRoutes(dependencies),
   );
   app.route("/v1/twins/:twinId/security", createSecurityRoutes(dependencies));
+  app.route("/v1/integrations/telegram", createTelegramRoutes(dependencies));
+  app.route(
+    "/v1/twins/:twinId/integrations/telegram",
+    createTelegramRoutes(dependencies),
+  );
 
   return app;
 }
@@ -224,6 +236,7 @@ function createDefaultAppDependencies(): AppDependencies {
     speechToTextTranscriber: createConfiguredSpeechToTextTranscriber(process.env),
     realtimeSpeechToTextTokenIssuer: createConfiguredRealtimeSpeechToTextTokenIssuer(process.env),
     realtimeTextToSpeechTokenIssuer: createConfiguredRealtimeTextToSpeechTokenIssuer(process.env),
+    telegramClient: createConfiguredTelegramClient(process.env),
     voicePreviewAssetDir: process.env["VOICE_PREVIEW_ASSET_DIR"],
   };
 }

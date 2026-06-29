@@ -142,7 +142,7 @@ describe("enqueueDueCandidateMemoryArchives", () => {
   it("requeues due archive batches from durable storage", async () => {
     const repository = createArtifactRepositoryStub();
     const queuedArchives: Array<{ archiveId?: string; candidateMemoryIds: string[] }> = [];
-    const markedQueued: Array<{ archiveId: string; candidateMemoryIds: string[]; jobId: string }> = [];
+    const markedQueued: Array<{ twinId: string; archiveId: string; candidateMemoryIds: string[]; jobId: string }> = [];
 
     repository.findDueCandidateMemoryArchives = async () => [
       {
@@ -175,7 +175,12 @@ describe("enqueueDueCandidateMemoryArchives", () => {
 
     expect(result).toEqual({ scanned: 1, queued: 1, failed: 0 });
     expect(queuedArchives).toEqual([{ archiveId: "archive-1", candidateMemoryIds: ["candidate-1"] }]);
-    expect(markedQueued).toEqual([{ archiveId: "archive-1", candidateMemoryIds: ["candidate-1"], jobId: "job-1" }]);
+    expect(markedQueued).toEqual([{
+      twinId: "twin-1",
+      archiveId: "archive-1",
+      candidateMemoryIds: ["candidate-1"],
+      jobId: "job-1",
+    }]);
   });
 });
 

@@ -44,6 +44,7 @@ export const sourceTypeEnum = pgEnum("source_type", [
   "csv",
   "email",
   "calendar",
+  "telegram_message",
   "github",
   "api",
   "other",
@@ -254,6 +255,7 @@ export const connectorProviderEnum = pgEnum("connector_provider", [
   "chatgpt",
   "codex",
   "claude",
+  "telegram",
   "other",
 ]);
 
@@ -282,6 +284,16 @@ export const connectorSyncModeEnum = pgEnum("connector_sync_mode", [
 export const connectorSyncItemActionEnum = pgEnum(
   "connector_sync_item_action",
   ["added", "updated", "skipped", "failed"],
+);
+
+export const telegramLinkTokenStatusEnum = pgEnum(
+  "telegram_link_token_status",
+  ["pending", "consumed", "expired", "revoked"],
+);
+
+export const telegramMessageIngestionStatusEnum = pgEnum(
+  "telegram_message_ingestion_status",
+  ["processing", "captured", "deferred", "failed"],
 );
 
 export const users = pgTable("users", {
@@ -722,6 +734,75 @@ export const connectorSyncItems = pgTable(
     uniqueIndex("connector_sync_items_run_external_idx").on(
       t.connectorSyncRunId,
       t.externalItemId,
+    ),
+  ],
+);
+
+export const telegramLinkTokens = pgTable(
+  "telegram_link_tokens",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    tokenHash: text("token_hash").notNull(),
+    status: telegramLinkTokenStatusEnum("status").notNull().default("pending"),
+    connectorAccountId: optionalUuidRef(
+      "connector_account_id",
+      () => connectorAccounts,
+    ),
+    telegramUserId: text("telegram_user_id"),
+    chatId: text("chat_id"),
+    expiresAt: tzTimestamp("expires_at").notNull(),
+    consumedAt: tzTimestamp("consumed_at"),
+    revokedAt: tzTimestamp("revoked_at"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("telegram_link_tokens_twin_id_idx").on(t.twinId),
+    index("telegram_link_tokens_status_idx").on(t.status),
+    index("telegram_link_tokens_expires_at_idx").on(t.expiresAt),
+    uniqueIndex("telegram_link_tokens_token_hash_idx").on(t.tokenHash),
+  ],
+);
+
+export const telegramIngestedMessages = pgTable(
+  "telegram_ingested_messages",
+  {
+    id: primaryId(),
+    twinId: twinIdColumn(() => twins),
+    connectorAccountId: uuid("connector_account_id")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    connectorSourceId: uuid("connector_source_id")
+      .notNull()
+      .references(() => connectorSources.id, { onDelete: "cascade" }),
+    sourceArtifactId: optionalUuidRef(
+      "source_artifact_id",
+      () => sourceArtifacts,
+    ),
+    telegramUserId: text("telegram_user_id").notNull(),
+    chatId: text("chat_id").notNull(),
+    messageId: text("message_id").notNull(),
+    updateId: text("update_id"),
+    status: telegramMessageIngestionStatusEnum("status")
+      .notNull()
+      .default("processing"),
+    contentHash: text("content_hash"),
+    metadata: metadataColumn(),
+    ...rowTimestamps(),
+  },
+  (t) => [
+    index("telegram_ingested_messages_twin_id_idx").on(t.twinId),
+    index("telegram_ingested_messages_account_id_idx").on(
+      t.connectorAccountId,
+    ),
+    index("telegram_ingested_messages_source_id_idx").on(t.connectorSourceId),
+    index("telegram_ingested_messages_artifact_id_idx").on(t.sourceArtifactId),
+    index("telegram_ingested_messages_created_at_idx").on(t.createdAt),
+    uniqueIndex("telegram_ingested_messages_account_chat_message_idx").on(
+      t.connectorAccountId,
+      t.chatId,
+      t.messageId,
     ),
   ],
 );

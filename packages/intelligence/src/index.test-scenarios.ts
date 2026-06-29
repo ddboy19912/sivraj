@@ -242,6 +242,102 @@ export async function runExtractMemoriesRejectsMalformed() {
     expect(result.metadata.warnings).toContain("memory_missing_required_fields");
 }
 
+export async function runExtractMemoriesRejectsUnsupportedEvidence() {
+  const result = await extractMemories(
+      {
+        twinId: "twin-id",
+        sourceArtifactId: "artifact-id",
+        memoryFragmentId: "fragment-id",
+        sourceType: "telegram_message",
+        content: "hello",
+      },
+      {
+        generator: {
+          async generateJson() {
+            return {
+              provider: "openai",
+              model: "gpt-4o",
+              json: {
+                memories: [
+                  {
+                    statement: "The user worked with Polytope Labs on Hyperbridge.",
+                    type: "experience",
+                    subject: "Polytope Labs",
+                    confidence: 0.95,
+                    evidence: "Full Stack Developer, Polytope Labs (Hyperbridge)",
+                    metadata: { category: "work_history" },
+                  },
+                ],
+              },
+            };
+          },
+        },
+      },
+    );
+
+    expect(result.memories).toEqual([]);
+    expect(result.metadata).toMatchObject({
+      returnedMemories: 1,
+      acceptedMemories: 0,
+    });
+    expect(result.metadata.warnings).toContain("memory_evidence_not_in_source");
+}
+
+export async function runExtractMemoriesKeepsSourceBackedCurrentTruth() {
+  const result = await extractMemories(
+      {
+        twinId: "twin-id",
+        sourceArtifactId: "artifact-id",
+        memoryFragmentId: "fragment-id",
+        sourceType: "onboarding_self_description",
+        content: "I am a lawyer.",
+      },
+      {
+        generator: {
+          async generateJson() {
+            return {
+              provider: "openai",
+              model: "gpt-4o",
+              json: {
+                memories: [
+                  {
+                    statement: "The user is a lawyer.",
+                    type: "fact",
+                    subject: "user",
+                    confidence: 0.95,
+                    evidence: "I am a lawyer.",
+                    metadata: {
+                      category: "profession",
+                      currentTruth: {
+                        kind: "mutable_profile",
+                        slot: "occupation",
+                        value: "lawyer",
+                        valueType: "string",
+                        mutable: true,
+                      },
+                    },
+                  },
+                ],
+              },
+            };
+          },
+        },
+      },
+    );
+
+    expect(result.memories).toHaveLength(1);
+    expect(result.memories[0]?.metadata).toMatchObject({
+      category: "profession",
+      currentTruth: {
+        kind: "mutable_profile",
+        slot: "occupation",
+        value: "lawyer",
+        valueType: "string",
+        mutable: true,
+      },
+    });
+}
+
 export async function runExtractMemoriesAttributionPolicy() {
   let prompt = "";
     const result = await extractMemories(

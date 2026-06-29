@@ -11,7 +11,7 @@ import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { AppDependencies } from "../app.js";
@@ -768,7 +768,10 @@ async function loadCloneReferenceAudio(input: {
   const [artifact] = await input.db
     .select()
     .from(sourceArtifacts)
-    .where(eq(sourceArtifacts.id, input.profile.referenceArtifactId))
+    .where(and(
+      eq(sourceArtifacts.id, input.profile.referenceArtifactId),
+      eq(sourceArtifacts.twinId, input.twinId),
+    ))
     .limit(1);
 
   if (!artifact?.rawStorageRef) {

@@ -8,6 +8,8 @@ import {
   runExtractEntitiesRejectsMalformed,
   runExtractMemoriesDeduplicatesSourceBacked,
   runExtractMemoriesRejectsMalformed,
+  runExtractMemoriesRejectsUnsupportedEvidence,
+  runExtractMemoriesKeepsSourceBackedCurrentTruth,
   runExtractMemoriesAttributionPolicy,
   runExtractMemoriesKeepsSelfSpeaker,
   runExtractMemoriesRejectsOtherPartyClaims,
@@ -40,6 +42,14 @@ describe("extractMemories", () => {
 
 describe("extractMemories", () => {
   it("rejects malformed memories without throwing away valid ones", () => runExtractMemoriesRejectsMalformed());
+});
+
+describe("extractMemories", () => {
+  it("rejects memories whose evidence is not present in the source text", () => runExtractMemoriesRejectsUnsupportedEvidence());
+});
+
+describe("extractMemories", () => {
+  it("keeps source-backed current truth metadata for direct self claims", () => runExtractMemoriesKeepsSourceBackedCurrentTruth());
 });
 
 describe("extractMemories", () => {

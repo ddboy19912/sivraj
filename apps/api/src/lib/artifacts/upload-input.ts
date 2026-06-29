@@ -16,7 +16,7 @@ const SUPPORTED_SOURCE_TYPES = [
   "note", "browser_history", "markdown", "upload", "pdf", "ocr_pdf", "image",
   "voice_note", "voice_conversation", "onboarding_self_description", "docx",
   "csv", "email", "calendar", "chat_export", "slack_export", "whatsapp_export",
-  "github", "api", "other",
+  "github", "telegram_message", "api", "other",
 ] as const;
 
 export function readSupportedSourceType(

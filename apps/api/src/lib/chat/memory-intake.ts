@@ -442,7 +442,10 @@ async function upsertHotProfileMemory(input: {
         lastSeenAt: now,
         updatedAt: now,
       })
-      .where(eq(canonicalMemories.id, existing.id));
+      .where(and(
+        eq(canonicalMemories.id, existing.id),
+        eq(canonicalMemories.twinId, input.twinId),
+      ));
     return;
   }
 
@@ -524,7 +527,10 @@ async function upsertHotEngineeringMemory(input: {
         lastSeenAt: now,
         updatedAt: now,
       })
-      .where(eq(canonicalMemories.id, existing.id));
+      .where(and(
+        eq(canonicalMemories.id, existing.id),
+        eq(canonicalMemories.twinId, input.twinId),
+      ));
     return;
   }
 

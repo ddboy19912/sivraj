@@ -198,7 +198,10 @@ async function supersedeConnectorArtifact(
       },
       updatedAt: now,
     })
-    .where(eq(sourceArtifacts.id, previousArtifact.id));
+    .where(and(
+      eq(sourceArtifacts.id, previousArtifact.id),
+      eq(sourceArtifacts.twinId, input.syncRun.twinId),
+    ));
 
   const fragments = await input.db
     .select({
@@ -206,7 +209,10 @@ async function supersedeConnectorArtifact(
       metadata: memoryFragments.metadata,
     })
     .from(memoryFragments)
-    .where(eq(memoryFragments.sourceArtifactId, previousArtifact.id));
+    .where(and(
+      eq(memoryFragments.sourceArtifactId, previousArtifact.id),
+      eq(memoryFragments.twinId, input.syncRun.twinId),
+    ));
 
   for (const fragment of fragments) {
     await input.db
@@ -220,7 +226,10 @@ async function supersedeConnectorArtifact(
         },
         updatedAt: now,
       })
-      .where(eq(memoryFragments.id, fragment.id));
+      .where(and(
+        eq(memoryFragments.id, fragment.id),
+        eq(memoryFragments.twinId, input.syncRun.twinId),
+      ));
   }
 
   await input.db
@@ -229,7 +238,10 @@ async function supersedeConnectorArtifact(
       status: "superseded",
       updatedAt: now,
     })
-    .where(eq(candidateMemories.sourceArtifactId, previousArtifact.id));
+    .where(and(
+      eq(candidateMemories.sourceArtifactId, previousArtifact.id),
+      eq(candidateMemories.twinId, input.syncRun.twinId),
+    ));
 
   await input.db.insert(auditEvents).values({
     twinId: input.syncRun.twinId,

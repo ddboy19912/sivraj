@@ -155,7 +155,9 @@ export async function extractEntities(input: EntityExtractionInput, params: {
     prompt: buildEntityExtractionPrompt(input, maxEntities),
     temperature: 0,
   });
-  const { entities, warnings } = parseEntityResponse(generation.json, maxEntities);
+  const { entities, warnings } = parseEntityResponse(generation.json, maxEntities, {
+    sourceContent: input.content,
+  });
 
   return {
     entities,
@@ -184,6 +186,7 @@ export async function extractMemories(input: MemoryExtractionInput, params: {
   const conversationAware = isConversationSource(input.sourceType) || attributionAware;
   const { memories, warnings } = parseMemoryResponse(generation.json, maxMemories, {
     attributionAware,
+    sourceContent: input.content,
   });
   const conversationUnderstanding = conversationAware
     ? buildConversationUnderstandingMetadata(input.sourceType, memories)
@@ -442,11 +445,11 @@ function buildEntityExtractionPrompt(input: EntityExtractionInput, maxEntities: 
     outputShape: {
       entities: [
         {
-          name: "Polytope Labs",
+          name: "Example Organization",
           type: "organization",
-          aliases: ["Hyperbridge"],
+          aliases: ["Example Project"],
           confidence: 0.92,
-          evidence: "Full Stack Developer, Polytope Labs (Hyperbridge)",
+          evidence: "Example evidence copied from the source text",
           metadata: {
             relationship: "employer/client",
           },
@@ -470,6 +473,12 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
       "Evidence must be a short exact snippet from the source text.",
       "Do not include generic topics, filler, or claims without evidence.",
       "Do not treat every sentence as a memory; prefer durable facts, goals, preferences, decisions, commitments, relationships, and project history.",
+      "For a direct user self-claim that should answer future profile questions, set metadata.currentTruth.",
+      "metadata.currentTruth must include kind, slot, value, valueType, and mutable.",
+      "metadata.currentTruth.value must be an exact short value copied from the source text, not a paraphrase.",
+      "Use a stable semantic slot name, not a category synonym. Examples: age, occupation, location, preferred_editor, relationship_status.",
+      "Use mutable true for facts that can change over time, such as age, location, occupation, preferences, and relationship status.",
+      "Use mutable false only for stable identity facts, such as legal name or birthday.",
       ...(conversationAware
         ? [
             "This source is a conversation transcript. Understand the exchange, but extract only durable candidate memories.",
@@ -478,11 +487,6 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
             "For unresolved follow-ups or next actions, use type commitment when the user committed, or project_update when it is an open project context.",
             "Set metadata.conversationSignal to one of goal, decision, preference, commitment, follow_up, relationship, project_update, or fact.",
             "Set metadata.requiresApproval to true for memories that would update the Twin from a conversation.",
-            "For a direct self-claim that should answer future profile questions, set metadata.currentTruth.",
-            "metadata.currentTruth must include kind, slot, value, valueType, and mutable.",
-            "Use a stable semantic slot name, not a category synonym. Examples: age, occupation, location, preferred_editor, relationship_status.",
-            "Use mutable true for facts that can change over time, such as age, location, occupation, preferences, and relationship status.",
-            "Use mutable false only for stable identity facts, such as legal name or birthday.",
           ]
         : []),
       ...(attributionAware
@@ -521,24 +525,24 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
     outputShape: {
       memories: [
         {
-          statement: "The user worked with Polytope Labs on Hyperbridge.",
+          statement: "The user worked with Example Organization on Example Project.",
           type: "experience",
-          subject: "Polytope Labs",
+          subject: "Example Organization",
           confidence: 0.92,
-          evidence: "Full Stack Developer, Polytope Labs (Hyperbridge)",
+          evidence: "Example evidence copied from the source text",
           metadata: {
             category: "work_history",
+            currentTruth: {
+              kind: "mutable_profile",
+              slot: "occupation",
+              value: "Example Role",
+              valueType: "string",
+              mutable: true,
+            },
             ...(conversationAware
               ? {
                   conversationSignal: "project_update",
                   requiresApproval: true,
-                  currentTruth: {
-                    kind: "mutable_profile",
-                    slot: "occupation",
-                    value: "Full Stack Developer",
-                    valueType: "string",
-                    mutable: true,
-                  },
                 }
               : {}),
           },
@@ -548,13 +552,15 @@ function buildMemoryExtractionPrompt(input: MemoryExtractionInput, maxMemories: 
   });
 }
 
-function parseEntityResponse(value: unknown, maxEntities: number): {
+function parseEntityResponse(value: unknown, maxEntities: number, options: {
+  sourceContent: string;
+}): {
   entities: ExtractedEntity[];
   warnings: string[];
 } {
   const warnings: string[] = [];
   const parsedEntities = readLlmArrayField(value, "entities")
-    .map((raw) => parseEntity(raw, warnings))
+    .map((raw) => parseEntity(raw, warnings, options.sourceContent))
     .filter((entity): entity is ExtractedEntity => entity !== null);
 
   return {
@@ -569,13 +575,14 @@ function parseEntityResponse(value: unknown, maxEntities: number): {
 
 function parseMemoryResponse(value: unknown, maxMemories: number, options: {
   attributionAware?: boolean;
+  sourceContent?: string;
 } = {}): {
   memories: ExtractedMemory[];
   warnings: string[];
 } {
   const warnings: string[] = [];
   const parsedMemories = readLlmArrayField(value, "memories")
-    .map((raw) => parseMemory(raw, warnings))
+    .map((raw) => parseMemory(raw, warnings, options.sourceContent ?? ""))
     .filter((memory): memory is ExtractedMemory => memory !== null)
     .map((memory) => options.attributionAware ? applyAttributionMemoryPolicy(memory, warnings) : memory)
     .filter((memory): memory is ExtractedMemory => memory !== null);
@@ -632,7 +639,7 @@ function applyAttributionMemoryPolicy(memory: ExtractedMemory, warnings: string[
   };
 }
 
-function parseEntity(raw: unknown, warnings: string[]): ExtractedEntity | null {
+function parseEntity(raw: unknown, warnings: string[], sourceContent: string): ExtractedEntity | null {
   const record = asRecord(raw);
   const name = readString(record["name"]);
   const type = readEntityType(record["type"]);
@@ -640,6 +647,11 @@ function parseEntity(raw: unknown, warnings: string[]): ExtractedEntity | null {
 
   if (!name || !type || !evidence) {
     warnings.push("entity_missing_required_fields");
+    return null;
+  }
+
+  if (!evidenceAppearsInSource(evidence, sourceContent)) {
+    warnings.push("entity_evidence_not_in_source");
     return null;
   }
 
@@ -664,7 +676,7 @@ function parseEntity(raw: unknown, warnings: string[]): ExtractedEntity | null {
   };
 }
 
-function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
+function parseMemory(raw: unknown, warnings: string[], sourceContent: string): ExtractedMemory | null {
   const record = asRecord(raw);
   const statement = readString(record["statement"]);
   const memoryType = readMemoryType(record["type"]);
@@ -672,6 +684,11 @@ function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
 
   if (!statement || !memoryType || !evidence) {
     warnings.push("memory_missing_required_fields");
+    return null;
+  }
+
+  if (!evidenceAppearsInSource(evidence, sourceContent)) {
+    warnings.push("memory_evidence_not_in_source");
     return null;
   }
 
@@ -683,7 +700,7 @@ function parseMemory(raw: unknown, warnings: string[]): ExtractedMemory | null {
   }
 
   const evidenceSpeakerRole = readEvidenceSpeakerRole(evidence);
-  const metadata = sanitizeMetadata(record["metadata"]);
+  const metadata = sanitizeMemoryMetadata(record["metadata"], sourceContent, warnings);
 
   return {
     statement: statement.trim().replace(/\s+/g, " "),
@@ -718,6 +735,64 @@ function readMemoryType(value: unknown): MemoryType | null {
 
 function sanitizeMetadata(value: unknown): Record<string, unknown> {
   return sanitizePrimitiveMetadata(value);
+}
+
+function sanitizeMemoryMetadata(
+  value: unknown,
+  sourceContent: string,
+  warnings: string[],
+): Record<string, unknown> {
+  const metadata = sanitizePrimitiveMetadata(value);
+  const currentTruth = sanitizeCurrentTruthMetadata(asRecord(value)["currentTruth"], sourceContent, warnings);
+
+  return currentTruth
+    ? { ...metadata, currentTruth }
+    : metadata;
+}
+
+function sanitizeCurrentTruthMetadata(
+  value: unknown,
+  sourceContent: string,
+  warnings: string[],
+): Record<string, unknown> | null {
+  const record = asRecord(value);
+  const slot = readString(record["slot"])?.trim();
+  const currentValue = readString(record["value"])?.trim();
+
+  if (!slot && !currentValue) {
+    return null;
+  }
+
+  if (!slot || !currentValue) {
+    warnings.push("memory_current_truth_missing_required_fields");
+    return null;
+  }
+
+  if (!evidenceAppearsInSource(currentValue, sourceContent)) {
+    warnings.push("memory_current_truth_value_not_in_source");
+    return null;
+  }
+
+  return {
+    kind: readString(record["kind"])?.trim() || "profile_fact",
+    slot,
+    value: currentValue,
+    valueType: readString(record["valueType"])?.trim() || "string",
+    mutable: record["mutable"] !== false,
+  };
+}
+
+function evidenceAppearsInSource(evidence: string, sourceContent: string): boolean {
+  const normalizedEvidence = normalizeEvidenceText(evidence);
+  if (!normalizedEvidence) {
+    return false;
+  }
+
+  return normalizeEvidenceText(sourceContent).includes(normalizedEvidence);
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim().toLowerCase();
 }
 
 function clampMaxEntities(value: number | undefined): number {

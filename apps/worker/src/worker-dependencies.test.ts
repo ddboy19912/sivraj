@@ -30,6 +30,9 @@ vi.mock("@sivraj/llm", () => ({
 }));
 
 vi.mock("@sivraj/queue", () => ({
+  createPrivateMemoryCiphertextCache: () => ({
+    close: async () => undefined,
+  }),
   createIntelligenceProcessingQueue: () => ({
     close: async () => undefined,
   }),

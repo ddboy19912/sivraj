@@ -25,7 +25,7 @@ import {
 } from "./artifact-job-runner.js";
 import { artifactMetadata } from "./artifact-metadata.js";
 import type { Db } from "@sivraj/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { sourceArtifacts } from "@sivraj/db";
 import { readIntelligenceStatus, readProcessingReason } from "./artifact-metadata.js";
 import {
@@ -94,14 +94,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function readArtifactStatus(db: Db, artifactId: string) {
+async function readArtifactStatus(db: Db, input: { artifactId: string; twinId: string }) {
   const [artifact] = await db
     .select({
       ingestionStatus: sourceArtifacts.ingestionStatus,
       metadata: sourceArtifacts.metadata,
     })
     .from(sourceArtifacts)
-    .where(eq(sourceArtifacts.id, artifactId))
+    .where(and(
+      eq(sourceArtifacts.id, input.artifactId),
+      eq(sourceArtifacts.twinId, input.twinId),
+    ))
     .limit(1);
 
   if (!artifact) {
@@ -114,6 +117,42 @@ async function readArtifactStatus(db: Db, artifactId: string) {
     intelligenceStatus: readIntelligenceStatus(artifact.metadata),
     processing: artifactMetadata(artifactMetadata(artifact.metadata)["processing"]),
   };
+}
+
+async function verifyArtifactJobTwinBoundary(
+  deps: ArtifactProcessingJobDeps,
+  data: ArtifactProcessingJobData,
+) {
+  const artifact = await deps.repository.findArtifactById(data.artifactId);
+
+  if (!artifact) {
+    console.warn(`${deps.serviceName} artifact processing rejected missing artifact`, {
+      artifactId: data.artifactId,
+      payloadTwinId: data.twinId,
+    });
+    return false;
+  }
+
+  if (artifact.twinId === data.twinId) {
+    return true;
+  }
+
+  await deps.repository.createAuditEvent({
+    twinId: artifact.twinId,
+    eventType: "artifact.processing_rejected_twin_mismatch",
+    resourceId: data.artifactId,
+    metadata: {
+      payloadTwinId: data.twinId,
+      artifactTwinId: artifact.twinId,
+      sourceType: data.sourceType,
+    },
+  });
+  console.error(`${deps.serviceName} artifact processing rejected twin mismatch`, {
+    artifactId: data.artifactId,
+    payloadTwinId: data.twinId,
+    artifactTwinId: artifact.twinId,
+  });
+  return false;
 }
 
 async function markNonRetryableArtifactFailure(
@@ -337,7 +376,10 @@ async function publishArtifactCompletionStatus(
     return;
   }
 
-  const status = await readArtifactStatus(deps.db, data.artifactId);
+  const status = await readArtifactStatus(deps.db, {
+    artifactId: data.artifactId,
+    twinId: data.twinId,
+  });
 
   await deps.artifactStatusPublisher.publishArtifactStatus({
     artifactId: data.artifactId,
@@ -357,6 +399,11 @@ async function runArtifactProcessingJob(
   job: ArtifactProcessingJob,
 ): Promise<void> {
   try {
+    const boundaryOk = await verifyArtifactJobTwinBoundary(deps, data);
+    if (!boundaryOk) {
+      return;
+    }
+
     const transientCiphertext = await resolveTransientCiphertext(deps, data);
 
     if (transientCiphertext) {

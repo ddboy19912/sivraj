@@ -181,15 +181,18 @@ export type ArtifactRepository = {
     metadata: Record<string, unknown>;
   }): Promise<{ id: string }>;
   markCandidateMemoryArchiveQueued(input: {
+    twinId: string;
     archiveId: string;
     candidateMemoryIds: string[];
     jobId: string;
   }): Promise<void>;
   markCandidateMemoryArchiveArchiving(input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
   }): Promise<void>;
   markCandidateMemoriesArchived(input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
     statementStorageRef: string;
@@ -197,6 +200,7 @@ export type ArtifactRepository = {
     metadata: Record<string, unknown>;
   }): Promise<void>;
   markCandidateMemoriesArchiveFailed(input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
     metadata: Record<string, unknown>;

@@ -1,12 +1,13 @@
 import {
   auditEvents,
   connectorAccounts,
+  connectorProviderEnum,
   connectorSources,
   connectorSyncRuns,
   type Db,
 } from "@sivraj/db";
 import type { ArtifactProcessingQueue, ConnectorSyncJobData } from "@sivraj/queue";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ConnectorSyncAdapter, ConnectorSyncAdapterResult } from "../types/connector.types.js";
 import type { PrivateSourceStorage } from "../private-source-storage.js";
 import { connectorAuditMetadata } from "./shared/audit.js";
@@ -41,8 +42,15 @@ type ConnectorSyncContext = {
   account: NonNullable<Awaited<ReturnType<typeof loadConnectorSyncContext>>["account"]>;
   source: Awaited<ReturnType<typeof loadConnectorSyncContext>>["source"];
 };
+type ConnectorProvider = typeof connectorProviderEnum.enumValues[number];
 
-async function markConnectorSyncProcessing(db: Db, syncRunId: string, startedAt: Date) {
+function readConnectorProvider(value: string): ConnectorProvider | null {
+  return connectorProviderEnum.enumValues.includes(value as ConnectorProvider)
+    ? value as ConnectorProvider
+    : null;
+}
+
+async function markConnectorSyncProcessing(db: Db, twinId: string, syncRunId: string, startedAt: Date) {
   await db
     .update(connectorSyncRuns)
     .set({
@@ -50,7 +58,10 @@ async function markConnectorSyncProcessing(db: Db, syncRunId: string, startedAt:
       startedAt,
       updatedAt: startedAt,
     })
-    .where(eq(connectorSyncRuns.id, syncRunId));
+    .where(and(
+      eq(connectorSyncRuns.id, syncRunId),
+      eq(connectorSyncRuns.twinId, twinId),
+    ));
 }
 
 async function recordConnectorSyncStarted(db: Db, data: ConnectorSyncJobData) {
@@ -67,26 +78,50 @@ async function recordConnectorSyncStarted(db: Db, data: ConnectorSyncJobData) {
 
 async function loadConnectorSyncContext(input: ProcessConnectorSyncRunInput) {
   const { db, data } = input;
+  const provider = readConnectorProvider(data.provider);
+
+  if (!provider) {
+    throw new Error("connector_sync_provider_invalid");
+  }
+
   const [syncRun] = await db
     .select()
     .from(connectorSyncRuns)
-    .where(eq(connectorSyncRuns.id, data.syncRunId))
+    .where(and(
+      eq(connectorSyncRuns.id, data.syncRunId),
+      eq(connectorSyncRuns.twinId, data.twinId),
+      eq(connectorSyncRuns.connectorAccountId, data.connectorAccountId),
+      eq(connectorSyncRuns.provider, provider),
+    ))
     .limit(1);
   const [account] = await db
     .select()
     .from(connectorAccounts)
-    .where(eq(connectorAccounts.id, data.connectorAccountId))
+    .where(and(
+      eq(connectorAccounts.id, data.connectorAccountId),
+      eq(connectorAccounts.twinId, data.twinId),
+      eq(connectorAccounts.provider, provider),
+    ))
     .limit(1);
   const [source] = data.connectorSourceId
     ? await db
         .select()
         .from(connectorSources)
-        .where(eq(connectorSources.id, data.connectorSourceId))
+        .where(and(
+          eq(connectorSources.id, data.connectorSourceId),
+          eq(connectorSources.twinId, data.twinId),
+          eq(connectorSources.connectorAccountId, data.connectorAccountId),
+          eq(connectorSources.provider, provider),
+        ))
         .limit(1)
     : [null];
 
-  if (!syncRun || !account) {
+  if (!syncRun || !account || (data.connectorSourceId && !source)) {
     throw new Error("connector_sync_context_not_found");
+  }
+
+  if ((syncRun.connectorSourceId ?? null) !== (data.connectorSourceId ?? null)) {
+    throw new Error("connector_sync_context_mismatch");
   }
 
   if (!input.privateSourceStorage) {
@@ -114,7 +149,10 @@ async function completeConnectorSyncSuccess(
       completedAt,
       updatedAt: completedAt,
     })
-    .where(eq(connectorSyncRuns.id, input.data.syncRunId))
+    .where(and(
+      eq(connectorSyncRuns.id, input.data.syncRunId),
+      eq(connectorSyncRuns.twinId, input.data.twinId),
+    ))
     .returning();
 
   await updateConnectorSyncTimestamps(input.db, {
@@ -167,7 +205,10 @@ async function failConnectorSyncRun(
       completedAt,
       updatedAt: completedAt,
     })
-    .where(eq(connectorSyncRuns.id, input.data.syncRunId))
+    .where(and(
+      eq(connectorSyncRuns.id, input.data.syncRunId),
+      eq(connectorSyncRuns.twinId, input.data.twinId),
+    ))
     .returning();
 
   await input.db
@@ -177,7 +218,10 @@ async function failConnectorSyncRun(
       errorCode: connectorErrorCode(error),
       updatedAt: completedAt,
     })
-    .where(eq(connectorAccounts.id, input.data.connectorAccountId));
+    .where(and(
+      eq(connectorAccounts.id, input.data.connectorAccountId),
+      eq(connectorAccounts.twinId, input.data.twinId),
+    ));
 
   await input.db.insert(auditEvents).values({
     twinId: input.data.twinId,
@@ -214,7 +258,7 @@ export async function executeConnectorSyncRun(
 ): Promise<ConnectorSyncRunResult> {
   const startedAt = new Date();
 
-  await markConnectorSyncProcessing(input.db, input.data.syncRunId, startedAt);
+  await markConnectorSyncProcessing(input.db, input.data.twinId, input.data.syncRunId, startedAt);
   await recordConnectorSyncStarted(input.db, input.data);
 
   try {

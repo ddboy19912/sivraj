@@ -52,6 +52,14 @@ describe("memoryQueryTerms", () => {
         searchTerms: [],
       },
     })).toEqual([]);
+    expect(memoryQueryTerms("What is my occupation?", {
+      memoryRequest: {
+        kind: "specific_fact",
+        query: "What is my occupation?",
+        scope: "profile",
+        searchTerms: [],
+      },
+    })).toEqual(["occupation", "profession", "job", "career", "role"]);
   });
 });
 
@@ -114,7 +122,7 @@ describe("loadMemoryContext", () => {
     ]);
   });
 
-  it("continues to archived candidate memories when memory QA has no current-truth hit", async () => {
+  it("uses matched trusted candidate memories when specific memory QA has no current-truth hit", async () => {
     const candidate = memoryCandidate(
       "candidate-1",
       "professional profile_fact memory: Fortune is a software engineer.",
@@ -176,14 +184,18 @@ describe("loadMemoryContext", () => {
       expect.objectContaining({ queryTerms: ["job"] }),
     );
     expect(memoryRetrievalMocks.loadCandidateMemorySearchCandidates).toHaveBeenCalledWith(
-      expect.objectContaining({ queryTerms: ["job"] }),
+      expect.objectContaining({
+        queryTerms: ["job"],
+        includeFallbackRows: false,
+        requireSpecificFactTrust: true,
+      }),
     );
     expect(context.results.map((result) => result.memory.content)).toEqual([
       "professional profile_fact memory: Fortune is a software engineer.",
     ]);
   });
 
-  it("drops cross-twin candidate memories before semantic ranking and prompt context", async () => {
+  it("drops cross-twin candidate memories before inventory prompt context", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const otherTwinCandidate = memoryCandidate(
       "candidate-other-twin",
@@ -222,16 +234,15 @@ describe("loadMemoryContext", () => {
       privateMemoryReader: {} as any,
       memorySearchConfig: memorySearchConfig(),
       twinId: "twin-1",
-      query: "What is my occupation?",
+      query: "What memories do you have about me?",
       contextResolution: {
         retrieval: "hot_memory",
         answerTarget: "memory",
         intent: "memory_qa",
         memoryRequest: {
-          kind: "specific_fact",
-          query: "What is my occupation?",
+          kind: "inventory",
           scope: "profile",
-          searchTerms: ["occupation"],
+          excludeAlreadyMentioned: false,
         },
       },
       runtimeConfig: {
@@ -245,9 +256,7 @@ describe("loadMemoryContext", () => {
       },
     });
 
-    const rankedCandidates = memoryRetrievalMocks.rankChatMemoryResults.mock.calls
-      .flatMap(([input]) => input.candidates as MemoryCandidate[]);
-    expect(rankedCandidates.map((candidate) => candidate.id)).not.toContain(otherTwinCandidate.id);
+    expect(memoryRetrievalMocks.loadCandidateMemorySearchCandidates).toHaveBeenCalled();
     expect(context.results).toEqual([]);
     expect(warnSpy).toHaveBeenCalledWith(
       "chat memory candidate rejected for twin mismatch",
@@ -260,7 +269,7 @@ describe("loadMemoryContext", () => {
     warnSpy.mockRestore();
   });
 
-  it("does not let current-truth fallback block archived candidate memories", async () => {
+  it("does not use broad current-truth fallback for specific facts when candidate context is available", async () => {
     const currentTruth = memoryCandidate(
       "canonical-current-truth:name-1",
       "Current profile fact: Fortune's name is Fortune.",
@@ -324,10 +333,15 @@ describe("loadMemoryContext", () => {
       },
     });
 
-    expect(memoryRetrievalMocks.loadCandidateMemorySearchCandidates).toHaveBeenCalled();
+    expect(memoryRetrievalMocks.loadCandidateMemorySearchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryTerms: ["job"],
+        includeFallbackRows: false,
+        requireSpecificFactTrust: true,
+      }),
+    );
     expect(context.results.map((result) => result.memory.content)).toEqual([
       "professional profile_fact memory: Fortune is a software engineer.",
-      "Current profile fact: Fortune's name is Fortune.",
     ]);
   });
 

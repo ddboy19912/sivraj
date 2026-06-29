@@ -224,6 +224,10 @@ export async function insertQueuedSourceArtifact(input: {
   storageMetadata: Record<string, unknown>;
   stored: StoredPrivateMemory;
   hash?: string;
+  uri?: string | null;
+  connectorAccountId?: string | null;
+  connectorSourceId?: string | null;
+  connectorSyncRunId?: string | null;
 }) {
   const [artifact] = await input.db
     .insert(sourceArtifacts)
@@ -231,6 +235,16 @@ export async function insertQueuedSourceArtifact(input: {
       twinId: input.twinId,
       sourceType: input.sourceType,
       ...(input.hash ? { hash: input.hash } : {}),
+      ...(input.uri ? { uri: input.uri } : {}),
+      ...(input.connectorAccountId
+        ? { connectorAccountId: input.connectorAccountId }
+        : {}),
+      ...(input.connectorSourceId
+        ? { connectorSourceId: input.connectorSourceId }
+        : {}),
+      ...(input.connectorSyncRunId
+        ? { connectorSyncRunId: input.connectorSyncRunId }
+        : {}),
       metadata: buildQueuedArtifactMetadata(input.storageMetadata, input.stored),
       rawStorageRef: input.stored.rawStorageRef,
       ingestionStatus: "queued",

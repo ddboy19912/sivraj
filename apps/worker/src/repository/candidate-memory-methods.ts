@@ -33,6 +33,7 @@ async function createCandidateMemory(db: Db, input: CandidateMemoryInput) {
         eq(candidateMemories.memoryFragmentId, input.memoryFragmentId),
         eq(candidateMemories.memoryType, input.memoryType),
         eq(candidateMemories.evidenceHash, input.evidenceHash),
+        eq(candidateMemories.twinId, input.twinId),
       ),
     )
     .limit(1);
@@ -51,6 +52,7 @@ async function createCandidateMemory(db: Db, input: CandidateMemoryInput) {
 async function markCandidateMemoriesArchived(
   db: Db,
   input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
     statementStorageRef: string;
@@ -68,7 +70,10 @@ async function markCandidateMemoriesArchived(
       metadata: candidateMemories.metadata,
     })
     .from(candidateMemories)
-    .where(inArray(candidateMemories.id, input.candidateMemoryIds));
+    .where(and(
+      eq(candidateMemories.twinId, input.twinId),
+      inArray(candidateMemories.id, input.candidateMemoryIds),
+    ));
 
   for (const row of rows) {
     await db
@@ -87,7 +92,10 @@ async function markCandidateMemoriesArchived(
         },
         updatedAt: new Date(),
       })
-      .where(eq(candidateMemories.id, row.id));
+      .where(and(
+        eq(candidateMemories.id, row.id),
+        eq(candidateMemories.twinId, input.twinId),
+      ));
   }
 
   if (input.archiveId) {
@@ -104,13 +112,17 @@ async function markCandidateMemoriesArchived(
         metadata: input.metadata,
         updatedAt: new Date(),
       })
-      .where(eq(candidateMemoryArchives.id, input.archiveId));
+      .where(and(
+        eq(candidateMemoryArchives.id, input.archiveId),
+        eq(candidateMemoryArchives.twinId, input.twinId),
+      ));
   }
 }
 
 async function markCandidateMemoriesArchiveFailed(
   db: Db,
   input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
     metadata: Record<string, unknown>;
@@ -127,7 +139,10 @@ async function markCandidateMemoriesArchiveFailed(
       metadata: candidateMemories.metadata,
     })
     .from(candidateMemories)
-    .where(inArray(candidateMemories.id, input.candidateMemoryIds));
+    .where(and(
+      eq(candidateMemories.twinId, input.twinId),
+      inArray(candidateMemories.id, input.candidateMemoryIds),
+    ));
 
   for (const row of rows) {
     await db
@@ -144,7 +159,10 @@ async function markCandidateMemoriesArchiveFailed(
         },
         updatedAt: new Date(),
       })
-      .where(eq(candidateMemories.id, row.id));
+      .where(and(
+        eq(candidateMemories.id, row.id),
+        eq(candidateMemories.twinId, input.twinId),
+      ));
   }
 
   if (input.archiveId) {
@@ -153,7 +171,10 @@ async function markCandidateMemoriesArchiveFailed(
         metadata: candidateMemoryArchives.metadata,
       })
       .from(candidateMemoryArchives)
-      .where(eq(candidateMemoryArchives.id, input.archiveId))
+      .where(and(
+        eq(candidateMemoryArchives.id, input.archiveId),
+        eq(candidateMemoryArchives.twinId, input.twinId),
+      ))
       .limit(1);
 
     await db
@@ -170,7 +191,10 @@ async function markCandidateMemoriesArchiveFailed(
         },
         updatedAt: new Date(),
       })
-      .where(eq(candidateMemoryArchives.id, input.archiveId));
+      .where(and(
+        eq(candidateMemoryArchives.id, input.archiveId),
+        eq(candidateMemoryArchives.twinId, input.twinId),
+      ));
   }
 }
 
@@ -194,6 +218,7 @@ async function createCandidateMemoryArchive(
       and(
         eq(candidateMemoryArchives.memoryFragmentId, input.memoryFragmentId),
         eq(candidateMemoryArchives.contentSha256, input.contentSha256),
+        eq(candidateMemoryArchives.twinId, input.twinId),
       ),
     )
     .limit(1);
@@ -212,7 +237,10 @@ async function createCandidateMemoryArchive(
         completedAt: null,
         updatedAt: new Date(),
       })
-      .where(eq(candidateMemoryArchives.id, existing.id));
+      .where(and(
+        eq(candidateMemoryArchives.id, existing.id),
+        eq(candidateMemoryArchives.twinId, input.twinId),
+      ));
     return existing;
   }
 
@@ -237,6 +265,7 @@ async function createCandidateMemoryArchive(
 async function markCandidateMemoryArchiveQueued(
   db: Db,
   input: {
+    twinId: string;
     archiveId: string;
     candidateMemoryIds: string[];
     jobId: string;
@@ -252,7 +281,10 @@ async function markCandidateMemoryArchiveQueued(
       nextRetryAt: null,
       updatedAt: new Date(),
     })
-    .where(eq(candidateMemoryArchives.id, input.archiveId));
+    .where(and(
+      eq(candidateMemoryArchives.id, input.archiveId),
+      eq(candidateMemoryArchives.twinId, input.twinId),
+    ));
 
   if (input.candidateMemoryIds.length > 0) {
     await db
@@ -265,13 +297,17 @@ async function markCandidateMemoryArchiveQueued(
         archiveNextRetryAt: null,
         updatedAt: new Date(),
       })
-      .where(inArray(candidateMemories.id, input.candidateMemoryIds));
+      .where(and(
+        eq(candidateMemories.twinId, input.twinId),
+        inArray(candidateMemories.id, input.candidateMemoryIds),
+      ));
   }
 }
 
 async function markCandidateMemoryArchiveArchiving(
   db: Db,
   input: {
+    twinId: string;
     archiveId?: string | null;
     candidateMemoryIds: string[];
   },
@@ -286,7 +322,10 @@ async function markCandidateMemoryArchiveArchiving(
         lastAttemptedAt: attemptedAt,
         updatedAt: attemptedAt,
       })
-      .where(eq(candidateMemoryArchives.id, input.archiveId));
+      .where(and(
+        eq(candidateMemoryArchives.id, input.archiveId),
+        eq(candidateMemoryArchives.twinId, input.twinId),
+      ));
   }
 
   if (input.candidateMemoryIds.length > 0) {
@@ -298,7 +337,10 @@ async function markCandidateMemoryArchiveArchiving(
         archiveLastAttemptedAt: attemptedAt,
         updatedAt: attemptedAt,
       })
-      .where(inArray(candidateMemories.id, input.candidateMemoryIds));
+      .where(and(
+        eq(candidateMemories.twinId, input.twinId),
+        inArray(candidateMemories.id, input.candidateMemoryIds),
+      ));
   }
 }
 
@@ -355,6 +397,7 @@ async function updateExistingCandidateMemory(
   db: Db,
   id: string,
   input: {
+    twinId: string;
     statementStorageRef: string;
     statementSha256: string;
     evidenceLength: number;
@@ -383,7 +426,10 @@ async function updateExistingCandidateMemory(
       }),
       updatedAt: new Date(),
     })
-    .where(eq(candidateMemories.id, id));
+    .where(and(
+      eq(candidateMemories.id, id),
+      eq(candidateMemories.twinId, input.twinId),
+    ));
 }
 
 async function insertCandidateMemory(

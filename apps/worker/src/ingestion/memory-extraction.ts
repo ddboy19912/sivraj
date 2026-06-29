@@ -338,6 +338,7 @@ function buildCandidateMemoryMetadata(input: {
     normalizedStatementHash: sha256Text(input.memory.normalizedStatement),
     evidenceHash: input.memory.evidenceHash,
     evidenceLength: input.memory.evidenceLength,
+    sourceEvidenceVerified: true,
     sourceType: input.artifact.sourceType,
     statementIndex: input.statementIndex,
     statementCount: input.statementCount,
@@ -461,6 +462,7 @@ async function queueMemoryArchiveIfNeeded(
     metadata: input.encrypted.metadata,
   });
   await input.repository.markCandidateMemoryArchiveQueued({
+    twinId: input.artifact.twinId,
     archiveId: archive.id,
     candidateMemoryIds: input.candidateMemoryIds,
     jobId: queued.jobId,

@@ -178,6 +178,7 @@ export type ChatPersistTurnInput = {
   gate: ChatThreadGate;
   content: string;
   surface?: ChatSurface;
+  assistantMetadata?: Record<string, unknown>;
   runtimeConfig: ChatRuntimeConfig;
   llmFetch?: typeof fetch;
   turn: ChatTurnAuditPayload;

@@ -78,7 +78,10 @@ async function updateCanonicalMemoryEvidence(
       lastSeenAt: now,
       updatedAt: now,
     })
-    .where(eq(canonicalMemories.id, existing.id));
+    .where(and(
+      eq(canonicalMemories.id, existing.id),
+      eq(canonicalMemories.twinId, input.twinId),
+    ));
 }
 
 async function applySemanticCanonicalMerge(
