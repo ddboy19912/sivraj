@@ -356,10 +356,7 @@ function buildDocumentMetadataContext(input: {
         : focusedInventory.length > 0
             ? focusedInventory
             : input.inventory.slice(0, 1);
-    if (
-        documents.length === 0 ||
-        documents.every((item) => !item.pageCount && item.structure.itemCount === 0)
-    ) {
+    if (documents.length === 0) {
         return null;
     }
     const artifactIds = documents.map((item) => item.artifactId);
@@ -389,7 +386,11 @@ function buildDocumentMetadataContext(input: {
                 "Document metadata:",
                 item.title ? `Title: ${item.title}` : null,
                 item.fileName ? `File name: ${item.fileName}` : null,
+                `Source type: ${item.sourceType}`,
+                `Created at: ${item.createdAt}`,
                 item.pageCount ? `Page count: ${item.pageCount}` : null,
+                `Indexed chunk count: ${item.chunkCount}`,
+                item.subjects.length > 0 ? `Subjects: ${item.subjects.join(", ")}` : null,
                 item.structure.chapterCount ? `Chapter count: ${item.structure.chapterCount}` : null,
                 item.structure.headingCount ? `Heading count: ${item.structure.headingCount}` : null,
                 item.structure.sectionCount ? `Section count: ${item.structure.sectionCount}` : null,

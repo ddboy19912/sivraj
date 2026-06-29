@@ -846,6 +846,12 @@ describe("chat candidate memory retrieval helpers", () => {
       answerTarget: "document",
       retrieval: "document",
     });
+    const sourceDetailsPlan = turnPlan({
+      standaloneQuery: "Can you tell me about the Sivraj_Demo_Launch_Notes.pdf file?",
+      intent: "document_qa",
+      answerTarget: "document",
+      retrieval: "document",
+    });
     const metadataOnlyDocumentContext = documentContext({
       retrievalPlan: {
         source: "llm",
@@ -894,6 +900,19 @@ describe("chat candidate memory retrieval helpers", () => {
     expect(shouldFallbackForEmptyDocumentRetrieval({
       shouldLoadDocument: true,
       contextResolution: accessPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(false);
+    expect(documentTurnRequiresReadableText({
+      contextResolution: sourceDetailsPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(false);
+    expect(documentContextCanSupportTurn({
+      contextResolution: sourceDetailsPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(true);
+    expect(shouldFallbackForEmptyDocumentRetrieval({
+      shouldLoadDocument: true,
+      contextResolution: sourceDetailsPlan,
       documentContext: metadataOnlyDocumentContext,
     })).toBe(false);
 

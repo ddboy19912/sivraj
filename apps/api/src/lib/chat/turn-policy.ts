@@ -317,6 +317,10 @@ export function documentTurnRequiresReadableText(input: {
   }
 
   const query = input.query ?? input.contextResolution.standaloneQuery;
+  if (isDocumentSourceDetailsQuery(query)) {
+    return false;
+  }
+
   if (isDocumentBodyTextQuery(query)) {
     return true;
   }
@@ -372,8 +376,33 @@ function isDocumentBodyTextQuery(query: string): boolean {
     .replace(/\s+/gu, " ")
     .trim();
 
+  if (isDocumentSourceDetailsQuery(normalized)) {
+    return false;
+  }
+
   return /\b(?:summari[sz]e|summary|extract|quote|count|compare|analy[sz]e|explain)\b/u.test(normalized) ||
     /\b(?:what does|what's in|what is in|tell me about|give me|show me)\b/u.test(normalized);
+}
+
+function isDocumentSourceDetailsQuery(query: string): boolean {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s'._-]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  if (!normalized || /\b(?:summari[sz]e|summary|extract|quote|count|compare|analy[sz]e|explain|what does|what's in|what is in)\b/u.test(normalized)) {
+    return false;
+  }
+
+  const mentionsDocument = /\b(?:pdf|document|file|upload|attachment|source)\b/u.test(normalized) ||
+    /\b[\w ._-]+\.(?:pdf|docx?|md|txt)\b/u.test(normalized);
+  if (!mentionsDocument) {
+    return false;
+  }
+
+  return /\b(?:tell me about|show me|give me)\b.*\b(?:pdf|document|file|upload|attachment|source)\b/u.test(normalized) ||
+    /\b(?:details?|metadata|info|information|record|title|filename|file name|source|uploaded|saved)\b/u.test(normalized);
 }
 
 export function buildRetrievalFallbackReply(

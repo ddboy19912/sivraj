@@ -285,10 +285,13 @@ export function buildStaticAssistantTurn(input: {
   };
 }
 
-/** Merge memory and document hits into UI/API citation labels (`MEM_n`, `DOC_n`). */
+/** Merge memory and document hits into UI/API citation labels (`MEM_n`, `DOC_n`, `DOC_META_n`). */
 export function buildCitations(
   memoryContext: ChatMemoryContext,
-  documentContext: { passages: DocumentContext["passages"] },
+  documentContext: {
+    passages: DocumentContext["passages"];
+    inspectionSources?: DocumentContext["inspectionSources"];
+  },
 ) {
   const memoryCitations = memoryContext.results.map((result, index) => ({
     id: result.memory.id,
@@ -305,5 +308,28 @@ export function buildCitations(
       score: passage.score,
       matchedTerms: passage.matchedTerms,
     })) ?? [];
-  return [...memoryCitations, ...documentCitations];
+  const inspectionCitations =
+    documentContext?.inspectionSources?.map((source, index) => ({
+      id: `inspection:${source.scope}:${source.sourceArtifactId}:${index}`,
+      label: formatDocumentInspectionCitationLabel(source.scope, index),
+      sourceArtifactId: source.sourceArtifactId,
+      score: 1,
+      matchedTerms: [source.scope],
+    })) ?? [];
+  return [...memoryCitations, ...documentCitations, ...inspectionCitations];
+}
+
+function formatDocumentInspectionCitationLabel(
+  scope: DocumentContext["inspectionSources"][number]["scope"],
+  index: number,
+) {
+  if (scope === "metadata") {
+    return `DOC_META_${index + 1}`;
+  }
+
+  if (scope === "page_range") {
+    return `DOC_PAGE_${index + 1}`;
+  }
+
+  return `DOC_SCAN_${index + 1}`;
 }
