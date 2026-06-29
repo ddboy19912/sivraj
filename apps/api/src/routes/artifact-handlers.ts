@@ -2,7 +2,7 @@ import {
   DEFAULT_MANUAL_MEMORY_SENSITIVITY,
   ENCRYPTED_WALRUS_STORAGE_MODE,
 } from "@sivraj/core";
-import { auditEvents, candidateMemories, chatThreads, sourceArtifacts } from "@sivraj/db";
+import { auditEvents, candidateMemories, chatThreads, memoryFragments, sourceArtifacts } from "@sivraj/db";
 import { and, count, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -148,6 +148,33 @@ async function findDuplicateManualArtifact(
     return null;
   }
 
+  const duplicateMemoryFragment = await loadPrimaryMemoryFragment(
+    deps.db,
+    input.twinId,
+    duplicateArtifact.id,
+  );
+
+  if (!isReusableDuplicateArtifact(duplicateArtifact, duplicateMemoryFragment)) {
+    await deps.db.insert(auditEvents).values({
+      twinId: input.twinId,
+      actorType: input.auth.type,
+      actorId: input.auth.sub,
+      eventType: "artifact.duplicate_ignored_unreadable",
+      resourceType: "source_artifact",
+      resourceId: duplicateArtifact.id,
+      metadata: {
+        reason: "duplicate_artifact_storage_unreadable",
+        sourceType: input.parsedInput.sourceType,
+        ingestionStatus: duplicateArtifact.ingestionStatus,
+        storageStatus: duplicateMemoryFragment?.storageStatus ?? null,
+        storageLastReadErrorCode: duplicateMemoryFragment?.storageLastReadErrorCode ?? null,
+        contentFingerprintVersion: fingerprint.version,
+        walletAddress: input.auth.walletAddress,
+      },
+    });
+    return null;
+  }
+
   await updateUploadedArtifactThreadFocus(deps, {
     twinId: input.twinId,
     artifact: duplicateArtifact,
@@ -180,6 +207,28 @@ async function findDuplicateManualArtifact(
     skipped: true,
     reason: "duplicate_artifact_upload",
   });
+}
+
+export function isReusableDuplicateArtifact(
+  artifact: Pick<typeof sourceArtifacts.$inferSelect, "ingestionStatus">,
+  memoryFragment: Pick<typeof memoryFragments.$inferSelect, "storageStatus"> | null,
+) {
+  if (
+    artifact.ingestionStatus === "pending" ||
+    artifact.ingestionStatus === "queued" ||
+    artifact.ingestionStatus === "processing"
+  ) {
+    return true;
+  }
+
+  if (artifact.ingestionStatus !== "completed") {
+    return false;
+  }
+
+  return memoryFragment?.storageStatus === "verified_available" ||
+    memoryFragment?.storageStatus === "renewed" ||
+    memoryFragment?.storageStatus === "expiring_soon" ||
+    memoryFragment?.storageStatus === "renewing";
 }
 
 export async function handleArtifactRetry(

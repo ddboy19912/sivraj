@@ -52,6 +52,7 @@ import {
   buildMemoryIntakeAcknowledgement,
   buildEmptyRetrievalFallbackReply,
   buildRetrievalFallbackReply,
+  documentContextHasReadableText,
   memoryIntakeFailureMessage,
   memoryIntakeIntentFromTurnPlan,
   memoryIntakeMessageFromTurnPlan,
@@ -473,6 +474,37 @@ try {
         });
         return;
     }
+    if (
+        shouldLoadDocument &&
+        (contextResolution.retrieval === "document" ||
+            contextResolution.answerTarget === "document" ||
+            contextResolution.intent === "document_qa") &&
+        !documentContextHasReadableText(documentContext)
+    ) {
+        const finalContent = buildEmptyRetrievalFallbackReply("document");
+        await completeFallbackStreamingTurn({
+            c,
+            deps,
+            gate,
+            stream,
+            turnId: turnSeed.turn.id,
+            assistantMessageId: turnSeed.assistantMessage.id,
+            content,
+            finalContent,
+            runtimeConfig,
+            memoryContext,
+            documentContext,
+            contextResolution,
+            citations,
+            tokenSavings,
+            timings,
+            surface,
+            retrievalStatus: emptyRetrievalStatus("document"),
+            turnStartedAt,
+            policyMemory: "Sivraj found no readable document text for this turn, so it returned a safe fallback.",
+        });
+        return;
+    }
     await writeChatTurnEvent(stream, "context.ready", {
         turnId: turnSeed.turn.id,
         memoryCount: memoryContext.results.length,
@@ -710,7 +742,7 @@ async function loadDocumentContextForTurn(input: {
             documentContext,
             retrievalStatus: documentContext.degradation
                 ? degradedRetrievalStatus("document", documentContext.degradation.reason)
-                : documentContext.passages.length > 0 || documentContext.inspectionSources.length > 0
+                : documentContextHasReadableText(documentContext)
                 ? retrievedRetrievalStatus("document")
                 : emptyRetrievalStatus("document"),
         };

@@ -239,11 +239,15 @@ export function shouldProceedWithPartialRetrieval(input: {
   }
 
   if (input.retrievalStatus.target === "document") {
-    return (input.documentContext?.passages.length ?? 0) > 0 ||
-      (input.documentContext?.inspectionSources.length ?? 0) > 0;
+    return documentContextHasReadableText(input.documentContext);
   }
 
   return false;
+}
+
+export function documentContextHasReadableText(documentContext: DocumentContext | undefined): boolean {
+  return (documentContext?.passages.length ?? 0) > 0 ||
+    (documentContext?.inspectionSources.some((source) => source.scope !== "metadata" && source.includedFullText) ?? false);
 }
 
 export function buildRetrievalFallbackReply(
@@ -257,6 +261,6 @@ export function buildRetrievalFallbackReply(
 
 export function buildEmptyRetrievalFallbackReply(target: ChatRetrievalTarget): string {
   return target === "document"
-    ? "I don’t have enough document context to answer that safely."
+    ? "I found the document record, but I don’t have readable PDF content available for this turn. Please re-upload it or try again after ingestion finishes."
     : "I don’t have that memory saved yet.";
 }

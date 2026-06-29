@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildArtifactContentResponse,
   formatArtifactSourceSummary,
+  isReusableDuplicateArtifact,
   isRetryableFileSourceType,
 } from "./artifact-handlers.js";
 
@@ -88,6 +89,39 @@ describe("artifact retry helpers", () => {
   });
 });
 
+describe("manual artifact duplicate reuse", () => {
+  it("reuses in-flight duplicate artifacts", () => {
+    expect(isReusableDuplicateArtifact(
+      sourceArtifactRow({ ingestionStatus: "queued" }),
+      null,
+    )).toBe(true);
+  });
+
+  it("reuses completed duplicates only when backing storage is readable", () => {
+    expect(isReusableDuplicateArtifact(
+      sourceArtifactRow({ ingestionStatus: "completed" }),
+      memoryFragmentRow({ storageStatus: "verified_available" }),
+    )).toBe(true);
+
+    expect(isReusableDuplicateArtifact(
+      sourceArtifactRow({ ingestionStatus: "completed" }),
+      memoryFragmentRow({ storageStatus: "renewed" }),
+    )).toBe(true);
+  });
+
+  it("allows re-upload when the duplicate artifact storage is expired or missing", () => {
+    expect(isReusableDuplicateArtifact(
+      sourceArtifactRow({ ingestionStatus: "completed" }),
+      memoryFragmentRow({ storageStatus: "expired" }),
+    )).toBe(false);
+
+    expect(isReusableDuplicateArtifact(
+      sourceArtifactRow({ ingestionStatus: "completed" }),
+      null,
+    )).toBe(false);
+  });
+});
+
 function sourceArtifactRow(overrides: Record<string, unknown> = {}) {
   const now = new Date("2026-06-21T10:00:00.000Z");
 
@@ -98,6 +132,24 @@ function sourceArtifactRow(overrides: Record<string, unknown> = {}) {
     ingestionStatus: "completed",
     rawStorageRef: "walrus://source/default",
     hash: null,
+    metadata: {},
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  } as never;
+}
+
+function memoryFragmentRow(overrides: Record<string, unknown> = {}) {
+  const now = new Date("2026-06-21T10:00:00.000Z");
+
+  return {
+    id: "fragment-1",
+    twinId: "twin-1",
+    sourceArtifactId: "artifact-1",
+    contentStorageRef: "walrus://blob/fragment",
+    contentSha256: "sha",
+    storageStatus: "verified_available",
+    storageLastReadErrorCode: null,
     metadata: {},
     createdAt: now,
     updatedAt: now,

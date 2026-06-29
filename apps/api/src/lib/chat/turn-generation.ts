@@ -29,7 +29,9 @@ import { estimateMemoryTokenSavings } from "./token-accounting.js";
 import { sanitizeAssistantContent } from "./chat-sanitize.js";
 import { generateSemanticChatTitle } from "./thread-title.js";
 import {
+  buildEmptyRetrievalFallbackReply,
   buildRetrievalFallbackReply,
+  documentContextHasReadableText,
   resolveCoreCommsAnswer,
   shouldLoadMemoryContext,
 } from "./turn-policy.js";
@@ -131,8 +133,7 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     (contextResolution.retrieval === "document" ||
       contextResolution.answerTarget === "document" ||
       contextResolution.intent === "document_qa") &&
-    documentContext.passages.length === 0 &&
-    documentContext.inspectionSources.length === 0
+    !documentContextHasReadableText(documentContext)
   ) {
     return buildStaticAssistantTurn({
       content: buildRetrievalFallbackReply("document", documentContext.degradation.reason),
@@ -144,6 +145,26 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
         target: "document",
         reason: documentContext.degradation.reason,
         message: buildRetrievalFallbackReply("document", documentContext.degradation.reason),
+      },
+    });
+  }
+  if (
+    shouldLoadDocument &&
+    (contextResolution.retrieval === "document" ||
+      contextResolution.answerTarget === "document" ||
+      contextResolution.intent === "document_qa") &&
+    !documentContextHasReadableText(documentContext)
+  ) {
+    return buildStaticAssistantTurn({
+      content: buildEmptyRetrievalFallbackReply("document"),
+      runtimeConfig: input.runtimeConfig,
+      contextResolution,
+      documentContext,
+      retrievalStatus: {
+        state: "empty",
+        target: "document",
+        reason: null,
+        message: buildEmptyRetrievalFallbackReply("document"),
       },
     });
   }
