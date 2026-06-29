@@ -43,6 +43,10 @@ import { sanitizeAssistantContent, sanitizeSivrajVoiceReply } from "../lib/chat/
 import {
   buildEmptyRetrievalFallbackReply,
   buildRetrievalFallbackReply,
+  documentContextCanSupportTurn,
+  documentTurnRequiresReadableText,
+  resolveDocumentEvidenceState,
+  shouldFallbackForEmptyDocumentRetrieval,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
   shouldFallbackForRetrievalDegradation,
@@ -827,6 +831,93 @@ describe("chat candidate memory retrieval helpers", () => {
       answerTarget: "general",
       retrieval: "none",
     }), degradedMemory)).toBe(false);
+  });
+
+  it("distinguishes metadata-only document access checks from body-text requests", () => {
+    const accessPlan = turnPlan({
+      standaloneQuery: "Do you have access to my launch strategy PDF?",
+      intent: "document_qa",
+      answerTarget: "document",
+      retrieval: "document",
+    });
+    const summarizePlan = turnPlan({
+      standaloneQuery: "Summarize my launch strategy PDF.",
+      intent: "document_qa",
+      answerTarget: "document",
+      retrieval: "document",
+    });
+    const metadataOnlyDocumentContext = documentContext({
+      retrievalPlan: {
+        source: "llm",
+        mode: "document_qa",
+        inspectionMode: "metadata",
+        task: "answer",
+        target: { kind: "none" },
+        artifactIds: ["artifact-1"],
+        targetPages: [],
+        confidence: 0.9,
+        needsClarification: false,
+      },
+      inspectionSources: [{
+        sourceArtifactId: "artifact-1",
+        sourceType: "pdf",
+        title: "Launch strategy",
+        fileName: "launch-strategy.pdf",
+        pageCount: null,
+        charCount: 120,
+        includedFullText: true,
+        scope: "metadata",
+        pageStart: null,
+        pageEnd: null,
+        content: "Document metadata:\nFile name: launch-strategy.pdf",
+      }],
+    });
+    const metadataOnlySummaryContext = documentContext({
+      ...metadataOnlyDocumentContext,
+      retrievalPlan: {
+        ...metadataOnlyDocumentContext.retrievalPlan,
+        inspectionMode: "semantic_passages",
+        task: "summarize",
+        target: { kind: "whole_document" },
+      },
+    });
+
+    expect(resolveDocumentEvidenceState(metadataOnlyDocumentContext)).toBe("metadata_only");
+    expect(documentTurnRequiresReadableText({
+      contextResolution: accessPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(false);
+    expect(documentContextCanSupportTurn({
+      contextResolution: accessPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(true);
+    expect(shouldFallbackForEmptyDocumentRetrieval({
+      shouldLoadDocument: true,
+      contextResolution: accessPlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(false);
+
+    expect(documentTurnRequiresReadableText({
+      contextResolution: summarizePlan,
+      documentContext: metadataOnlySummaryContext,
+    })).toBe(true);
+    expect(documentTurnRequiresReadableText({
+      contextResolution: summarizePlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(true);
+    expect(documentContextCanSupportTurn({
+      contextResolution: summarizePlan,
+      documentContext: metadataOnlySummaryContext,
+    })).toBe(false);
+    expect(documentContextCanSupportTurn({
+      contextResolution: summarizePlan,
+      documentContext: metadataOnlyDocumentContext,
+    })).toBe(false);
+    expect(shouldFallbackForEmptyDocumentRetrieval({
+      shouldLoadDocument: true,
+      contextResolution: summarizePlan,
+      documentContext: metadataOnlySummaryContext,
+    })).toBe(true);
   });
 
   it("builds a model-owned voice prompt for private acknowledgements", () => {
@@ -2105,6 +2196,27 @@ function chatMessageRow(input: {
     metadata: null,
     createdAt: new Date("2026-06-13T00:00:00Z"),
   } as const;
+}
+
+function documentContext(overrides: Record<string, unknown> = {}) {
+  return {
+    results: [],
+    retrievalPlan: {
+      source: "skipped",
+      mode: "general_chat",
+      inspectionMode: "semantic_passages",
+      task: "answer",
+      target: { kind: "none" },
+      artifactIds: [],
+      targetPages: [],
+      confidence: 0,
+      needsClarification: false,
+    },
+    inspectionSources: [],
+    passages: [],
+    degradation: null,
+    ...overrides,
+  } as any;
 }
 
 function providerRuntimeConfig() {

@@ -31,8 +31,9 @@ import { generateSemanticChatTitle } from "./thread-title.js";
 import {
   buildEmptyRetrievalFallbackReply,
   buildRetrievalFallbackReply,
-  documentContextHasReadableText,
+  documentContextCanSupportTurn,
   resolveCoreCommsAnswer,
+  shouldFallbackForEmptyDocumentRetrieval,
   shouldLoadMemoryContext,
 } from "./turn-policy.js";
 import { loadCachedCoreCommsContext } from "./chat-cache.js";
@@ -133,7 +134,11 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     (contextResolution.retrieval === "document" ||
       contextResolution.answerTarget === "document" ||
       contextResolution.intent === "document_qa") &&
-    !documentContextHasReadableText(documentContext)
+    !documentContextCanSupportTurn({
+      contextResolution,
+      documentContext,
+      query: retrievalQuery,
+    })
   ) {
     return buildStaticAssistantTurn({
       content: buildRetrievalFallbackReply("document", documentContext.degradation.reason),
@@ -149,11 +154,12 @@ export async function generateChatTurn(input: GenerateChatTurnInput) {
     });
   }
   if (
-    shouldLoadDocument &&
-    (contextResolution.retrieval === "document" ||
-      contextResolution.answerTarget === "document" ||
-      contextResolution.intent === "document_qa") &&
-    !documentContextHasReadableText(documentContext)
+    shouldFallbackForEmptyDocumentRetrieval({
+      shouldLoadDocument,
+      contextResolution,
+      documentContext,
+      query: retrievalQuery,
+    })
   ) {
     return buildStaticAssistantTurn({
       content: buildEmptyRetrievalFallbackReply("document"),

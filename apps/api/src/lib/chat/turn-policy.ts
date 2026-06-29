@@ -20,6 +20,8 @@ type PolicyMemoryContext = {
   results: ReturnType<typeof retrieveRelevantMemories>;
 };
 
+export type DocumentEvidenceState = "none" | "metadata_only" | "readable_text";
+
 /** Skip LLM when hot memory was stored and the turn is a statement with no retrieval need. */
 export function shouldFastAcknowledgeMemoryIntake(
   contextResolution: Pick<ConversationContextResolution, "answerTarget" | "memoryWrite" | "retrieval" | "turnKind">,
@@ -229,6 +231,8 @@ export function shouldProceedWithPartialRetrieval(input: {
   retrievalStatus: ChatRetrievalStatus;
   memoryContext: PolicyMemoryContext;
   documentContext?: DocumentContext;
+  contextResolution?: ConversationContextResolution;
+  query?: string;
 }): boolean {
   if (input.retrievalStatus.state !== "degraded") {
     return true;
@@ -239,15 +243,137 @@ export function shouldProceedWithPartialRetrieval(input: {
   }
 
   if (input.retrievalStatus.target === "document") {
-    return documentContextHasReadableText(input.documentContext);
+    return input.contextResolution
+      ? documentContextCanSupportTurn({
+          contextResolution: input.contextResolution,
+          documentContext: input.documentContext,
+          query: input.query,
+        })
+      : documentContextHasReadableText(input.documentContext);
   }
 
   return false;
 }
 
 export function documentContextHasReadableText(documentContext: DocumentContext | undefined): boolean {
-  return (documentContext?.passages.length ?? 0) > 0 ||
-    (documentContext?.inspectionSources.some((source) => source.scope !== "metadata" && source.includedFullText) ?? false);
+  return resolveDocumentEvidenceState(documentContext) === "readable_text";
+}
+
+export function resolveDocumentEvidenceState(documentContext: DocumentContext | undefined): DocumentEvidenceState {
+  if (!documentContext) {
+    return "none";
+  }
+
+  if (
+    documentContext.passages.length > 0 ||
+    documentContext.inspectionSources.some((source) => source.scope !== "metadata" && source.includedFullText)
+  ) {
+    return "readable_text";
+  }
+
+  if (documentContext.inspectionSources.length > 0 || documentContext.retrievalPlan.artifactIds.length > 0) {
+    return "metadata_only";
+  }
+
+  return "none";
+}
+
+export function documentContextCanSupportTurn(input: {
+  contextResolution: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent" | "standaloneQuery">;
+  documentContext?: DocumentContext;
+  query?: string;
+}): boolean {
+  const evidenceState = resolveDocumentEvidenceState(input.documentContext);
+
+  if (evidenceState === "readable_text") {
+    return true;
+  }
+
+  if (evidenceState === "metadata_only") {
+    return !documentTurnRequiresReadableText(input);
+  }
+
+  return false;
+}
+
+export function shouldFallbackForEmptyDocumentRetrieval(input: {
+  shouldLoadDocument: boolean;
+  contextResolution: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent" | "standaloneQuery">;
+  documentContext?: DocumentContext;
+  query?: string;
+}): boolean {
+  return input.shouldLoadDocument &&
+    isDocumentTurn(input.contextResolution) &&
+    !documentContextCanSupportTurn(input);
+}
+
+export function documentTurnRequiresReadableText(input: {
+  contextResolution: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent" | "standaloneQuery">;
+  documentContext?: DocumentContext;
+  query?: string;
+}): boolean {
+  if (!isDocumentTurn(input.contextResolution)) {
+    return false;
+  }
+
+  const query = input.query ?? input.contextResolution.standaloneQuery;
+  if (isDocumentBodyTextQuery(query)) {
+    return true;
+  }
+
+  if (isDocumentAvailabilityQuery(query)) {
+    return false;
+  }
+
+  const plan = input.documentContext?.retrievalPlan;
+  if (plan?.inspectionMode === "metadata") {
+    return false;
+  }
+
+  return true;
+}
+
+function isDocumentTurn(
+  contextResolution: Pick<ConversationContextResolution, "retrieval" | "answerTarget" | "intent">,
+): boolean {
+  return contextResolution.retrieval === "document" ||
+    contextResolution.answerTarget === "document" ||
+    contextResolution.intent === "document_qa";
+}
+
+function isDocumentAvailabilityQuery(query: string): boolean {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (isDocumentBodyTextQuery(normalized)) {
+    return false;
+  }
+
+  const mentionsDocument = /\b(?:pdf|document|file|upload|attachment|source)\b/u.test(normalized);
+  if (!mentionsDocument) {
+    return false;
+  }
+
+  return /\b(?:do you|can you|could you|are you able to|did i|have i)\b.*\b(?:have|access|see|find|open|read|uploaded|sent|shared|saved)\b/u.test(normalized) ||
+    /\b(?:is|was)\b.*\b(?:pdf|document|file|upload|attachment|source)\b.*\b(?:available|saved|uploaded|there)\b/u.test(normalized);
+}
+
+function isDocumentBodyTextQuery(query: string): boolean {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  return /\b(?:summari[sz]e|summary|extract|quote|count|compare|analy[sz]e|explain)\b/u.test(normalized) ||
+    /\b(?:what does|what's in|what is in|tell me about|give me|show me)\b/u.test(normalized);
 }
 
 export function buildRetrievalFallbackReply(
@@ -261,6 +387,6 @@ export function buildRetrievalFallbackReply(
 
 export function buildEmptyRetrievalFallbackReply(target: ChatRetrievalTarget): string {
   return target === "document"
-    ? "I found the document record, but I don’t have readable PDF content available for this turn. Please re-upload it or try again after ingestion finishes."
+    ? "I don’t have enough readable document text available to answer that safely yet."
     : "I don’t have that memory saved yet.";
 }

@@ -394,6 +394,84 @@ describe("runStreamingChatTurn retrieval fallback", () => {
       "I found that document, but I couldn’t read its private content right now. Please retry in a moment.",
     );
   });
+
+  it("does not use the empty-document fallback for metadata-only access checks", async () => {
+    mockChatTurn.resolveConversationContext.mockResolvedValue({
+      ...documentQaResolution(),
+      standaloneQuery: "Do you have access to my launch strategy PDF?",
+    });
+    mockChatTurn.loadDocumentContextForIntent.mockResolvedValue({
+      ...emptyDocumentContext(),
+      retrievalPlan: {
+        source: "llm",
+        mode: "document_qa",
+        inspectionMode: "metadata",
+        task: "answer",
+        target: { kind: "none" },
+        artifactIds: ["artifact-1"],
+        targetPages: [],
+        confidence: 1,
+        needsClarification: false,
+      },
+      inspectionSources: [{
+        sourceArtifactId: "artifact-1",
+        sourceType: "pdf",
+        title: "Launch strategy",
+        fileName: "launch-strategy.pdf",
+        pageCount: null,
+        charCount: 72,
+        includedFullText: true,
+        scope: "metadata",
+        pageStart: null,
+        pageEnd: null,
+        content: "Document metadata:\nFile name: launch-strategy.pdf",
+      }],
+    });
+    mockChatTurn.createOpenAICompatibleChatGenerator.mockReturnValue({
+      generateChat: vi.fn(),
+      streamChat: vi.fn(() => chatStream("I found a saved record for that PDF.")),
+    });
+    const events: Array<{ event: string; data: string }> = [];
+
+    await runStreamingChatTurn({
+      c: {} as any,
+      deps: {
+        db: {} as any,
+        privateMemoryReader: {} as any,
+        privateMemoryStorage: undefined,
+        artifactProcessingQueue: undefined,
+        llmFetch: vi.fn() as any,
+        memorySearchConfig: {} as any,
+      },
+      gate: {
+        twinId: "twin-1",
+        thread: chatThreadRow(),
+      },
+      stream: {
+        writeSSE: vi.fn(async (event) => {
+          events.push(event);
+        }),
+      },
+      content: "Do you have access to my launch strategy PDF?",
+      memoryIntent: "auto",
+      surface: "web_chat",
+      retryAttempt: 0,
+      abortController: new AbortController(),
+    });
+
+    expect(mockChatTurn.markTurnGenerating).toHaveBeenCalled();
+    expect(mockChatTurn.createOpenAICompatibleChatGenerator).toHaveBeenCalled();
+    expect(mockChatTurn.completeStreamingTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        finalContent: "I found a saved record for that PDF.",
+        retrievalStatus: expect.objectContaining({
+          state: "retrieved",
+          target: "document",
+        }),
+      }),
+    );
+    expect(parseEventData(events[2]).delta).toBe("I found a saved record for that PDF.");
+  });
 });
 
 function runtimeConfig(): ChatRuntimeConfig {

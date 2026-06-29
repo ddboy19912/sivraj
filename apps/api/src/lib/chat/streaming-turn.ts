@@ -52,13 +52,14 @@ import {
   buildMemoryIntakeAcknowledgement,
   buildEmptyRetrievalFallbackReply,
   buildRetrievalFallbackReply,
-  documentContextHasReadableText,
+  documentContextCanSupportTurn,
   memoryIntakeFailureMessage,
   memoryIntakeIntentFromTurnPlan,
   memoryIntakeMessageFromTurnPlan,
   resolveCoreCommsAnswer,
   shouldFastAcknowledgeMemoryIntake,
   shouldFastAcknowledgePrivateDisclosure,
+  shouldFallbackForEmptyDocumentRetrieval,
   shouldFallbackForRetrievalDegradation,
   shouldInterruptForMemoryIntakeFailure,
   shouldLoadMemoryContext,
@@ -444,7 +445,13 @@ try {
     const estimatedSavedTokens = tokenSavings.estimatedTokensSaved;
     if (
         shouldFallbackForRetrievalDegradation(contextResolution, retrievalStatus) &&
-        !shouldProceedWithPartialRetrieval({ retrievalStatus, memoryContext, documentContext })
+        !shouldProceedWithPartialRetrieval({
+            retrievalStatus,
+            memoryContext,
+            documentContext,
+            contextResolution,
+            query: retrievalQuery,
+        })
     ) {
         const finalContent = retrievalStatus.message ??
             buildRetrievalFallbackReply(retrievalStatus.target ?? "memory", retrievalStatus.reason);
@@ -475,11 +482,12 @@ try {
         return;
     }
     if (
-        shouldLoadDocument &&
-        (contextResolution.retrieval === "document" ||
-            contextResolution.answerTarget === "document" ||
-            contextResolution.intent === "document_qa") &&
-        !documentContextHasReadableText(documentContext)
+        shouldFallbackForEmptyDocumentRetrieval({
+            shouldLoadDocument,
+            contextResolution,
+            documentContext,
+            query: retrievalQuery,
+        })
     ) {
         const finalContent = buildEmptyRetrievalFallbackReply("document");
         await completeFallbackStreamingTurn({
@@ -742,7 +750,11 @@ async function loadDocumentContextForTurn(input: {
             documentContext,
             retrievalStatus: documentContext.degradation
                 ? degradedRetrievalStatus("document", documentContext.degradation.reason)
-                : documentContextHasReadableText(documentContext)
+                : documentContextCanSupportTurn({
+                    contextResolution: input.contextResolution,
+                    documentContext,
+                    query: input.query,
+                })
                 ? retrievedRetrievalStatus("document")
                 : emptyRetrievalStatus("document"),
         };

@@ -6,18 +6,19 @@ import type { ChatMemoryContext } from "../../types/chat.types.js";
 import { loadCachedCoreCommsContext, loadCachedRuntimeProviderConfig } from "../chat/chat-cache.js";
 import { loadTurnPlanningMemoryHints } from "../chat/current-truth.js";
 import { loadThreadMessages, readPositiveInteger } from "../chat/helpers.js";
-import { readPlannedMemoryRequest } from "../chat/memory-request.js";
 import { readMemoryTokenAccounting } from "../chat/token-accounting.js";
 import { generateChatTurn } from "../chat/turn-generation.js";
 import { insertUserMessage, persistChatTurnForActor } from "../chat/turn-persistence.js";
-import type { ConversationContextResolution } from "../chat/turn-types.js";
 import { optionalString, readRecord } from "../http/route-helpers.js";
+import { resolveTelegramAskContextResolution } from "./ask-context.js";
 import type { TelegramInboundEvent, TelegramUserProfile } from "../../types/telegram.types.js";
 
 const TELEGRAM_REPLY_CHAR_LIMIT = 3900;
 const TELEGRAM_CHAT_SURFACE = "telegram" as const;
 const TELEGRAM_FRESH_CAPTURE_WINDOW_DEFAULT_SECONDS = 60 * 60;
 const TELEGRAM_FRESH_CAPTURE_LIMIT = 5;
+const TELEGRAM_NON_TERMINAL_ANSWER_FALLBACK =
+  "I couldn’t complete that answer in this Telegram turn. Please ask again and I’ll answer directly, or tell you if the source is unreadable.";
 
 type TelegramQuestionEvent = Extract<TelegramInboundEvent, { kind: "ask_command" }>;
 type TelegramQuestionThread = typeof chatThreads.$inferSelect;
@@ -80,7 +81,6 @@ export async function answerTelegramQuestion(input: {
     TELEGRAM_CHAT_SURFACE,
     messageMetadata,
   );
-  const contextResolution = buildTelegramAskContextResolution(event.question);
   const [coreCommsContext, planningMemoryHints, recentMessages, freshMemoryContext] = await Promise.all([
     loadCachedCoreCommsContext(deps.db, twinId),
     loadTurnPlanningMemoryHints(deps.db, twinId),
@@ -98,7 +98,17 @@ export async function answerTelegramQuestion(input: {
       query: event.question,
     }),
   ]);
-  const turn = await generateChatTurn({
+  const excludeMessageIds = new Set([userMessage.id]);
+  const contextResolution = await resolveTelegramAskContextResolution({
+    currentMessage: event.question,
+    recentMessages,
+    excludeMessageIds,
+    coreCommsContext,
+    memoryHints: planningMemoryHints,
+    runtimeConfig,
+    llmFetch: deps.llmFetch,
+  });
+  const turn = enforceTerminalTelegramAnswerTurn(await generateChatTurn({
     db: deps.db,
     privateMemoryReader: deps.privateMemoryReader,
     llmFetch: deps.llmFetch,
@@ -113,8 +123,9 @@ export async function answerTelegramQuestion(input: {
     recentMessages,
     contextResolution,
     freshMemoryContext,
-    excludeMessageIds: new Set([userMessage.id]),
-  });
+    excludeMessageIds,
+  }));
+  const retrievalStatus = "retrievalStatus" in turn ? turn.retrievalStatus : undefined;
   const assistantMessage = await persistChatTurnForActor({
     db: deps.db,
     gate: { twinId, thread },
@@ -147,6 +158,9 @@ export async function answerTelegramQuestion(input: {
       retrievedMemoryCount: turn.memoryContext.results.length,
       freshTelegramMemoryCount: freshMemoryContext.results.length,
       documentPassageCount: turn.documentContext.passages.length,
+      documentRetrievalPlan: turn.documentContext.retrievalPlan,
+      contextResolution: turn.contextResolution,
+      ...(retrievalStatus ? { retrievalStatus } : {}),
     },
   });
 
@@ -162,7 +176,7 @@ export async function answerTelegramQuestion(input: {
 }
 
 export function formatTelegramAnswerText(answer: string): string {
-  const trimmed = answer.trim();
+  const trimmed = normalizeTerminalTelegramAnswerText(answer).trim();
 
   if (!trimmed) {
     return "I do not have an answer yet.";
@@ -176,29 +190,42 @@ export function formatTelegramAnswerText(answer: string): string {
   return `${trimmed.slice(0, TELEGRAM_REPLY_CHAR_LIMIT - suffix.length).trimEnd()}${suffix}`;
 }
 
-export function buildTelegramAskContextResolution(question: string): ConversationContextResolution {
-  const baseResolution = {
-    intent: "memory_qa" as const,
-    answerTarget: "memory" as const,
-    retrieval: "hot_memory" as const,
-  };
+type TelegramAnswerTurn = Awaited<ReturnType<typeof generateChatTurn>>;
+
+export function enforceTerminalTelegramAnswerTurn(turn: TelegramAnswerTurn): TelegramAnswerTurn {
+  const content = normalizeTerminalTelegramAnswerText(turn.output.content);
+
+  if (content === turn.output.content) {
+    return turn;
+  }
 
   return {
-    source: "fallback",
-    standaloneQuery: question,
-    intent: baseResolution.intent,
-    turnKind: "question",
-    answerTarget: baseResolution.answerTarget,
-    memoryWrite: "skip",
-    retrieval: baseResolution.retrieval,
-    confidence: 1,
-    referencedMessageIds: [],
-    memoryRequest: readPlannedMemoryRequest(undefined, {
-      query: question,
-      contextResolution: baseResolution,
-    }),
-    reason: "telegram_ask_command",
+    ...turn,
+    output: {
+      ...turn.output,
+      content,
+    },
   };
+}
+
+export function normalizeTerminalTelegramAnswerText(answer: string): string {
+  return isNonTerminalTelegramAnswer(answer)
+    ? TELEGRAM_NON_TERMINAL_ANSWER_FALLBACK
+    : answer;
+}
+
+export function isNonTerminalTelegramAnswer(answer: string): boolean {
+  const normalized = answer
+    .toLowerCase()
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  if (!normalized || normalized.length > 360) {
+    return false;
+  }
+
+  return /\bplease give me (?:a )?moment\b.*\b(?:process|access|retrieve|read|load|check|summari[sz]e)\b/u.test(normalized) ||
+    /\b(?:i(?:'ll| will)|let me|i need to)\b.*\b(?:process|access|retrieve|read|load|check)\b.*\b(?:it|that|this|pdf|document|file|source)\b/u.test(normalized);
 }
 
 async function loadFreshTelegramCaptureMemoryContext(input: {

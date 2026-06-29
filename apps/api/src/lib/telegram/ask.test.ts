@@ -1,34 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTelegramAskContextResolution,
   extractTelegramCapturedText,
   formatTelegramAnswerText,
+  isNonTerminalTelegramAnswer,
   shouldUseFreshTelegramCapture,
 } from "./ask.js";
 
 describe("Telegram ask helpers", () => {
-  it("forces ask commands into memory retrieval planning", () => {
-    expect(buildTelegramAskContextResolution("What do I prefer for investor calls?")).toMatchObject({
-      intent: "memory_qa",
-      answerTarget: "memory",
-      retrieval: "hot_memory",
-      memoryWrite: "skip",
-      memoryRequest: {
-        kind: "specific_fact",
-        scope: "preferences",
-      },
-    });
-    expect(buildTelegramAskContextResolution("What is my occupation?")).toMatchObject({
-      memoryRequest: {
-        kind: "specific_fact",
-        scope: "profile",
-        searchTerms: ["occupation", "profession", "job", "career", "role"],
-      },
-    });
-  });
-
   it("formats empty answers with a safe fallback", () => {
     expect(formatTelegramAnswerText("  ")).toBe("I do not have an answer yet.");
+  });
+
+  it("replaces non-terminal Telegram answers with a truthful final reply", () => {
+    expect(isNonTerminalTelegramAnswer(
+      'I can summarize the "Sivraj_Demo_Launch_Notes.pdf" for you. Please give me a moment to process it.',
+    )).toBe(true);
+    expect(formatTelegramAnswerText(
+      'I can summarize the "Sivraj_Demo_Launch_Notes.pdf" for you. Please give me a moment to process it.',
+    )).toBe("I couldn’t complete that answer in this Telegram turn. Please ask again and I’ll answer directly, or tell you if the source is unreadable.");
+    expect(isNonTerminalTelegramAnswer("The PDF recommends positioning Sivraj as a sovereign AI Twin.")).toBe(false);
   });
 
   it("extracts the user text from encrypted Telegram capture payload content", () => {
