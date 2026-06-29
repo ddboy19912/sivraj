@@ -767,6 +767,7 @@ async function loadDocumentChunkCounts(db: any, twinId: string, artifactIds: any
         .where(and(
             eq(documentChunks.twinId, twinId),
             inArray(documentChunks.sourceArtifactId, ids),
+            inArray(documentChunks.storageStatus, CHAT_MEMORY_READABLE_STATUSES),
         ))
         .groupBy(documentChunks.sourceArtifactId);
     return new Map(rows.map((row: any) => [row.sourceArtifactId, Number(row.count) || 0]));
@@ -1274,7 +1275,13 @@ async function loadRecentDocumentRows(input: any) {
     })
         .from(memoryFragments)
         .innerJoin(sourceArtifacts, eq(memoryFragments.sourceArtifactId, sourceArtifacts.id))
-        .where(and(eq(memoryFragments.twinId, input.twinId), eq(sourceArtifacts.twinId, input.twinId), eq(sourceArtifacts.ingestionStatus, "completed"), inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"])))
+        .where(and(
+            eq(memoryFragments.twinId, input.twinId),
+            eq(sourceArtifacts.twinId, input.twinId),
+            eq(sourceArtifacts.ingestionStatus, "completed"),
+            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"]),
+            inArray(memoryFragments.storageStatus, CHAT_MEMORY_READABLE_STATUSES),
+        ))
         .orderBy(desc(sourceArtifacts.createdAt))
         .limit(input.limit);
 }
@@ -1369,7 +1376,14 @@ async function loadDocumentRowsByArtifactIds(input: any) {
     })
         .from(memoryFragments)
         .innerJoin(sourceArtifacts, eq(memoryFragments.sourceArtifactId, sourceArtifacts.id))
-        .where(and(eq(memoryFragments.twinId, input.twinId), eq(sourceArtifacts.twinId, input.twinId), inArray(sourceArtifacts.id, ids), eq(sourceArtifacts.ingestionStatus, "completed"), inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"])))
+        .where(and(
+            eq(memoryFragments.twinId, input.twinId),
+            eq(sourceArtifacts.twinId, input.twinId),
+            inArray(sourceArtifacts.id, ids),
+            eq(sourceArtifacts.ingestionStatus, "completed"),
+            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"]),
+            inArray(memoryFragments.storageStatus, CHAT_MEMORY_READABLE_STATUSES),
+        ))
         .orderBy(desc(sourceArtifacts.createdAt))
         .limit(ids.length);
 }
