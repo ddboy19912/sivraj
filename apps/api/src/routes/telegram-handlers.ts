@@ -827,6 +827,7 @@ async function handleTelegramAskCommand(
     threadId: answer.threadId,
     assistantMessageId: answer.assistantMessageId,
     retrievedMemoryCount: answer.retrievedMemoryCount,
+    sourceCount: answer.sourceCount,
   };
 }
 
@@ -1354,6 +1355,7 @@ function telegramResultLogContext(result: unknown) {
     accountId: valueToString(record["accountId"]),
     artifactId: valueToString(record["artifactId"]),
     threadId: valueToString(record["threadId"]),
+    sourceCount: valueToNumber(record["sourceCount"]),
   };
 }
 
@@ -1425,6 +1427,10 @@ function valueToString(value: unknown) {
     return String(value);
   }
   return null;
+}
+
+function valueToNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function resolveTelegramConnectionStatus(input: {

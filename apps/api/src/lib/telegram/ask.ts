@@ -1,6 +1,6 @@
 import { loadMemorySearchConfig } from "@sivraj/config";
 import { auditEvents, chatMessages, chatThreads, sourceArtifacts, telegramIngestedMessages } from "@sivraj/db";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { AppDependencies } from "../../app.js";
 import type { ChatMemoryContext } from "../../types/chat.types.js";
 import { loadCachedCoreCommsContext, loadCachedRuntimeProviderConfig } from "../chat/chat-cache.js";
@@ -17,11 +17,34 @@ const TELEGRAM_REPLY_CHAR_LIMIT = 3900;
 const TELEGRAM_CHAT_SURFACE = "telegram" as const;
 const TELEGRAM_FRESH_CAPTURE_WINDOW_DEFAULT_SECONDS = 60 * 60;
 const TELEGRAM_FRESH_CAPTURE_LIMIT = 5;
+const TELEGRAM_ANSWER_SOURCE_LIMIT = 3;
+const TELEGRAM_SOURCE_ARTIFACT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const TELEGRAM_NON_TERMINAL_ANSWER_FALLBACK =
   "I couldn’t complete that answer in this Telegram turn. Please ask again and I’ll answer directly, or tell you if the source is unreadable.";
 
 type TelegramQuestionEvent = Extract<TelegramInboundEvent, { kind: "ask_command" }>;
 type TelegramQuestionThread = typeof chatThreads.$inferSelect;
+
+export type TelegramAnswerSource = {
+  artifactId: string;
+  displayName: string;
+  sourceType: string;
+  createdAt: Date;
+  citationLabels: string[];
+};
+
+type TelegramAnswerCitation = {
+  sourceArtifactId: string;
+  label: string | null;
+};
+
+type TelegramAnswerSourceArtifact = {
+  id: string;
+  sourceType: string;
+  metadata: unknown;
+  createdAt: Date;
+};
 
 export type TelegramQuestionAnswerResult =
   | {
@@ -32,6 +55,7 @@ export type TelegramQuestionAnswerResult =
       userMessageId: string | null;
       assistantMessageId: string;
       retrievedMemoryCount: number;
+      sourceCount: number;
     }
   | {
       ok: false;
@@ -126,6 +150,11 @@ export async function answerTelegramQuestion(input: {
     excludeMessageIds,
   }));
   const retrievalStatus = "retrievalStatus" in turn ? turn.retrievalStatus : undefined;
+  const answerSources = await loadTelegramAnswerSources({
+    deps,
+    twinId,
+    citations: turn.citations,
+  });
   const assistantMessage = await persistChatTurnForActor({
     db: deps.db,
     gate: { twinId, thread },
@@ -156,6 +185,7 @@ export async function answerTelegramQuestion(input: {
       userMessageId: userMessage.id,
       assistantMessageId: assistantMessage.id,
       retrievedMemoryCount: turn.memoryContext.results.length,
+      answerSourceCount: answerSources.length,
       freshTelegramMemoryCount: freshMemoryContext.results.length,
       documentPassageCount: turn.documentContext.passages.length,
       documentRetrievalPlan: turn.documentContext.retrievalPlan,
@@ -166,28 +196,46 @@ export async function answerTelegramQuestion(input: {
 
   return {
     ok: true,
-    answerText: formatTelegramAnswerText(assistantMessage.content),
+    answerText: formatTelegramAnswerText({
+      answer: assistantMessage.content,
+      sources: answerSources,
+    }),
     twinId,
     threadId: thread.id,
     userMessageId: userMessage.id,
     assistantMessageId: assistantMessage.id,
     retrievedMemoryCount: turn.memoryContext.results.length,
+    sourceCount: answerSources.length,
   };
 }
 
-export function formatTelegramAnswerText(answer: string): string {
-  const trimmed = normalizeTerminalTelegramAnswerText(answer).trim();
+export function formatTelegramAnswerText(input: {
+  answer: string;
+  sources?: TelegramAnswerSource[];
+}): string {
+  const trimmed = normalizeTerminalTelegramAnswerText(input.answer).trim() ||
+    "I do not have an answer yet.";
+  const footer = formatTelegramAnswerSourcesFooter(input.sources ?? []);
 
-  if (!trimmed) {
-    return "I do not have an answer yet.";
+  if (!footer) {
+    if (trimmed.length <= TELEGRAM_REPLY_CHAR_LIMIT) {
+      return trimmed;
+    }
+
+    const suffix = "\n\n[truncated]";
+    return `${trimmed.slice(0, TELEGRAM_REPLY_CHAR_LIMIT - suffix.length).trimEnd()}${suffix}`;
   }
 
-  if (trimmed.length <= TELEGRAM_REPLY_CHAR_LIMIT) {
-    return trimmed;
+  const footerBlock = `\n\n${footer}`;
+
+  if (trimmed.length + footerBlock.length <= TELEGRAM_REPLY_CHAR_LIMIT) {
+    return `${trimmed}${footerBlock}`;
   }
 
-  const suffix = "\n\n[truncated]";
-  return `${trimmed.slice(0, TELEGRAM_REPLY_CHAR_LIMIT - suffix.length).trimEnd()}${suffix}`;
+  const suffix = `\n\n[truncated]${footerBlock}`;
+  const answerLimit = Math.max(0, TELEGRAM_REPLY_CHAR_LIMIT - suffix.length);
+
+  return `${trimmed.slice(0, answerLimit).trimEnd()}${suffix}`;
 }
 
 type TelegramAnswerTurn = Awaited<ReturnType<typeof generateChatTurn>>;
@@ -455,16 +503,196 @@ async function loadExistingTelegramAnswer(input: {
     return null;
   }
 
+  const answerSources = await loadTelegramAnswerSources({
+    deps: input.deps,
+    twinId: input.twinId,
+    citations: assistantMessage.citations,
+  });
+
   return {
     ok: true,
-    answerText: formatTelegramAnswerText(assistantMessage.content),
+    answerText: formatTelegramAnswerText({
+      answer: assistantMessage.content,
+      sources: answerSources,
+    }),
     twinId: input.twinId,
     threadId: input.threadId,
     userMessageId: null,
     assistantMessageId: assistantMessage.id,
     retrievedMemoryCount: readRetrievedMemoryCount(assistantMessage.metadata),
+    sourceCount: answerSources.length,
   };
 }
+
+async function loadTelegramAnswerSources(input: {
+  deps: AppDependencies;
+  twinId: string;
+  citations: unknown;
+}): Promise<TelegramAnswerSource[]> {
+  const citations = readTelegramAnswerCitations(input.citations);
+  const artifactIds = uniqueStrings(citations.map((citation) => citation.sourceArtifactId))
+    .filter((artifactId) => TELEGRAM_SOURCE_ARTIFACT_ID_PATTERN.test(artifactId));
+
+  if (artifactIds.length === 0) {
+    return [];
+  }
+
+  const artifacts = await input.deps.db
+    .select({
+      id: sourceArtifacts.id,
+      sourceType: sourceArtifacts.sourceType,
+      metadata: sourceArtifacts.metadata,
+      createdAt: sourceArtifacts.createdAt,
+    })
+    .from(sourceArtifacts)
+    .where(and(
+      eq(sourceArtifacts.twinId, input.twinId),
+      inArray(sourceArtifacts.id, artifactIds),
+    ));
+
+  return buildTelegramAnswerSources({ citations, artifacts });
+}
+
+export function buildTelegramAnswerSources(input: {
+  citations: unknown;
+  artifacts: TelegramAnswerSourceArtifact[];
+}): TelegramAnswerSource[] {
+  const citations = readTelegramAnswerCitations(input.citations);
+  const artifactsById = new Map(input.artifacts.map((artifact) => [artifact.id, artifact]));
+  const citedArtifacts = new Map<string, { firstIndex: number; citationLabels: string[] }>();
+
+  citations.forEach((citation, index) => {
+    const existing = citedArtifacts.get(citation.sourceArtifactId);
+
+    if (existing) {
+      if (citation.label && !existing.citationLabels.includes(citation.label)) {
+        existing.citationLabels.push(citation.label);
+      }
+      return;
+    }
+
+    citedArtifacts.set(citation.sourceArtifactId, {
+      firstIndex: index,
+      citationLabels: citation.label ? [citation.label] : [],
+    });
+  });
+
+  return Array.from(citedArtifacts.entries())
+    .sort(([, left], [, right]) => left.firstIndex - right.firstIndex)
+    .flatMap(([artifactId, citation]) => {
+      const artifact = artifactsById.get(artifactId);
+
+      if (!artifact) {
+        return [];
+      }
+
+      return [{
+        artifactId,
+        displayName: readTelegramAnswerSourceDisplayName(artifact),
+        sourceType: formatTelegramSourceType(artifact.sourceType),
+        createdAt: artifact.createdAt,
+        citationLabels: citation.citationLabels,
+      }];
+    })
+    .slice(0, TELEGRAM_ANSWER_SOURCE_LIMIT);
+}
+
+function readTelegramAnswerCitations(value: unknown): TelegramAnswerCitation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    const record = readRecord(item);
+    const sourceArtifactId = optionalString(record["sourceArtifactId"]);
+
+    if (!sourceArtifactId) {
+      return [];
+    }
+
+    return [{
+      sourceArtifactId,
+      label: optionalString(record["label"]),
+    }];
+  });
+}
+
+function formatTelegramAnswerSourcesFooter(sources: TelegramAnswerSource[]): string {
+  if (sources.length === 0) {
+    return "";
+  }
+
+  return [
+    "Sources:",
+    ...sources
+      .slice(0, TELEGRAM_ANSWER_SOURCE_LIMIT)
+      .map((source, index) => `${index + 1}. ${formatTelegramAnswerSourceLine(source)}`),
+  ].join("\n");
+}
+
+function formatTelegramAnswerSourceLine(source: TelegramAnswerSource): string {
+  return [
+    source.displayName,
+    source.sourceType,
+    formatTelegramSourceDate(source.createdAt),
+  ].join(" · ");
+}
+
+function readTelegramAnswerSourceDisplayName(artifact: TelegramAnswerSourceArtifact): string {
+  const metadata = readRecord(artifact.metadata);
+
+  return optionalString(metadata["sourceDisplayName"]) ??
+    optionalString(metadata["fileName"]) ??
+    optionalString(metadata["title"]) ??
+    formatTelegramSourceType(artifact.sourceType);
+}
+
+function formatTelegramSourceType(sourceType: string): string {
+  const label = TELEGRAM_SOURCE_TYPE_LABELS[sourceType];
+
+  if (label) {
+    return label;
+  }
+
+  return sourceType
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ") || "Source";
+}
+
+function formatTelegramSourceDate(createdAt: Date): string {
+  return createdAt.toISOString().slice(0, 10);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+const TELEGRAM_SOURCE_TYPE_LABELS: Record<string, string> = {
+  api: "API",
+  browser_history: "Browser history",
+  calendar: "Calendar",
+  chat_export: "Chat export",
+  csv: "CSV",
+  docx: "DOCX",
+  email: "Email",
+  github: "GitHub",
+  image: "Image",
+  markdown: "Markdown",
+  note: "Note",
+  ocr_pdf: "OCR PDF",
+  onboarding_self_description: "Onboarding",
+  other: "Source",
+  pdf: "PDF",
+  slack_export: "Slack export",
+  telegram_message: "Telegram message",
+  upload: "Upload",
+  url: "URL",
+  voice_conversation: "Voice conversation",
+  voice_note: "Voice note",
+  whatsapp_export: "WhatsApp export",
+};
 
 function telegramQuestionThreadMetadata(input: {
   connectorAccountId: string;
