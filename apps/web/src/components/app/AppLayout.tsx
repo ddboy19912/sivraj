@@ -27,7 +27,10 @@ export function AppLayout() {
   const activeTab = getNavigationTabForPath(location.pathname);
   const app = useSivrajAppState(activeTab);
   const settingsOpen = activeTab === "settings" || app.settingsOpen;
-  const showAmbientStage = activeTab !== "brain" && activeTab !== "agents";
+  const showAmbientStage =
+    activeTab !== "brain" &&
+    activeTab !== "agents" &&
+    activeTab !== "integrations";
   const showMainNavigation = shouldShowMainNavigation(app.appOverlay);
   const setProviderOpen = app.setProviderOpen;
   const hasOpenRouterOAuthCallback = hasPendingOpenRouterOAuthCallback();

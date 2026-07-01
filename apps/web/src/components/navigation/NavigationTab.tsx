@@ -3,6 +3,7 @@ import {
   Home,
   MessageCircle,
   Brain,
+  Plug,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -11,7 +12,13 @@ import { NavigationTabButton } from "@/components/navigation/NavigationTabButton
 import { liquidGlass } from "@/lib/ui/liquid-glass";
 import { cn } from "@/lib/ui/utils";
 
-export type NavigationTabId = "home" | "chat" | "brain" | "agents" | "settings";
+export type NavigationTabId =
+  | "home"
+  | "chat"
+  | "brain"
+  | "agents"
+  | "integrations"
+  | "settings";
 
 const TABS: {
   id: NavigationTabId;
@@ -22,6 +29,7 @@ const TABS: {
   { id: "chat", label: "Chat", icon: MessageCircle },
   { id: "brain", label: "Brain", icon: Brain },
   { id: "agents", label: "Agents", icon: Bot },
+  { id: "integrations", label: "Integrations", icon: Plug },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 

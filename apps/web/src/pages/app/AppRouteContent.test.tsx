@@ -4,6 +4,7 @@ import ChatRoute from "@/pages/app/ChatRoute";
 import BrainRoute from "@/pages/app/BrainRoute";
 import AgentsRoute from "@/pages/app/AgentsRoute";
 import HomeRoute from "@/pages/app/HomeRoute";
+import IntegrationsRoute from "@/pages/app/IntegrationsRoute";
 import type { AppRouteContextValue } from "@/providers/app-route-context";
 import { AppRouteContextProvider } from "@/providers/app-route-provider";
 import { createFlow } from "@/tests/fixtures/onboarding-fixtures";
@@ -24,6 +25,12 @@ vi.mock("@/components/brain/BrainPage", () => ({
 vi.mock("@/components/settings/AgentsSettingsSection", () => ({
   AgentsSettingsSection: (props: { session: { twinId: string } }) => (
     <section aria-label="Agents page" data-twin-id={props.session.twinId} />
+  ),
+}));
+
+vi.mock("@/components/integrations/TelegramIntegrationCard", () => ({
+  TelegramIntegrationCard: (props: { session: { twinId: string } }) => (
+    <section aria-label="Telegram integration" data-twin-id={props.session.twinId} />
   ),
 }));
 
@@ -214,6 +221,27 @@ describe("app route content", () => {
     renderRoute(<AgentsRoute />, createRouteContext({ canUseProtectedApp: true }));
 
     expect(screen.getByLabelText("Agents page")).toHaveAttribute(
+      "data-twin-id",
+      "twin-test",
+    );
+  });
+
+  it("does not mount protected integrations before verified access", () => {
+    renderRoute(
+      <IntegrationsRoute />,
+      createRouteContext({ canUseProtectedApp: false }),
+    );
+
+    expect(screen.queryByLabelText("Telegram integration")).not.toBeInTheDocument();
+  });
+
+  it("mounts the integrations page with protected twin session context", () => {
+    renderRoute(
+      <IntegrationsRoute />,
+      createRouteContext({ canUseProtectedApp: true }),
+    );
+
+    expect(screen.getByLabelText("Telegram integration")).toHaveAttribute(
       "data-twin-id",
       "twin-test",
     );

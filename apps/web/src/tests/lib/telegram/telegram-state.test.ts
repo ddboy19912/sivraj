@@ -5,6 +5,10 @@ import {
   resolveTelegramStatusPresentation,
   telegramStatusDotClass,
 } from "@/lib/telegram/telegram-state";
+import {
+  initialTelegramIntegrationState,
+  telegramIntegrationReducer,
+} from "@/lib/telegram/telegram-integration-state";
 
 describe("Telegram integration state", () => {
   it("maps connection statuses to stable presentation", () => {
@@ -56,5 +60,39 @@ describe("Telegram integration state", () => {
     expect(telegramStatusDotClass("warning")).toContain("orange");
     expect(telegramStatusDotClass("error")).toContain("rose");
     expect(telegramStatusDotClass("idle")).toContain("white");
+  });
+
+  it("keeps pending link state explicit after link creation", () => {
+    const state = telegramIntegrationReducer(
+      {
+        ...initialTelegramIntegrationState,
+        connection: {
+          status: "unlinked",
+          botUsername: "sivraj_bot",
+          account: null,
+          pendingLink: null,
+          recentCaptures: [],
+        },
+      },
+      {
+        type: "LINK_CREATED",
+        link: {
+          status: "pending_link",
+          botUsername: "sivraj_bot",
+          deepLink: "https://t.me/sivraj_bot?start=abc",
+          expiresAt: "2026-07-01T00:00:00.000Z",
+          startCommand: "/start abc",
+          token: "abc",
+          tokenId: "token-1",
+        },
+      },
+    );
+
+    expect(state.connection?.status).toBe("pending_link");
+    expect(state.connection?.pendingLink).toEqual({
+      id: "token-1",
+      expiresAt: "2026-07-01T00:00:00.000Z",
+    });
+    expect(state.latestLink?.token).toBe("abc");
   });
 });

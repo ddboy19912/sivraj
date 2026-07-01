@@ -17,6 +17,8 @@ export function NavigationTabButton({
   isActive,
   onSelect,
 }: NavigationTabButtonProps) {
+  const hasNewBadge = id === "integrations";
+
   return (
     <li className="min-w-0 flex-1">
       <button
@@ -25,12 +27,17 @@ export function NavigationTabButton({
         aria-label={label}
         onClick={() => onSelect(id)}
         className={cn(
-          "flex w-full flex-col items-center gap-1 rounded-[22px] px-2 py-2.5 transition-[background-color,box-shadow,color,transform] duration-300 ease-out",
+          "relative flex min-h-[68px] w-full flex-col items-center justify-end gap-1 rounded-[22px] px-2 pb-2.5 pt-3 transition-[background-color,box-shadow,color,transform] duration-300 ease-out",
           isActive
             ? "scale-[1.02] bg-[rgba(var(--theme-color-rgb),0.18)] text-[#f7fdff] shadow-[inset_0_0_0_1px_rgba(var(--theme-color-rgb),0.3),0_0_22px_rgba(var(--theme-color-rgb),0.14)]"
             : "text-[rgba(231,252,255,0.58)] hover:bg-white/4 hover:text-[rgba(231,252,255,0.86)]",
         )}
       >
+        {hasNewBadge ? (
+          <span className="absolute top-1 left-1/2 -translate-x-1/2 text-[9px] font-bold tracking-[0.08em] text-yellow-300 uppercase">
+            New
+          </span>
+        ) : null}
         <Icon
           className={cn(
             "size-5 shrink-0",

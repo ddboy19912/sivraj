@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { ColorPicker } from "@/components/settings/ColorPicker";
 import { PortaledWalletConnect } from "@/components/settings/PortaledWalletConnect";
-import { TelegramSettingsSection } from "@/components/settings/TelegramSettingsSection";
 import { VoiceSettingsSection } from "@/components/settings/VoiceSettingsSection";
 import {
   Drawer,
@@ -15,11 +14,10 @@ import type { ProviderConfigResponse } from "@/lib/chat/chat-api";
 import type { Session } from "@/lib/session";
 import { cn } from "@/lib/ui/utils";
 
-type SettingsTab = "account" | "integrations" | "voice" | "appearance";
+type SettingsTab = "account" | "voice" | "appearance";
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "account", label: "Account" },
-  { id: "integrations", label: "Apps" },
   { id: "voice", label: "Voice" },
   { id: "appearance", label: "Appearance" },
 ];
@@ -73,7 +71,7 @@ export function SettingsDrawer({
 
         <div className="border-b border-white/10 px-4 py-3">
           <div
-            className="grid grid-cols-4 rounded-2xl border border-white/10 bg-white/[0.035] p-1"
+            className="grid grid-cols-3 rounded-2xl border border-white/10 bg-white/[0.035] p-1"
             role="tablist"
             aria-label="Settings categories"
           >
@@ -115,13 +113,6 @@ export function SettingsDrawer({
               session={session}
               providerState={providerState}
               onProviderStateChange={onProviderStateChange}
-              onSessionRefreshed={onSessionRefreshed}
-            />
-          ) : null}
-
-          {activeTab === "integrations" ? (
-            <TelegramSettingsSection
-              session={session}
               onSessionRefreshed={onSessionRefreshed}
             />
           ) : null}

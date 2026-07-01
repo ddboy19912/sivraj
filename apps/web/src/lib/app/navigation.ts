@@ -5,6 +5,7 @@ const ROUTE_BY_TAB: Record<NavigationTabId, string> = {
   chat: "/chat",
   brain: "/brain",
   agents: "/agents",
+  integrations: "/integrations",
   settings: "/settings",
 };
 
@@ -23,6 +24,10 @@ export function getNavigationTabForPath(pathname: string): NavigationTabId {
 
   if (pathname === "/agents") {
     return "agents";
+  }
+
+  if (pathname === "/integrations") {
+    return "integrations";
   }
 
   if (pathname === "/brain") {

@@ -93,6 +93,39 @@ describe("AppLayout", () => {
       expect(screen.getByTestId("path")).toHaveTextContent("/");
     });
   });
+
+  it("hides the ambient stage on integrations like the agents page", () => {
+    useSivrajAppStateMock.mockReturnValue(createAppState(null));
+
+    render(
+      <MemoryRouter initialEntries={["/integrations"]}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/integrations" element={<LocationProbe />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("path")).toHaveTextContent("/integrations");
+    expect(screen.queryByTestId("ambient-stage")).not.toBeInTheDocument();
+  });
+
+  it("keeps the ambient stage on home", () => {
+    useSivrajAppStateMock.mockReturnValue(createAppState(null));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/" element={<LocationProbe />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("ambient-stage")).toBeInTheDocument();
+  });
 });
 
 function LocationProbe() {
