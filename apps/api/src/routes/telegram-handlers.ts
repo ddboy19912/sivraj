@@ -15,7 +15,7 @@ import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Context } from "hono";
 import type { AppDependencies, SupportedArtifactSourceType } from "../app.js";
 import { shouldAttachTransientCiphertextBase64 } from "../lib/artifacts/helpers.js";
-import { answerTelegramQuestion } from "../lib/telegram/ask.js";
+import { answerTelegramQuestion, buildTelegramCapsuleQuestion } from "../lib/telegram/ask.js";
 import { createTelegramLinkToken, buildTelegramBotDeepLink, buildTelegramStartCommand, hashTelegramLinkToken, readTelegramBotUsername } from "../lib/telegram/link-token.js";
 import {
   commitTelegramTextToHotMemory,
@@ -23,6 +23,7 @@ import {
   telegramHotMemoryCommitMetadata,
   telegramTextCaptureReply,
 } from "../lib/telegram/memory-capture.js";
+import { applyTelegramMemoryCorrection } from "../lib/telegram/memory-corrections.js";
 import { TELEGRAM_REPLY } from "../lib/telegram/replies.js";
 import {
   createInMemoryTelegramRateLimiter,
@@ -419,6 +420,14 @@ async function handleTelegramInboundEvent(
 
   if (event.kind === "ask_command") {
     return handleTelegramAskCommand(deps, event);
+  }
+
+  if (event.kind === "capsule_command") {
+    return handleTelegramCapsuleCommand(deps, event);
+  }
+
+  if (event.kind === "memory_correction_command") {
+    return handleTelegramMemoryCorrectionCommand(deps, event);
   }
 
   if (event.kind === "capture_media") {
@@ -822,10 +831,8 @@ async function handleTelegramAskCommand(
     twinId: account.twinId,
     connectorAccountId: account.id,
     connectorSourceId: source.id,
-    event: {
-      ...event,
-      question: event.question,
-    },
+    event,
+    question: event.question,
   }).catch(async (error: unknown) => {
     await recordTelegramQuestionFailure(deps, {
       twinId: account.twinId,
@@ -864,6 +871,192 @@ async function handleTelegramAskCommand(
     retrievedMemoryCount: answer.retrievedMemoryCount,
     sourceCount: answer.sourceCount,
   };
+}
+
+async function handleTelegramCapsuleCommand(
+  deps: AppDependencies,
+  event: Extract<TelegramInboundEvent, { kind: "capsule_command" }>,
+) {
+  if (!event.topic) {
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.capsuleUsage);
+    return { action: "capsule_usage" };
+  }
+
+  const linked = await loadLinkedTelegramAccount(deps, event.telegramUser.id);
+
+  if (!linked.ok) {
+    return handleUnresolvedLinkedTelegramAccount(deps, event, linked);
+  }
+
+  const account = linked.account;
+  const source = await upsertTelegramConnectorSource(deps, {
+    twinId: account.twinId,
+    accountId: account.id,
+    telegramUser: event.telegramUser,
+    chatId: event.chatId,
+  });
+  const topic = event.topic.trim();
+
+  await sendTelegramReply(deps, event, TELEGRAM_REPLY.capsuleThinking);
+
+  const answer = await answerTelegramQuestion({
+    deps,
+    twinId: account.twinId,
+    connectorAccountId: account.id,
+    connectorSourceId: source.id,
+    event,
+    question: buildTelegramCapsuleQuestion(topic),
+    sourceKind: "telegram_capsule",
+    auditEventType: "telegram.capsule_answered",
+    auditMetadata: {
+      telegramCommand: "capsule",
+      capsuleTopic: topic,
+    },
+  }).catch(async (error: unknown) => {
+    await recordTelegramQuestionFailure(deps, {
+      twinId: account.twinId,
+      accountId: account.id,
+      sourceId: source.id,
+      event,
+      reason: "telegram_capsule_failed",
+      detail: errorMessage(error),
+    });
+    return null;
+  });
+
+  if (!answer) {
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.capsuleFailed);
+    return { action: "capsule_failed", reason: "telegram_capsule_failed" };
+  }
+
+  if (!answer.ok) {
+    await recordTelegramQuestionFailure(deps, {
+      twinId: account.twinId,
+      accountId: account.id,
+      sourceId: source.id,
+      event,
+      reason: answer.reason,
+    });
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.capsuleProviderMissing);
+    return { action: "capsule_failed", reason: answer.reason };
+  }
+
+  await sendTelegramReply(deps, event, answer.answerText);
+  return {
+    action: "capsule_answered",
+    twinId: answer.twinId,
+    threadId: answer.threadId,
+    assistantMessageId: answer.assistantMessageId,
+    retrievedMemoryCount: answer.retrievedMemoryCount,
+    sourceCount: answer.sourceCount,
+  };
+}
+
+async function handleTelegramMemoryCorrectionCommand(
+  deps: AppDependencies,
+  event: Extract<TelegramInboundEvent, { kind: "memory_correction_command" }>,
+) {
+  if (!event.query) {
+    await sendTelegramReply(deps, event, telegramMemoryCorrectionUsageReply(event.command));
+    return { action: "memory_correction_usage", command: event.command };
+  }
+
+  if (event.command === "correct" && !event.replacement) {
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.correctUsage);
+    return { action: "memory_correction_usage", command: event.command };
+  }
+
+  const linked = await loadLinkedTelegramAccount(deps, event.telegramUser.id);
+
+  if (!linked.ok) {
+    return handleUnresolvedLinkedTelegramAccount(deps, event, linked);
+  }
+
+  const account = linked.account;
+  const source = await upsertTelegramConnectorSource(deps, {
+    twinId: account.twinId,
+    accountId: account.id,
+    telegramUser: event.telegramUser,
+    chatId: event.chatId,
+  });
+  const claim = await claimTelegramMessage(deps, {
+    twinId: account.twinId,
+    accountId: account.id,
+    sourceId: source.id,
+    event,
+    contentHash: sha256Hex([
+      "telegram-memory-correction:v1",
+      event.command,
+      event.query,
+      event.replacement ?? "",
+    ].join("\n")),
+  });
+
+  if (!claim.ok) {
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.duplicate);
+    return { action: "duplicate", messageId: event.messageId };
+  }
+
+  await sendTelegramReply(deps, event, TELEGRAM_REPLY.correctionThinking);
+
+  const result = await applyTelegramMemoryCorrection({
+    deps,
+    twinId: account.twinId,
+    connectorAccountId: account.id,
+    connectorSourceId: source.id,
+    event,
+    command: event.command,
+    query: event.query,
+    replacement: event.replacement,
+  }).catch(async (error: unknown) => {
+    await markTelegramIngestedMessageFailed(deps, claim.row.id, "telegram_memory_correction_failed", errorMessage(error));
+    return null;
+  });
+
+  if (!result) {
+    await sendTelegramReply(deps, event, TELEGRAM_REPLY.correctionFailed);
+    return { action: "memory_correction_failed", reason: "telegram_memory_correction_failed" };
+  }
+
+  await deps.db
+    .update(telegramIngestedMessages)
+    .set({
+      status: result.ok ? "captured" : "deferred",
+      updatedAt: new Date(),
+      metadata: sanitizeSafeMetadata({
+        ...buildTelegramCaptureMetadata(event, "correction", {
+          sourceKind: "telegram_memory_correction",
+          sourceDisplayName: `Telegram /${event.command} command`,
+        }),
+        command: event.command,
+        result: result.ok ? "applied" : result.reason,
+        matchCount: result.ok
+          ? result.affectedCandidateCount + result.affectedCanonicalCount
+          : result.matchCount,
+        affectedCandidateCount: result.ok ? result.affectedCandidateCount : 0,
+        affectedCanonicalCount: result.ok ? result.affectedCanonicalCount : 0,
+        correctedCanonicalMemoryId: result.ok ? result.correctedCanonicalMemoryId : null,
+      }),
+    })
+    .where(eq(telegramIngestedMessages.id, claim.row.id));
+
+  await sendTelegramReply(deps, event, result.replyText);
+
+  return result.ok
+    ? {
+        action: "memory_correction_applied",
+        command: result.command,
+        twinId: account.twinId,
+        affectedCandidateCount: result.affectedCandidateCount,
+        affectedCanonicalCount: result.affectedCanonicalCount,
+        correctedCanonicalMemoryId: result.correctedCanonicalMemoryId,
+      }
+    : {
+        action: "memory_correction_not_applied",
+        command: event.command,
+        reason: result.reason,
+        matchCount: result.matchCount,
+      };
 }
 
 async function handleTelegramMediaCapture(
@@ -1188,7 +1381,7 @@ async function recordTelegramQuestionFailure(
     twinId: string;
     accountId: string;
     sourceId: string;
-    event: Extract<TelegramInboundEvent, { kind: "ask_command" }>;
+    event: Extract<TelegramInboundEvent, { kind: "ask_command" | "capsule_command" }>;
     reason: string;
     detail?: string;
   },
@@ -1401,7 +1594,7 @@ async function disconnectOtherTelegramAccountsForUser(
 
 async function handleUnresolvedLinkedTelegramAccount(
   deps: AppDependencies,
-  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "ask_command" | "account_command" }>,
+  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "ask_command" | "capsule_command" | "memory_correction_command" | "account_command" }>,
   resolution: Extract<TelegramLinkedAccountResolution, { ok: false }>,
 ) {
   if (resolution.reason === "not_linked") {
@@ -1425,7 +1618,7 @@ async function handleUnresolvedLinkedTelegramAccount(
 
 async function recordAmbiguousTelegramLinkedAccount(
   deps: AppDependencies,
-  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "ask_command" | "account_command" }>,
+  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "ask_command" | "capsule_command" | "memory_correction_command" | "account_command" }>,
   accounts: TelegramConnectorAccount[],
 ) {
   const accountIds = accounts.map((account) => account.id);
@@ -1456,7 +1649,7 @@ async function claimTelegramMessage(
     twinId: string;
     accountId: string;
     sourceId: string;
-    event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" }>;
+    event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "memory_correction_command" }>;
     contentHash: string;
   },
 ): Promise<{ ok: true; row: TelegramIngestedMessage } | { ok: false; row: TelegramIngestedMessage }> {
@@ -1823,6 +2016,20 @@ function formatTelegramAccountStatusDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function telegramMemoryCorrectionUsageReply(
+  command: Extract<TelegramInboundEvent, { kind: "memory_correction_command" }>["command"],
+) {
+  if (command === "forget") {
+    return TELEGRAM_REPLY.forgetUsage;
+  }
+
+  if (command === "stale") {
+    return TELEGRAM_REPLY.staleUsage;
+  }
+
+  return TELEGRAM_REPLY.correctUsage;
+}
+
 function readTelegramAccountLinkedAt(account: TelegramConnectorAccount) {
   const metadata = readRecord(account.metadata);
   const linkedAt = typeof metadata["linkedAt"] === "string"
@@ -2066,7 +2273,7 @@ function formatTelegramCapturedMediaReply(
 }
 
 function buildTelegramCaptureMetadata(
-  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" }>,
+  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" | "memory_correction_command" }>,
   messageKind: string,
   options: {
     sourceKind?: string;
@@ -2074,7 +2281,7 @@ function buildTelegramCaptureMetadata(
     extraMetadata?: Record<string, unknown>;
   } = {},
 ) {
-  const forwardOrigin = event.forwardOrigin ? readRecord(event.forwardOrigin) : {};
+  const forwardOrigin = "forwardOrigin" in event && event.forwardOrigin ? readRecord(event.forwardOrigin) : {};
 
   return sanitizeSafeMetadata({
     sourceDisplayName: options.sourceDisplayName ?? telegramArtifactTitle(event.telegramUser),
@@ -2100,7 +2307,7 @@ function buildTelegramCaptureMetadata(
           telegramCaptionPresent: Boolean(event.caption),
         }
       : {}),
-    ...(event.forwardOrigin
+    ...("forwardOrigin" in event && event.forwardOrigin
       ? {
           forwardOriginType: valueToString(forwardOrigin["type"]),
           forwardSenderUserId: valueToString(forwardOrigin["senderUserId"]),

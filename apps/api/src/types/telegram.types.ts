@@ -8,6 +8,8 @@ export type TelegramConnectionStatus =
 export type TelegramMessageKind =
   | "text"
   | "ask"
+  | "capsule"
+  | "correction"
   | "photo"
   | "document"
   | "voice"
@@ -19,6 +21,11 @@ export type TelegramAccountCommand =
   | "whoami"
   | "unlink"
   | "switch";
+
+export type TelegramMemoryCorrectionCommand =
+  | "forget"
+  | "correct"
+  | "stale";
 
 export type TelegramUserProfile = {
   id: string;
@@ -54,6 +61,20 @@ export type TelegramInboundEvent =
       kind: "ask_command";
       messageId: string;
       question: string | null;
+      sentAt: string;
+    })
+  | (TelegramBaseInboundEvent & {
+      kind: "capsule_command";
+      messageId: string;
+      topic: string | null;
+      sentAt: string;
+    })
+  | (TelegramBaseInboundEvent & {
+      kind: "memory_correction_command";
+      command: TelegramMemoryCorrectionCommand;
+      messageId: string;
+      query: string | null;
+      replacement: string | null;
       sentAt: string;
     })
   | (TelegramBaseInboundEvent & {

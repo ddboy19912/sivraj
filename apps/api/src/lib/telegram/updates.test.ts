@@ -88,6 +88,90 @@ describe("Telegram update normalization", () => {
     });
   });
 
+  it("normalizes capsule commands without capturing the topic as memory", () => {
+    const normalized = normalizeTelegramUpdate({
+      update_id: 1014,
+      message: {
+        message_id: 57,
+        date: 1781720500,
+        text: "/capsule fundraising strategy",
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      event: {
+        kind: "capsule_command",
+        topic: "fundraising strategy",
+      },
+    });
+  });
+
+  it("normalizes memory correction commands without capturing them as memory", () => {
+    const normalized = normalizeTelegramUpdate({
+      update_id: 1015,
+      message: {
+        message_id: 58,
+        date: 1781720600,
+        text: "/correct occupation -> lawyer",
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      event: {
+        kind: "memory_correction_command",
+        command: "correct",
+        query: "occupation",
+        replacement: "lawyer",
+      },
+    });
+  });
+
+  it("normalizes stale and forget commands with phrases", () => {
+    expect(normalizeTelegramUpdate({
+      update_id: 1016,
+      message: {
+        message_id: 59,
+        date: 1781720700,
+        text: "/forget dog name",
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    })).toMatchObject({
+      ok: true,
+      event: {
+        kind: "memory_correction_command",
+        command: "forget",
+        query: "dog name",
+        replacement: null,
+      },
+    });
+
+    expect(normalizeTelegramUpdate({
+      update_id: 1017,
+      message: {
+        message_id: 60,
+        date: 1781720800,
+        text: "/stale investor calls",
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    })).toMatchObject({
+      ok: true,
+      event: {
+        kind: "memory_correction_command",
+        command: "stale",
+        query: "investor calls",
+        replacement: null,
+      },
+    });
+  });
+
   it("normalizes account commands without capturing them as memory", () => {
     const normalized = normalizeTelegramUpdate({
       update_id: 1009,

@@ -22,9 +22,14 @@ const TELEGRAM_SOURCE_ARTIFACT_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const TELEGRAM_NON_TERMINAL_ANSWER_FALLBACK =
   "I couldn’t complete that answer in this Telegram turn. Please ask again and I’ll answer directly, or tell you if the source is unreadable.";
+const TELEGRAM_QUESTION_SOURCE_KIND = "telegram_qa";
+const TELEGRAM_CAPSULE_SOURCE_KIND = "telegram_capsule";
 
-type TelegramQuestionEvent = Extract<TelegramInboundEvent, { kind: "ask_command" }>;
+type TelegramQuestionEvent = Extract<TelegramInboundEvent, { kind: "ask_command" | "capsule_command" }>;
 type TelegramQuestionThread = typeof chatThreads.$inferSelect;
+type TelegramQuestionSourceKind =
+  | typeof TELEGRAM_QUESTION_SOURCE_KIND
+  | typeof TELEGRAM_CAPSULE_SOURCE_KIND;
 
 export type TelegramAnswerSource = {
   artifactId: string;
@@ -67,9 +72,14 @@ export async function answerTelegramQuestion(input: {
   twinId: string;
   connectorAccountId: string;
   connectorSourceId: string;
-  event: TelegramQuestionEvent & { question: string };
+  event: TelegramQuestionEvent;
+  question: string;
+  sourceKind?: TelegramQuestionSourceKind;
+  auditEventType?: "telegram.question_answered" | "telegram.capsule_answered";
+  auditMetadata?: Record<string, unknown>;
 }): Promise<TelegramQuestionAnswerResult> {
-  const { deps, twinId, event } = input;
+  const { deps, twinId, event, question } = input;
+  const sourceKind = input.sourceKind ?? TELEGRAM_QUESTION_SOURCE_KIND;
   const runtimeConfig = await loadCachedRuntimeProviderConfig(deps.db, twinId);
 
   if (!runtimeConfig) {
@@ -89,18 +99,25 @@ export async function answerTelegramQuestion(input: {
     twinId,
     threadId: thread.id,
     event,
+    sourceKind,
   });
 
   if (existingAnswer) {
     return existingAnswer;
   }
 
-  const messageMetadata = telegramQuestionMessageMetadata(input);
+  const messageMetadata = telegramQuestionMessageMetadata({
+    connectorAccountId: input.connectorAccountId,
+    connectorSourceId: input.connectorSourceId,
+    event,
+    sourceKind,
+    auditMetadata: input.auditMetadata,
+  });
   const userMessage = await insertUserMessage(
     deps.db,
     twinId,
     thread.id,
-    event.question,
+    question,
     "private",
     TELEGRAM_CHAT_SURFACE,
     messageMetadata,
@@ -119,12 +136,12 @@ export async function answerTelegramQuestion(input: {
       twinId,
       connectorAccountId: input.connectorAccountId,
       connectorSourceId: input.connectorSourceId,
-      query: event.question,
+      query: question,
     }),
   ]);
   const excludeMessageIds = new Set([userMessage.id]);
   const contextResolution = await resolveTelegramAskContextResolution({
-    currentMessage: event.question,
+    currentMessage: question,
     recentMessages,
     excludeMessageIds,
     coreCommsContext,
@@ -139,7 +156,7 @@ export async function answerTelegramQuestion(input: {
     memorySearchConfig: deps.memorySearchConfig ?? loadMemorySearchConfig(process.env),
     twinId,
     threadId: thread.id,
-    content: event.question,
+    content: question,
     runtimeConfig,
     memoryIntent: "private",
     coreCommsContext,
@@ -158,7 +175,7 @@ export async function answerTelegramQuestion(input: {
   const assistantMessage = await persistChatTurnForActor({
     db: deps.db,
     gate: { twinId, thread },
-    content: event.question,
+    content: question,
     surface: TELEGRAM_CHAT_SURFACE,
     assistantMetadata: messageMetadata,
     runtimeConfig,
@@ -173,12 +190,13 @@ export async function answerTelegramQuestion(input: {
     twinId,
     actorType: "system",
     actorId: "telegram-webhook",
-    eventType: "telegram.question_answered",
+    eventType: input.auditEventType ?? "telegram.question_answered",
     resourceType: "chat_thread",
     resourceId: thread.id,
     metadata: {
       connectorAccountId: input.connectorAccountId,
       connectorSourceId: input.connectorSourceId,
+      sourceKind,
       telegramUserId: event.telegramUser.id,
       chatId: event.chatId,
       messageId: event.messageId,
@@ -190,6 +208,7 @@ export async function answerTelegramQuestion(input: {
       documentPassageCount: turn.documentContext.passages.length,
       documentRetrievalPlan: turn.documentContext.retrievalPlan,
       contextResolution: turn.contextResolution,
+      ...(input.auditMetadata ?? {}),
       ...(retrievalStatus ? { retrievalStatus } : {}),
     },
   });
@@ -236,6 +255,23 @@ export function formatTelegramAnswerText(input: {
   const answerLimit = Math.max(0, TELEGRAM_REPLY_CHAR_LIMIT - suffix.length);
 
   return `${trimmed.slice(0, answerLimit).trimEnd()}${suffix}`;
+}
+
+export function buildTelegramCapsuleQuestion(topic: string): string {
+  const normalizedTopic = topic.trim().replace(/\s+/gu, " ");
+
+  return [
+    `Create a compact, source-grounded context capsule for: ${normalizedTopic}.`,
+    "Use only Sivraj memory and indexed documents. Do not invent missing details.",
+    "Format the reply with these sections when evidence exists:",
+    "Context Capsule",
+    "Current state",
+    "Key facts",
+    "Decisions and commitments",
+    "Open questions or risks",
+    "Next useful context",
+    "If there is not enough saved context, say that directly and name the most useful thing the user should drop into Sivraj.",
+  ].join("\n");
 }
 
 type TelegramAnswerTurn = Awaited<ReturnType<typeof generateChatTurn>>;
@@ -484,6 +520,7 @@ async function loadExistingTelegramAnswer(input: {
   twinId: string;
   threadId: string;
   event: TelegramQuestionEvent;
+  sourceKind: TelegramQuestionSourceKind;
 }): Promise<Extract<TelegramQuestionAnswerResult, { ok: true }> | null> {
   const [assistantMessage] = await input.deps.db
     .select()
@@ -493,7 +530,7 @@ async function loadExistingTelegramAnswer(input: {
       eq(chatMessages.threadId, input.threadId),
       eq(chatMessages.role, "assistant"),
       eq(chatMessages.status, "completed"),
-      sql`${chatMessages.metadata}->>'sourceKind' = 'telegram_qa'`,
+      sql`${chatMessages.metadata}->>'sourceKind' = ${input.sourceKind}`,
       sql`${chatMessages.metadata}->>'telegramMessageId' = ${input.event.messageId}`,
     ))
     .orderBy(desc(chatMessages.createdAt))
@@ -701,7 +738,7 @@ function telegramQuestionThreadMetadata(input: {
 }) {
   return {
     surface: TELEGRAM_CHAT_SURFACE,
-    sourceKind: "telegram_qa",
+    sourceKind: "telegram_chat",
     connectorAccountId: input.connectorAccountId,
     connectorSourceId: input.connectorSourceId,
     telegramChatId: input.event.chatId,
@@ -714,9 +751,11 @@ function telegramQuestionMessageMetadata(input: {
   connectorAccountId: string;
   connectorSourceId: string;
   event: TelegramQuestionEvent;
+  sourceKind: TelegramQuestionSourceKind;
+  auditMetadata?: Record<string, unknown>;
 }) {
   return {
-    sourceKind: "telegram_qa",
+    sourceKind: input.sourceKind,
     connectorAccountId: input.connectorAccountId,
     connectorSourceId: input.connectorSourceId,
     telegramChatId: input.event.chatId,
@@ -724,6 +763,7 @@ function telegramQuestionMessageMetadata(input: {
     telegramUpdateId: input.event.updateId,
     telegramUserId: input.event.telegramUser.id,
     telegramUsername: input.event.telegramUser.username,
+    ...(input.auditMetadata ?? {}),
   };
 }
 

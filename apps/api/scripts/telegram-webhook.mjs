@@ -15,11 +15,11 @@ const WEBHOOK_PATH = "/v1/integrations/telegram/webhook";
 const ALLOWED_UPDATES = ["message"];
 const BOT_PROFILE = {
   name: "Sivraj Memory",
-  shortDescription: "Drop links, files, screenshots, and memories. Ask your Sivraj Twin from Telegram.",
+  shortDescription: "Drop links, files, screenshots, and memories. Ask, correct, and capsule your Twin.",
   description: [
     "Sivraj is your private memory dropbox and Twin in Telegram.",
     "",
-    "Send links, screenshots, PDFs, docs, CSVs, and notes to capture them. Ask with /ask, save explicit details with /remember, and manage the linked account with /status or /unlink.",
+    "Send links, screenshots, PDFs, docs, CSVs, and notes to capture them. Ask with /ask, build context with /capsule, fix memory with /correct or /forget, and manage the linked account with /status or /unlink.",
   ].join("\n"),
 };
 const BOT_COMMANDS = [
@@ -32,8 +32,24 @@ const BOT_COMMANDS = [
     description: "Ask your Twin from memory",
   },
   {
+    command: "capsule",
+    description: "Build a context capsule",
+  },
+  {
     command: "remember",
     description: "Save a memory explicitly",
+  },
+  {
+    command: "forget",
+    description: "Stop using a stale memory",
+  },
+  {
+    command: "correct",
+    description: "Correct a remembered fact",
+  },
+  {
+    command: "stale",
+    description: "Mark a memory as outdated",
   },
   {
     command: "status",

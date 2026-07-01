@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTelegramCapsuleQuestion,
   buildTelegramAnswerSources,
   extractTelegramCapturedText,
   formatTelegramAnswerText,
@@ -9,6 +10,14 @@ import {
 } from "./ask.js";
 
 describe("Telegram ask helpers", () => {
+  it("builds a grounded capsule prompt from a Telegram topic", () => {
+    const prompt = buildTelegramCapsuleQuestion("  fundraising   strategy ");
+
+    expect(prompt).toContain("context capsule for: fundraising strategy");
+    expect(prompt).toContain("Use only Sivraj memory and indexed documents");
+    expect(prompt).toContain("Do not invent missing details");
+  });
+
   it("formats empty answers with a safe fallback", () => {
     expect(formatTelegramAnswerText({ answer: "  " })).toBe("I do not have an answer yet.");
   });

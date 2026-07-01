@@ -1,6 +1,7 @@
 import type {
   TelegramAccountCommand,
   TelegramInboundEvent,
+  TelegramMemoryCorrectionCommand,
   TelegramMessageKind,
   TelegramNormalizedUpdate,
   TelegramUserProfile,
@@ -39,6 +40,8 @@ export function normalizeTelegramUpdate(update: unknown): TelegramNormalizedUpda
   const text = readNonEmptyString(message["text"]);
   const linkToken = text ? readStartCommandToken(text) : null;
   const askQuestion = text ? readAskCommandQuestion(text) : null;
+  const capsuleTopic = text ? readCapsuleCommandTopic(text) : null;
+  const memoryCorrectionCommand = text ? readTelegramMemoryCorrectionCommand(text) : null;
   const rememberCommand = text ? readTelegramRememberCommandText(text) : null;
   const accountCommand = text ? readTelegramAccountCommand(text) : null;
 
@@ -61,6 +64,32 @@ export function normalizeTelegramUpdate(update: unknown): TelegramNormalizedUpda
         ...base,
         kind: "ask_command",
         question: askQuestion.question,
+        sentAt,
+      },
+    };
+  }
+
+  if (capsuleTopic && sentAt) {
+    return {
+      ok: true,
+      event: {
+        ...base,
+        kind: "capsule_command",
+        topic: capsuleTopic.topic,
+        sentAt,
+      },
+    };
+  }
+
+  if (memoryCorrectionCommand && sentAt) {
+    return {
+      ok: true,
+      event: {
+        ...base,
+        kind: "memory_correction_command",
+        command: memoryCorrectionCommand.command,
+        query: memoryCorrectionCommand.query,
+        replacement: memoryCorrectionCommand.replacement,
         sentAt,
       },
     };
@@ -159,6 +188,14 @@ export function normalizeTelegramUpdate(update: unknown): TelegramNormalizedUpda
 export function readTelegramMessageKind(event: TelegramInboundEvent): TelegramMessageKind {
   if (event.kind === "ask_command") {
     return "ask";
+  }
+
+  if (event.kind === "capsule_command") {
+    return "capsule";
+  }
+
+  if (event.kind === "memory_correction_command") {
+    return "correction";
   }
 
   if (event.kind === "capture_text") {
@@ -273,6 +310,64 @@ function readAskCommandQuestion(text: string): { question: string | null } | nul
   }
 
   return { question: readNonEmptyString(match[1]) };
+}
+
+function readCapsuleCommandTopic(text: string): { topic: string | null } | null {
+  const match = /^\/capsule(?:@\w+)?(?:\s+([\s\S]*))?$/u.exec(text.trim());
+  if (!match) {
+    return null;
+  }
+
+  return { topic: readNonEmptyString(match[1]) };
+}
+
+function readTelegramMemoryCorrectionCommand(text: string): {
+  command: TelegramMemoryCorrectionCommand;
+  query: string | null;
+  replacement: string | null;
+} | null {
+  const match = /^\/(forget|correct|stale)(?:@\w+)?(?:\s+([\s\S]*))?$/u.exec(text.trim().toLowerCase());
+  if (!match) {
+    return null;
+  }
+
+  const command = match[1] as TelegramMemoryCorrectionCommand;
+  const originalBodyMatch = /^\/(?:forget|correct|stale)(?:@\w+)?(?:\s+([\s\S]*))?$/iu.exec(text.trim());
+  const body = readNonEmptyString(originalBodyMatch?.[1]);
+
+  if (command !== "correct") {
+    return {
+      command,
+      query: body,
+      replacement: null,
+    };
+  }
+
+  const correction = splitTelegramCorrectionBody(body);
+  return {
+    command,
+    query: correction.query,
+    replacement: correction.replacement,
+  };
+}
+
+function splitTelegramCorrectionBody(body: string | null): {
+  query: string | null;
+  replacement: string | null;
+} {
+  if (!body) {
+    return { query: null, replacement: null };
+  }
+
+  const match = /^([\s\S]+?)\s*(?:->|=>)\s*([\s\S]+)$/u.exec(body.trim());
+  if (!match) {
+    return { query: body, replacement: null };
+  }
+
+  return {
+    query: readNonEmptyString(match[1]),
+    replacement: readNonEmptyString(match[2]),
+  };
 }
 
 function readTelegramAccountCommand(text: string): { command: TelegramAccountCommand } | null {
