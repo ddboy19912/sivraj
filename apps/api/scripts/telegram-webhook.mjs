@@ -1,18 +1,31 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const LOCAL_API_URL_DEFAULT = "http://127.0.0.1:3000";
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_BOT_PROFILE_PHOTO_PATH = path.resolve(SCRIPT_DIR, "../assets/telegram-bot-avatar.jpg");
+const BOT_PROFILE_PHOTO_ATTACH_NAME = "profile_photo";
+const BOT_PROFILE_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
 const HEALTH_PATH = "/health";
 const WEBHOOK_PATH = "/v1/integrations/telegram/webhook";
 const ALLOWED_UPDATES = ["message"];
+const BOT_PROFILE = {
+  name: "Sivraj Memory",
+  shortDescription: "Drop links, files, screenshots, and memories. Ask your Sivraj Twin from Telegram.",
+  description: [
+    "Sivraj is your private memory dropbox and Twin in Telegram.",
+    "",
+    "Send links, screenshots, PDFs, docs, CSVs, and notes to capture them. Ask with /ask, save explicit details with /remember, and manage the linked account with /status or /unlink.",
+  ].join("\n"),
+};
 const BOT_COMMANDS = [
   {
     command: "start",
-    description: "Start Sivraj or finish linking Telegram",
+    description: "Start or link your Sivraj Twin",
   },
   {
     command: "ask",
@@ -24,7 +37,7 @@ const BOT_COMMANDS = [
   },
   {
     command: "status",
-    description: "Show the linked Sivraj Twin",
+    description: "Show linked Twin status",
   },
   {
     command: "whoami",
@@ -40,7 +53,7 @@ const BOT_COMMANDS = [
   },
   {
     command: "help",
-    description: "Show available commands",
+    description: "Show what this bot can do",
   },
 ];
 
@@ -79,6 +92,12 @@ try {
       break;
     case "poll":
       await pollTelegramUpdates(args);
+      break;
+    case "profile:get":
+      await getBotProfile();
+      break;
+    case "profile:set":
+      await setBotProfile(args);
       break;
     case "help":
     case "--help":
@@ -191,6 +210,35 @@ async function setBotCommands(commandArgs) {
   printBotCommands(BOT_COMMANDS);
 }
 
+async function getBotProfile() {
+  const env = readTelegramEnv({ requireSecret: false });
+  const profile = await readBotProfile(env.botToken);
+
+  console.log("Telegram bot profile:");
+  printBotProfile(profile);
+}
+
+async function setBotProfile(commandArgs) {
+  const dryRun = hasFlag(commandArgs, "--dry-run");
+  const includePhoto = shouldSetProfilePhoto(commandArgs);
+  const photoPath = readProfilePhotoPath(commandArgs);
+
+  if (dryRun) {
+    console.log("Telegram bot profile dry run:");
+    printBotProfile(BOT_PROFILE);
+    printProfilePhotoPlan({ includePhoto, photoPath });
+    return;
+  }
+
+  const result = await applyBotProfile({ includePhoto, photoPath });
+
+  console.log("Telegram bot profile set:");
+  console.log(`  name: ${String(result.name)}`);
+  console.log(`  short description: ${String(result.shortDescription)}`);
+  console.log(`  description: ${String(result.description)}`);
+  console.log(`  profile photo: ${result.photo === null ? "skipped" : String(result.photo)}`);
+}
+
 async function applyBotCommands() {
   const env = readTelegramEnv({ requireSecret: false });
 
@@ -198,6 +246,68 @@ async function applyBotCommands() {
     commands: BOT_COMMANDS,
     scope: { type: "default" },
   });
+}
+
+async function readBotProfile(botToken) {
+  const [name, shortDescription, description] = await Promise.all([
+    telegramRequest(botToken, "getMyName", {}),
+    telegramRequest(botToken, "getMyShortDescription", {}),
+    telegramRequest(botToken, "getMyDescription", {}),
+  ]);
+
+  return {
+    name: String(name?.name ?? ""),
+    shortDescription: String(shortDescription?.short_description ?? ""),
+    description: String(description?.description ?? ""),
+  };
+}
+
+async function applyBotProfile(input) {
+  const env = readTelegramEnv({ requireSecret: false });
+  assertBotProfile(BOT_PROFILE);
+
+  const [nameResult, shortDescriptionResult, descriptionResult] = await Promise.all([
+    telegramRequest(env.botToken, "setMyName", {
+      name: BOT_PROFILE.name,
+    }),
+    telegramRequest(env.botToken, "setMyShortDescription", {
+      short_description: BOT_PROFILE.shortDescription,
+    }),
+    telegramRequest(env.botToken, "setMyDescription", {
+      description: BOT_PROFILE.description,
+    }),
+  ]);
+
+  const photoResult = input.includePhoto
+    ? await applyBotProfilePhoto({
+      botToken: env.botToken,
+      photoPath: input.photoPath,
+    })
+    : null;
+
+  return {
+    name: nameResult,
+    shortDescription: shortDescriptionResult,
+    description: descriptionResult,
+    photo: photoResult,
+  };
+}
+
+async function applyBotProfilePhoto(input) {
+  const photo = readProfilePhoto(input.photoPath);
+  const formData = new FormData();
+
+  formData.append("photo", JSON.stringify({
+    type: "static",
+    photo: `attach://${BOT_PROFILE_PHOTO_ATTACH_NAME}`,
+  }));
+  formData.append(
+    BOT_PROFILE_PHOTO_ATTACH_NAME,
+    new Blob([photo.bytes], { type: "image/jpeg" }),
+    path.basename(input.photoPath),
+  );
+
+  return telegramMultipartRequest(input.botToken, "setMyProfilePhoto", formData);
 }
 
 async function getWebhookInfo() {
@@ -265,11 +375,16 @@ async function setupProductionTelegram(commandArgs) {
     required: true,
   });
   const dropPendingUpdates = hasFlag(commandArgs, "--drop-pending-updates");
+  const includeProfilePhoto = shouldSetProfilePhoto(commandArgs);
+  const profilePhotoPath = readProfilePhotoPath(commandArgs);
   const dryRun = hasFlag(commandArgs, "--dry-run");
 
   console.log("Configuring Telegram production bot surface...");
   if (dryRun) {
     console.log("  dry run: true");
+    console.log("  profile:");
+    printBotProfile(BOT_PROFILE);
+    printProfilePhotoPlan({ includePhoto: includeProfilePhoto, photoPath: profilePhotoPath });
     console.log("  command menu:");
     printBotCommands(BOT_COMMANDS);
     console.log(`  webhook url: ${webhookUrl}`);
@@ -277,6 +392,15 @@ async function setupProductionTelegram(commandArgs) {
     console.log(`  drop pending updates: ${String(dropPendingUpdates)}`);
     return;
   }
+
+  const profileResult = await applyBotProfile({
+    includePhoto: includeProfilePhoto,
+    photoPath: profilePhotoPath,
+  });
+  console.log(`  profile name set: ${String(profileResult.name)}`);
+  console.log(`  profile short description set: ${String(profileResult.shortDescription)}`);
+  console.log(`  profile description set: ${String(profileResult.description)}`);
+  console.log(`  profile photo: ${profileResult.photo === null ? "skipped" : String(profileResult.photo)}`);
 
   const commandsResult = await applyBotCommands();
   console.log(`  commands set: ${String(commandsResult)}`);
@@ -354,6 +478,23 @@ async function runHealthCheck(commandArgs) {
       commandDiff.ok
         ? `Command menu is registered: ${BOT_COMMANDS.map((command) => `/${command.command}`).join(", ")}.`
         : commandDiff.detail,
+    ));
+  }
+
+  const profile = await readBotProfile(env.botToken)
+    .then((result) => ({ ok: true, result }))
+    .catch((error) => ({ ok: false, error }));
+
+  if (!profile.ok) {
+    rows.push(healthRow("profile", "fail", getErrorMessage(profile.error)));
+  } else {
+    const profileDiff = diffBotProfile(profile.result);
+    rows.push(healthRow(
+      "profile",
+      profileDiff.ok ? "pass" : "fail",
+      profileDiff.ok
+        ? "Bot name, short description, and intro description match Sivraj defaults."
+        : profileDiff.detail,
     ));
   }
 
@@ -463,6 +604,28 @@ async function telegramRequest(botToken, method, payload) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw new Error(`telegram_network_failed:${method}:${getErrorMessage(error)}`);
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body?.ok) {
+    const description = body?.description || response.statusText || "unknown Telegram API error";
+    const errorCode = body?.error_code || response.status;
+    const hint = getTelegramErrorHint(method, description);
+    throw new Error(`telegram_api_failed:${method}:${errorCode}:${description}${hint ? `\n${hint}` : ""}`);
+  }
+
+  return body.result;
+}
+
+async function telegramMultipartRequest(botToken, method, formData) {
+  let response;
+  try {
+    response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${botToken}/${method}`, {
+      method: "POST",
+      body: formData,
     });
   } catch (error) {
     throw new Error(`telegram_network_failed:${method}:${getErrorMessage(error)}`);
@@ -605,6 +768,24 @@ function normalizeWebhookUrl(rawUrl) {
     : `${url}${WEBHOOK_PATH}`;
 }
 
+function assertBotProfile(profile) {
+  const errors = [];
+
+  if (profile.name.length > 64) {
+    errors.push("BOT_PROFILE.name must be at most 64 characters.");
+  }
+  if (profile.shortDescription.length > 120) {
+    errors.push("BOT_PROFILE.shortDescription must be at most 120 characters.");
+  }
+  if (profile.description.length > 512) {
+    errors.push("BOT_PROFILE.description must be at most 512 characters.");
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`invalid_bot_profile:${errors.join(" ")}`);
+  }
+}
+
 function diffBotCommands(commands) {
   const actual = Array.isArray(commands) ? commands : [];
   const actualByName = new Map(actual.map((command) => [
@@ -640,6 +821,24 @@ function diffBotCommands(commands) {
       changed.length ? `description drift: ${changed.join(", ")}` : null,
     ].filter(Boolean).join("; "),
   };
+}
+
+function diffBotProfile(profile) {
+  const changed = [];
+
+  if (profile.name !== BOT_PROFILE.name) {
+    changed.push(`name is ${formatProfileValue(profile.name)}, expected ${formatProfileValue(BOT_PROFILE.name)}`);
+  }
+  if (profile.shortDescription !== BOT_PROFILE.shortDescription) {
+    changed.push("short description differs from Sivraj default");
+  }
+  if (profile.description !== BOT_PROFILE.description) {
+    changed.push("intro description differs from Sivraj default");
+  }
+
+  return changed.length === 0
+    ? { ok: true, detail: "" }
+    : { ok: false, detail: changed.join("; ") };
 }
 
 function telegramWebhookHealthRows(input) {
@@ -809,6 +1008,64 @@ function printBotCommands(commands) {
   }
 }
 
+function printBotProfile(profile) {
+  console.log(`  name: ${profile.name}`);
+  console.log(`  short description: ${profile.shortDescription}`);
+  console.log("  description:");
+  for (const line of profile.description.split("\n")) {
+    console.log(`    ${line}`);
+  }
+}
+
+function printProfilePhotoPlan(input) {
+  if (input.includePhoto) {
+    console.log(`  profile photo: ${input.photoPath}`);
+    return;
+  }
+
+  console.log("  profile photo: skipped (pass --with-profile-photo to update it)");
+}
+
+function readProfilePhotoPath(commandArgs) {
+  const customPath = readOption(commandArgs, "--photo");
+
+  return customPath
+    ? path.resolve(process.cwd(), customPath)
+    : DEFAULT_BOT_PROFILE_PHOTO_PATH;
+}
+
+function shouldSetProfilePhoto(commandArgs) {
+  return hasFlag(commandArgs, "--with-profile-photo") ||
+    hasFlag(commandArgs, "--with-photo") ||
+    Boolean(readOption(commandArgs, "--photo"));
+}
+
+function readProfilePhoto(photoPath) {
+  if (!existsSync(photoPath)) {
+    throw new Error(`missing_profile_photo:${photoPath}`);
+  }
+
+  const stats = statSync(photoPath);
+  if (!stats.isFile()) {
+    throw new Error(`invalid_profile_photo:not_a_file:${photoPath}`);
+  }
+  if (stats.size <= 0 || stats.size > BOT_PROFILE_PHOTO_MAX_BYTES) {
+    throw new Error(`invalid_profile_photo:size:${stats.size}`);
+  }
+  if (!/\.jpe?g$/i.test(photoPath)) {
+    throw new Error("invalid_profile_photo: Telegram static bot profile photos must be .jpg or .jpeg");
+  }
+
+  return {
+    bytes: readFileSync(photoPath),
+    size: stats.size,
+  };
+}
+
+function formatProfileValue(value) {
+  return value ? JSON.stringify(value) : "<empty>";
+}
+
 function stripAt(value) {
   return value.startsWith("@") ? value.slice(1) : value;
 }
@@ -846,11 +1103,17 @@ Commands:
   commands:set [--dry-run]
     Register Sivraj bot commands so Telegram clients autocomplete them after "/".
 
-  health [--url https://api.example.com] [--require-webhook]
-    Verify Telegram env, bot identity, command menu, webhook state, and public API health.
+  profile:get
+    Show the current Telegram bot name, short description, and intro description.
 
-  production:setup --url https://api.example.com [--drop-pending-updates] [--dry-run]
-    Register the command menu, set the production webhook, then run health checks.
+  profile:set [--with-profile-photo] [--photo ./avatar.jpg] [--dry-run]
+    Register Sivraj bot name, profile short description, empty-chat intro, and optionally the bot avatar.
+
+  health [--url https://api.example.com] [--require-webhook]
+    Verify Telegram env, bot identity, profile copy, command menu, webhook state, and public API health.
+
+  production:setup --url https://api.example.com [--with-profile-photo] [--drop-pending-updates] [--dry-run]
+    Register the bot profile, command menu, production webhook, then run health checks.
 
   info
     Show Telegram webhook configuration.
@@ -867,6 +1130,7 @@ Commands:
 Examples:
   pnpm --filter @sivraj/api telegram:check
   pnpm --filter @sivraj/api telegram:get-me
+  pnpm --filter @sivraj/api telegram:profile:set -- --with-profile-photo
   pnpm --filter @sivraj/api telegram:commands:set
   pnpm --filter @sivraj/api telegram:production:setup -- --url https://api.example.com
   pnpm --filter @sivraj/api telegram:health -- --url https://api.example.com

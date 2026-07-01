@@ -38,7 +38,7 @@ Coding agents should receive engineering context packets that are relevant to th
 
 ### Telegram Bot
 
-The Telegram bot is the private capture and memory Q&A surface for quick mobile workflows. Users link a Telegram account from the web app, send or forward text to the bot, and Sivraj stores the message as an encrypted `telegram_message` source artifact before queueing normal memory processing. Text captures also run through the app's hot-memory intake path; when that path commits memory, the bot can say the memory was remembered and `/ask` can retrieve it immediately. Users can also ask from existing Sivraj memory with `/ask <question>`; those turns are persisted in a hidden Telegram chat thread and answered through the same chat retrieval/generation pipeline as the app.
+The Telegram bot is the private capture and memory Q&A surface for quick mobile workflows. Users link a Telegram account from the web app, then send or forward notes, links, screenshots, PDFs, docs, CSVs, Markdown, and text files to the bot. Sivraj stores each supported drop as an encrypted source artifact before queueing normal memory processing. Text captures also run through the app's hot-memory intake path; when that path commits memory, the bot can say the memory was remembered and `/ask` can retrieve it immediately. Users can also ask from existing Sivraj memory with `/ask <question>`; those turns are persisted in a hidden Telegram chat thread and answered through the same chat retrieval/generation pipeline as the app.
 
 Server-side environment variables:
 
@@ -80,36 +80,47 @@ pnpm --filter @sivraj/api telegram:commands:set
 pnpm --filter @sivraj/api telegram:commands:get
 ```
 
+Register the Telegram bot profile text and, when desired, the Sivraj bot avatar:
+
+```sh
+pnpm --filter @sivraj/api telegram:profile:set
+pnpm --filter @sivraj/api telegram:profile:set -- --with-profile-photo
+pnpm --filter @sivraj/api telegram:profile:get
+```
+
 #### Telegram v1 Local Test Plan
 
 Local testing uses Telegram long polling as a bridge into the local API webhook route. This verifies the same webhook handler and secret-header path without deploying or creating an HTTPS tunnel.
 
 1. Run `pnpm --filter @sivraj/api telegram:check` and confirm all Telegram env vars are set.
 2. Run `pnpm --filter @sivraj/api telegram:get-me` and confirm the bot username matches `TELEGRAM_BOT_USERNAME`.
-3. Run `pnpm --filter @sivraj/api telegram:commands:set`, then `pnpm --filter @sivraj/api telegram:commands:get`, and confirm Telegram has `/start`, `/ask`, `/remember`, `/status`, `/whoami`, `/switch`, `/unlink`, and `/help`.
-4. If the bot already has a webhook configured, run `pnpm --filter @sivraj/api telegram:webhook:delete`.
-5. Start local infrastructure and services:
+3. Run `pnpm --filter @sivraj/api telegram:profile:set -- --dry-run` and confirm the bot profile copy reads correctly.
+4. Run `pnpm --filter @sivraj/api telegram:commands:set`, then `pnpm --filter @sivraj/api telegram:commands:get`, and confirm Telegram has `/start`, `/ask`, `/remember`, `/status`, `/whoami`, `/switch`, `/unlink`, and `/help`.
+5. If the bot already has a webhook configured, run `pnpm --filter @sivraj/api telegram:webhook:delete`.
+6. Start local infrastructure and services:
    - `pnpm db:up`
    - `pnpm db:migrate`
    - `pnpm dev:api`
    - `pnpm dev:worker`
    - `pnpm dev`
-6. In a separate terminal, run `pnpm --filter @sivraj/api telegram:poll -- --api-url http://127.0.0.1:3000`.
-7. In Telegram, type `/` in the bot chat and confirm Telegram shows autocomplete suggestions for the registered commands.
-8. In the web app, open Settings -> Apps and choose Connect Telegram. The app creates a one-time token and opens the bot deep link.
-9. Confirm Telegram opens the bot with the link payload and the bot replies that Telegram is linked. If the client does not open the link, copy the fallback `/start <token>` command from the pairing link controls.
-10. Send a plain text message to the bot and confirm the bot replies with either a memory acknowledgement or `Captured. I'll process this into memory shortly.`
-11. Confirm the web Apps panel shows the recent capture and the database has one `telegram_ingested_messages` row linked to one queued `source_artifacts` row. The capture metadata should include `hotMemory.retrievable = true` only when hot-memory intake committed a current memory.
-12. Immediately send `/ask What do I prefer for investor calls?` and confirm the bot first replies `Checking your Sivraj memory...`, then answers using either processed memory or the recent encrypted Telegram capture fallback.
-13. Confirm the database has a `chat_threads` row with `metadata.surface = telegram` and completed user/assistant `chat_messages` rows with `metadata.sourceKind = telegram_qa`.
-14. Send `/ask` without a question and confirm the bot returns the usage hint instead of capturing the command as memory.
-15. Send `/status` and confirm the bot shows the linked Twin name, Telegram display name, linked date, and unlink/switch guidance.
-16. Send `/whoami` and confirm it returns the same linked-account status.
-17. Send `/switch` and confirm it explains that switching is done by signing into the target Sivraj account and connecting Telegram again.
-18. Send `/help` and confirm it lists capture, ask, unlink, status, and switch commands.
-19. Send a voice note or photo and confirm the bot replies that the Telegram reference was saved, with a `deferred` ingested-message row.
-20. Send `/unlink` from Telegram and confirm the bot replies that Telegram is disconnected, the web Apps panel moves out of linked state after refresh, and a follow-up text message asks the user to link before capture.
-21. Reconnect from Settings -> Apps, confirm `/status` points to the new active Twin, then revoke Telegram in Settings -> Apps and confirm the bot sends a disconnect notice.
+7. In a separate terminal, run `pnpm --filter @sivraj/api telegram:poll -- --api-url http://127.0.0.1:3000`.
+8. In Telegram, type `/` in the bot chat and confirm Telegram shows autocomplete suggestions for the registered commands.
+9. In the web app, open Settings -> Apps and choose Connect Telegram. The app creates a one-time token and opens the bot deep link.
+10. Confirm Telegram opens the bot with the link payload and the bot replies that Telegram is linked. If the client does not open the link, copy the fallback `/start <token>` command from the pairing link controls.
+11. Send a plain text message to the bot and confirm the bot replies with either a memory acknowledgement or `Captured. I'll process this into memory shortly.`
+12. Send a link and confirm the bot replies `Captured link. I'll read and process it shortly.`
+13. Send a screenshot/photo, PDF, `.docx`, `.csv`, `.md`, or `.txt` file and confirm the bot replies that the file was captured and will be processed into the Twin.
+14. Confirm the web Apps panel shows the recent capture and the database has a `telegram_ingested_messages` row linked to a queued `source_artifacts` row. The capture metadata should include safe Telegram provenance and no raw message body or caption.
+15. Immediately send `/ask What do I prefer for investor calls?` and confirm the bot first replies `Checking your Sivraj memory...`, then answers using either processed memory or the recent encrypted Telegram capture fallback.
+16. Confirm the database has a `chat_threads` row with `metadata.surface = telegram` and completed user/assistant `chat_messages` rows with `metadata.sourceKind = telegram_qa`.
+17. Send `/ask` without a question and confirm the bot returns the usage hint instead of capturing the command as memory.
+18. Send `/status` and confirm the bot shows the linked Twin name, Telegram display name, linked date, and unlink/switch guidance.
+19. Send `/whoami` and confirm it returns the same linked-account status.
+20. Send `/switch` and confirm it explains that switching is done by signing into the target Sivraj account and connecting Telegram again.
+21. Send `/help` and confirm it lists capture, ask, unlink, status, and switch commands.
+22. Send a voice note and confirm the bot says voice ingestion is coming next, with a `deferred` ingested-message row.
+23. Send `/unlink` from Telegram and confirm the bot replies that Telegram is disconnected, the web Apps panel moves out of linked state after refresh, and a follow-up text message asks the user to link before capture.
+24. Reconnect from Settings -> Apps, confirm `/status` points to the new active Twin, then revoke Telegram in Settings -> Apps and confirm the bot sends a disconnect notice.
 
 #### Telegram Production Deployment
 
@@ -121,10 +132,11 @@ Production Telegram requires the API to be publicly reachable over HTTPS. Local 
    ```sh
    curl https://api.example.com/health
    ```
-4. Register the bot command autocomplete menu and webhook:
+4. Register the bot profile text, command autocomplete menu, and webhook:
    ```sh
    pnpm --filter @sivraj/api telegram:production:setup -- --url https://api.example.com
    ```
+   Add `--with-profile-photo` the first time you want the setup command to upload the default Sivraj bot avatar.
 5. Verify production health after setup:
    ```sh
    pnpm --filter @sivraj/api telegram:health -- --url https://api.example.com
@@ -132,9 +144,10 @@ Production Telegram requires the API to be publicly reachable over HTTPS. Local 
 
 The production setup command performs:
 
+- `setMyName`, `setMyShortDescription`, and `setMyDescription` for bot profile UX.
 - `setMyCommands` for Telegram command autocomplete.
 - `setWebhook` with `TELEGRAM_WEBHOOK_SECRET`.
-- health verification for API `/health`, Telegram `getMe`, command menu drift, webhook URL, allowed updates, pending updates, and Telegram webhook errors.
+- health verification for API `/health`, Telegram `getMe`, bot profile text drift, command menu drift, webhook URL, allowed updates, pending updates, and Telegram webhook errors.
 
 You can also run the individual webhook commands:
 

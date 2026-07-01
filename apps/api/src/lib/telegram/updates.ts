@@ -92,6 +92,19 @@ export function normalizeTelegramUpdate(update: unknown): TelegramNormalizedUpda
   }
 
   if (text && sentAt && !isTelegramCommand(text)) {
+    if (containsTelegramUrl(text)) {
+      return {
+        ok: true,
+        event: {
+          ...base,
+          kind: "capture_text",
+          text,
+          sentAt,
+          forwardOrigin: readForwardOrigin(message),
+        },
+      };
+    }
+
     const route = routeTelegramPlainText(text);
 
     if (route.kind === "ask") {
@@ -190,6 +203,8 @@ function readTelegramMedia(message: Record<string, unknown>) {
     return {
       mediaKind: "voice" as const,
       fileId: voiceFileId,
+      fileUniqueId: readNonEmptyString(voice["file_unique_id"]),
+      fileSize: readNumberOrNull(voice["file_size"]),
       mimeType: readNonEmptyString(voice["mime_type"]),
     };
   }
@@ -201,6 +216,8 @@ function readTelegramMedia(message: Record<string, unknown>) {
     return {
       mediaKind: "document" as const,
       fileId: documentFileId,
+      fileUniqueId: readNonEmptyString(document["file_unique_id"]),
+      fileSize: readNumberOrNull(document["file_size"]),
       fileName: readNonEmptyString(document["file_name"]),
       mimeType: readNonEmptyString(document["mime_type"]),
     };
@@ -218,6 +235,8 @@ function readTelegramMedia(message: Record<string, unknown>) {
     return {
       mediaKind: "photo" as const,
       fileId: photoFileId,
+      fileUniqueId: readNonEmptyString(bestPhoto["file_unique_id"]),
+      fileSize: readNumberOrNull(bestPhoto["file_size"]),
     };
   }
 
@@ -271,6 +290,10 @@ function isTelegramCommand(text: string) {
   return text.trim().startsWith("/");
 }
 
+function containsTelegramUrl(text: string) {
+  return /https?:\/\/[^\s<>"')\]]+/iu.test(text);
+}
+
 function telegramDateToIso(value: unknown): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
@@ -304,4 +327,8 @@ function valueToString(value: unknown): string | null {
 
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readNumberOrNull(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

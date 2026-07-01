@@ -10,6 +10,7 @@ import {
 describe("artifact upload input helpers", () => {
   it("reads supported source types", () => {
     expect(readSupportedSourceType("note")).toBe("note");
+    expect(readSupportedSourceType("url")).toBe("url");
     expect(readSupportedSourceType("bogus")).toBeNull();
   });
 

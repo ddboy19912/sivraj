@@ -9,6 +9,7 @@ import {
   PARSED_MARKDOWN_EMPTY,
   PARSED_OCR_PDF_EMPTY,
   PARSED_PLAIN_TEXT_EMPTY,
+  PARSED_URL_EMPTY,
   PARSED_SLACK_EXPORT_EMPTY,
   PARSED_WHATSAPP_EXPORT_EMPTY,
 } from "./constants.js";
@@ -21,6 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
   email: "Email",
   ocr_pdf: "OCR scanned PDF",
   image: "Image",
+  url: "URL",
   voice_note: "Voice note",
   voice_conversation: "Voice conversation",
   github: "GitHub import",
@@ -38,6 +40,7 @@ const EMPTY_PARSE_REASONS: Record<string, string> = {
   email: PARSED_EMAIL_EMPTY,
   ocr_pdf: PARSED_OCR_PDF_EMPTY,
   image: PARSED_IMAGE_EMPTY,
+  url: PARSED_URL_EMPTY,
   github: PARSED_GITHUB_EMPTY,
   browser_history: PARSED_BROWSER_HISTORY_EMPTY,
   chat_export: PARSED_CHAT_EXPORT_EMPTY,

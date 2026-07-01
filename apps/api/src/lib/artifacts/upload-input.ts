@@ -13,7 +13,7 @@ import {
 import { detectAiChatProviderFromFilename, readAiChatProvider } from "./ai-chat-provider.js";
 
 const SUPPORTED_SOURCE_TYPES = [
-  "note", "browser_history", "markdown", "upload", "pdf", "ocr_pdf", "image",
+  "note", "url", "browser_history", "markdown", "upload", "pdf", "ocr_pdf", "image",
   "voice_note", "voice_conversation", "onboarding_self_description", "docx",
   "csv", "email", "calendar", "chat_export", "slack_export", "whatsapp_export",
   "github", "telegram_message", "api", "other",

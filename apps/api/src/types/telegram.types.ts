@@ -67,6 +67,8 @@ export type TelegramInboundEvent =
       messageId: string;
       mediaKind: "photo" | "document" | "voice";
       fileId: string;
+      fileUniqueId?: string | null;
+      fileSize?: number | null;
       fileName?: string | null;
       mimeType?: string | null;
       caption?: string | null;

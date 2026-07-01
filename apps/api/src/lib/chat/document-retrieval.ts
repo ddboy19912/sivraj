@@ -1280,7 +1280,7 @@ async function loadRecentDocumentRows(input: any) {
             eq(memoryFragments.twinId, input.twinId),
             eq(sourceArtifacts.twinId, input.twinId),
             eq(sourceArtifacts.ingestionStatus, "completed"),
-            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"]),
+            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload", "url", "image"]),
             inArray(memoryFragments.storageStatus, CHAT_MEMORY_READABLE_STATUSES),
         ))
         .orderBy(desc(sourceArtifacts.createdAt))
@@ -1382,7 +1382,7 @@ async function loadDocumentRowsByArtifactIds(input: any) {
             eq(sourceArtifacts.twinId, input.twinId),
             inArray(sourceArtifacts.id, ids),
             eq(sourceArtifacts.ingestionStatus, "completed"),
-            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload"]),
+            inArray(sourceArtifacts.sourceType, ["pdf", "ocr_pdf", "docx", "markdown", "upload", "url", "image"]),
             inArray(memoryFragments.storageStatus, CHAT_MEMORY_READABLE_STATUSES),
         ))
         .orderBy(desc(sourceArtifacts.createdAt))

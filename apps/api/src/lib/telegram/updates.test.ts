@@ -172,6 +172,27 @@ describe("Telegram update normalization", () => {
     });
   });
 
+  it("normalizes plain URL messages as capture drops instead of questions", () => {
+    const normalized = normalizeTelegramUpdate({
+      update_id: 1012,
+      message: {
+        message_id: 55,
+        date: 1781720300,
+        text: "Can you read this https://example.com/fundraising for later",
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      event: {
+        kind: "capture_text",
+        text: "Can you read this https://example.com/fundraising for later",
+      },
+    });
+  });
+
   it("normalizes explicit remember commands as capture text", () => {
     const normalized = normalizeTelegramUpdate({
       update_id: 1007,
@@ -244,6 +265,8 @@ describe("Telegram update normalization", () => {
         caption: "Investor voice note",
         voice: {
           file_id: "voice-file-id",
+          file_unique_id: "voice-unique-id",
+          file_size: 1234,
           mime_type: "audio/ogg",
         },
         from: { id: 123456, username: "ada" },
@@ -257,8 +280,69 @@ describe("Telegram update normalization", () => {
         kind: "capture_media",
         mediaKind: "voice",
         fileId: "voice-file-id",
+        fileUniqueId: "voice-unique-id",
+        fileSize: 1234,
         mimeType: "audio/ogg",
         caption: "Investor voice note",
+      },
+    });
+  });
+
+  it("normalizes documents with file metadata", () => {
+    const normalized = normalizeTelegramUpdate({
+      update_id: 1013,
+      message: {
+        message_id: 56,
+        date: 1781720400,
+        document: {
+          file_id: "document-file-id",
+          file_unique_id: "document-unique-id",
+          file_size: 42_000,
+          file_name: "Launch Notes.pdf",
+          mime_type: "application/pdf",
+        },
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      event: {
+        kind: "capture_media",
+        mediaKind: "document",
+        fileId: "document-file-id",
+        fileUniqueId: "document-unique-id",
+        fileSize: 42000,
+        fileName: "Launch Notes.pdf",
+        mimeType: "application/pdf",
+      },
+    });
+  });
+
+  it("normalizes the largest photo with file metadata", () => {
+    const normalized = normalizeTelegramUpdate({
+      update_id: 1014,
+      message: {
+        message_id: 57,
+        date: 1781720500,
+        photo: [
+          { file_id: "small-photo-id", file_unique_id: "small-photo-unique-id", file_size: 10 },
+          { file_id: "large-photo-id", file_unique_id: "large-photo-unique-id", file_size: 100 },
+        ],
+        from: { id: 123456, username: "ada" },
+        chat: { id: 123456, type: "private" },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      ok: true,
+      event: {
+        kind: "capture_media",
+        mediaKind: "photo",
+        fileId: "large-photo-id",
+        fileUniqueId: "large-photo-unique-id",
+        fileSize: 100,
       },
     });
   });

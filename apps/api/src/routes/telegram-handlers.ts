@@ -13,7 +13,7 @@ import {
 } from "@sivraj/db";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Context } from "hono";
-import type { AppDependencies } from "../app.js";
+import type { AppDependencies, SupportedArtifactSourceType } from "../app.js";
 import { shouldAttachTransientCiphertextBase64 } from "../lib/artifacts/helpers.js";
 import { answerTelegramQuestion } from "../lib/telegram/ask.js";
 import { createTelegramLinkToken, buildTelegramBotDeepLink, buildTelegramStartCommand, hashTelegramLinkToken, readTelegramBotUsername } from "../lib/telegram/link-token.js";
@@ -43,8 +43,19 @@ import type { TelegramInboundEvent, TelegramUserProfile } from "../types/telegra
 
 const TELEGRAM_WEBHOOK_SECRET_HEADER = "x-telegram-bot-api-secret-token";
 const TELEGRAM_SOURCE_TYPE = "telegram_message" as const;
+const TELEGRAM_LINK_SOURCE_TYPE = "url" as const;
 const TELEGRAM_PROVIDER = "telegram" as const;
 const TELEGRAM_CAPTURE_SCOPES = ["telegram:messages:capture"];
+// Telegram's hosted Bot API getFile endpoint caps downloadable files at 20 MB.
+const TELEGRAM_FILE_DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const TELEGRAM_MEDIA_SIZE_LIMITS: Partial<Record<SupportedArtifactSourceType, number>> = {
+  pdf: TELEGRAM_FILE_DOWNLOAD_MAX_BYTES,
+  image: 15 * 1024 * 1024,
+  docx: TELEGRAM_FILE_DOWNLOAD_MAX_BYTES,
+  csv: 5 * 1024 * 1024,
+  markdown: 2 * 1024 * 1024,
+  upload: 2 * 1024 * 1024,
+};
 const telegramWebhookRateLimiter = createInMemoryTelegramRateLimiter(
   readTelegramRateLimitConfig(process.env),
 );
@@ -55,6 +66,19 @@ type TelegramIngestedMessage = typeof telegramIngestedMessages.$inferSelect;
 type TelegramLinkedAccountResolution =
   | { ok: true; account: TelegramConnectorAccount }
   | { ok: false; reason: "not_linked" | "ambiguous_linked_accounts"; accounts: TelegramConnectorAccount[] };
+export type TelegramMediaSourceResolution =
+  | {
+      status: "supported";
+      sourceType: Extract<SupportedArtifactSourceType, "pdf" | "image" | "docx" | "csv" | "markdown" | "upload">;
+      label: string;
+      maxBytes: number;
+      encoding: "base64" | "utf8";
+    }
+  | {
+      status: "deferred";
+      reason: "voice_not_supported" | "unsupported_media_type";
+      replyText: string;
+    };
 
 export function resolveTelegramLinkedAccount<T extends { id: string; twinId: string }>(
   accounts: T[],
@@ -645,6 +669,17 @@ async function handleTelegramTextCapture(
     return { action: "duplicate", messageId: event.messageId };
   }
 
+  const linkUrls = extractTelegramUrls(event.text);
+  if (linkUrls.length > 0) {
+    return captureTelegramLinkDrop(deps, {
+      account,
+      source,
+      claim: claim.row,
+      event,
+      urls: linkUrls,
+    });
+  }
+
   if (!deps.privateMemoryStorage) {
     await markTelegramIngestedMessageFailed(deps, claim.row.id, "encrypted_storage_not_configured");
     await sendTelegramReply(deps, event, TELEGRAM_REPLY.failed);
@@ -862,33 +897,289 @@ async function handleTelegramMediaCapture(
     return { action: "duplicate", messageId: event.messageId };
   }
 
-  const metadata = buildTelegramCaptureMetadata(event, event.mediaKind);
-  await deps.db
-    .update(telegramIngestedMessages)
-    .set({
-      status: "deferred",
-      updatedAt: new Date(),
-      metadata,
-    })
-    .where(eq(telegramIngestedMessages.id, claim.row.id));
+  const resolution = resolveTelegramMediaSource(event);
 
-  await deps.db.insert(auditEvents).values({
-    twinId: account.twinId,
-    actorType: "system",
-    actorId: "telegram-webhook",
-    eventType: "telegram.message_deferred",
-    resourceType: "telegram_message",
-    resourceId: claim.row.id,
-    metadata: {
-      telegramUserId: event.telegramUser.id,
-      chatId: event.chatId,
+  if (resolution.status === "deferred") {
+    await markTelegramIngestedMessageDeferred(deps, {
+      account,
+      claim: claim.row,
+      event,
+      reason: resolution.reason,
+      replyText: resolution.replyText,
+    });
+    return {
+      action: "deferred",
+      reason: resolution.reason,
       messageId: event.messageId,
       mediaKind: event.mediaKind,
+    };
+  }
+
+  return captureTelegramMediaDrop(deps, {
+    account,
+    source,
+    claim: claim.row,
+    event,
+    resolution,
+  });
+}
+
+async function captureTelegramLinkDrop(
+  deps: AppDependencies,
+  input: {
+    account: TelegramConnectorAccount;
+    source: TelegramConnectorSource;
+    claim: TelegramIngestedMessage;
+    event: Extract<TelegramInboundEvent, { kind: "capture_text" }>;
+    urls: URL[];
+  },
+) {
+  const primaryUrl = input.urls[0]!;
+  const metadata = buildTelegramArtifactStorageMetadata(input.event, "link", {
+    sourceKind: "telegram_link",
+    sourceDisplayName: telegramLinkDisplayName(primaryUrl),
+    extraMetadata: {
+      telegramUrlHost: primaryUrl.hostname,
+      telegramUrlCount: input.urls.length,
     },
   });
 
-  await sendTelegramReply(deps, event, TELEGRAM_REPLY.mediaDeferred);
-  return { action: "deferred", messageId: event.messageId, mediaKind: event.mediaKind };
+  return storeTelegramCapturedSourceArtifact(deps, {
+    account: input.account,
+    source: input.source,
+    claim: input.claim,
+    event: input.event,
+    sourceType: TELEGRAM_LINK_SOURCE_TYPE,
+    title: telegramLinkDisplayName(primaryUrl),
+    content: buildTelegramLinkArtifactContent(input.event, input.urls),
+    metadata,
+    hash: sha256Hex(`telegram-link:v1:${input.event.chatId}:${input.event.messageId}:${sha256Hex(input.event.text)}`),
+    uri: primaryUrl.toString(),
+    replyText: TELEGRAM_REPLY.capturedLink,
+  });
+}
+
+async function captureTelegramMediaDrop(
+  deps: AppDependencies,
+  input: {
+    account: TelegramConnectorAccount;
+    source: TelegramConnectorSource;
+    claim: TelegramIngestedMessage;
+    event: Extract<TelegramInboundEvent, { kind: "capture_media" }>;
+    resolution: Extract<TelegramMediaSourceResolution, { status: "supported" }>;
+  },
+) {
+  if (!deps.telegramClient) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_client_not_configured");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.failed);
+    return { action: "failed", reason: "telegram_client_not_configured" };
+  }
+
+  const originalFileSize = input.event.fileSize ?? null;
+  if (originalFileSize !== null && originalFileSize > input.resolution.maxBytes) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_file_too_large");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaTooLarge);
+    return {
+      action: "failed",
+      reason: "telegram_file_too_large",
+      fileSize: originalFileSize,
+      maxBytes: input.resolution.maxBytes,
+    };
+  }
+
+  const telegramFile = await deps.telegramClient.getFile(input.event.fileId).catch(async (error: unknown) => {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_get_file_failed", errorMessage(error));
+    return null;
+  });
+
+  if (!telegramFile) {
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaDownloadFailed);
+    return { action: "failed", reason: "telegram_get_file_failed" };
+  }
+
+  if (!telegramFile.filePath) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_file_path_missing");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaDownloadFailed);
+    return { action: "failed", reason: "telegram_file_path_missing" };
+  }
+
+  const resolvedFileSize = telegramFile.fileSize ?? originalFileSize;
+  if (resolvedFileSize !== null && resolvedFileSize > input.resolution.maxBytes) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_file_too_large");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaTooLarge);
+    return {
+      action: "failed",
+      reason: "telegram_file_too_large",
+      fileSize: resolvedFileSize,
+      maxBytes: input.resolution.maxBytes,
+    };
+  }
+
+  const downloaded = await deps.telegramClient.downloadFile(telegramFile.filePath).catch(async (error: unknown) => {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_download_file_failed", errorMessage(error));
+    return null;
+  });
+
+  if (!downloaded) {
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaDownloadFailed);
+    return { action: "failed", reason: "telegram_download_file_failed" };
+  }
+
+  const bytes = Buffer.from(downloaded);
+  if (bytes.byteLength > input.resolution.maxBytes) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "telegram_file_too_large");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.mediaTooLarge);
+    return {
+      action: "failed",
+      reason: "telegram_file_too_large",
+      fileSize: bytes.byteLength,
+      maxBytes: input.resolution.maxBytes,
+    };
+  }
+
+  const title = telegramMediaArtifactTitle(input.event, input.resolution);
+  const metadata = buildTelegramArtifactStorageMetadata(input.event, input.event.mediaKind, {
+    sourceKind: "telegram_file",
+    sourceDisplayName: title,
+    extraMetadata: {
+      telegramResolvedFileId: telegramFile.fileId,
+      ...(telegramFile.fileUniqueId ? { telegramResolvedFileUniqueId: telegramFile.fileUniqueId } : {}),
+      ...(telegramFile.fileSize !== null ? { telegramResolvedFileSize: telegramFile.fileSize } : {}),
+      ...telegramResolvedMediaMetadata(input.event, telegramFile.filePath),
+      telegramFileByteLength: bytes.byteLength,
+    },
+  });
+
+  return storeTelegramCapturedSourceArtifact(deps, {
+    account: input.account,
+    source: input.source,
+    claim: input.claim,
+    event: input.event,
+    sourceType: input.resolution.sourceType,
+    title,
+    content: buildTelegramMediaArtifactContent(input.resolution.sourceType, bytes),
+    metadata,
+    hash: sha256Hex([
+      "telegram-file:v1",
+      input.event.chatId,
+      input.event.messageId,
+      input.event.fileUniqueId ?? input.event.fileId,
+      sha256Hex(bytes.toString("base64")),
+    ].join(":")),
+    uri: telegramMessageUri(input.event.chatId, input.event.messageId),
+    replyText: formatTelegramCapturedMediaReply(input.resolution),
+  });
+}
+
+async function storeTelegramCapturedSourceArtifact(
+  deps: AppDependencies,
+  input: {
+    account: TelegramConnectorAccount;
+    source: TelegramConnectorSource;
+    claim: TelegramIngestedMessage;
+    event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" }>;
+    sourceType: SupportedArtifactSourceType;
+    title: string;
+    content: string;
+    metadata: Record<string, unknown>;
+    hash: string;
+    uri: string;
+    replyText: string;
+  },
+) {
+  if (!deps.privateMemoryStorage) {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "encrypted_storage_not_configured");
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.failed);
+    return { action: "failed", reason: "encrypted_storage_not_configured" };
+  }
+
+  const stored = await deps.privateMemoryStorage.storePrivateMemory({
+    twinId: input.account.twinId,
+    sourceType: input.sourceType,
+    title: input.title,
+    content: input.content,
+    metadata: input.metadata,
+  }).catch(async (error: unknown) => {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "private_storage_failed", errorMessage(error));
+    return null;
+  });
+
+  if (!stored) {
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.failed);
+    return { action: "failed", reason: "private_storage_failed" };
+  }
+
+  await cacheTelegramStoredCiphertext(deps, stored);
+
+  const artifact = await insertQueuedSourceArtifact({
+    db: deps.db,
+    twinId: input.account.twinId,
+    sourceType: input.sourceType,
+    storageMetadata: input.metadata,
+    stored,
+    hash: input.hash,
+    uri: input.uri,
+    connectorAccountId: input.account.id,
+    connectorSourceId: input.source.id,
+  }).catch(async (error: unknown) => {
+    await markTelegramIngestedMessageFailed(deps, input.claim.id, "artifact_insert_failed", errorMessage(error));
+    return null;
+  });
+
+  if (!artifact) {
+    await sendTelegramReply(deps, input.event, TELEGRAM_REPLY.failed);
+    return { action: "failed", reason: "artifact_insert_failed" };
+  }
+
+  const transientCiphertext = buildTelegramTransientCiphertext(stored);
+  const queueResult = await enqueueArtifactProcessingJob({
+    db: deps.db,
+    artifactProcessingQueue: deps.artifactProcessingQueue,
+    twinId: input.account.twinId,
+    artifactId: artifact.id,
+    sourceType: input.sourceType,
+    ...(transientCiphertext ? { transientCiphertext } : {}),
+  });
+  const captureMetadata = sanitizeSafeMetadata({
+    ...input.metadata,
+    queueWarning: queueResult.warning,
+  });
+
+  await deps.db
+    .update(telegramIngestedMessages)
+    .set({
+      status: "captured",
+      sourceArtifactId: artifact.id,
+      updatedAt: new Date(),
+      metadata: captureMetadata,
+    })
+    .where(eq(telegramIngestedMessages.id, input.claim.id));
+
+  await deps.db.insert(auditEvents).values({
+    twinId: input.account.twinId,
+    actorType: "system",
+    actorId: "telegram-webhook",
+    eventType: "telegram.message_captured",
+    resourceType: "source_artifact",
+    resourceId: artifact.id,
+    metadata: {
+      telegramUserId: input.event.telegramUser.id,
+      chatId: input.event.chatId,
+      messageId: input.event.messageId,
+      sourceType: input.sourceType,
+      queueWarning: queueResult.warning,
+    },
+  });
+
+  await sendTelegramReply(deps, input.event, input.replyText);
+  return {
+    action: "captured",
+    twinId: input.account.twinId,
+    artifactId: artifact.id,
+    sourceType: input.sourceType,
+    processingJobId: queueResult.processingJobId,
+    warning: queueResult.warning,
+  };
 }
 
 async function recordTelegramQuestionFailure(
@@ -1263,13 +1554,57 @@ async function markTelegramIngestedMessageFailed(
       status: "failed",
       updatedAt: new Date(),
       metadata: sanitizeSafeMetadata({
-        failure: {
-          reason,
-          detail,
-        },
+        failureReason: reason,
+        ...(detail ? { failureDetail: detail } : {}),
       }),
     })
     .where(eq(telegramIngestedMessages.id, messageId));
+}
+
+async function markTelegramIngestedMessageDeferred(
+  deps: AppDependencies,
+  input: {
+    account: TelegramConnectorAccount;
+    claim: TelegramIngestedMessage;
+    event: Extract<TelegramInboundEvent, { kind: "capture_media" }>;
+    reason: string;
+    replyText: string;
+  },
+) {
+  const metadata = buildTelegramCaptureMetadata(input.event, input.event.mediaKind, {
+    sourceKind: "telegram_message",
+    sourceDisplayName: telegramMediaArtifactTitle(input.event, null),
+    extraMetadata: {
+      deferredReason: input.reason,
+    },
+  });
+
+  await deps.db
+    .update(telegramIngestedMessages)
+    .set({
+      status: "deferred",
+      updatedAt: new Date(),
+      metadata,
+    })
+    .where(eq(telegramIngestedMessages.id, input.claim.id));
+
+  await deps.db.insert(auditEvents).values({
+    twinId: input.account.twinId,
+    actorType: "system",
+    actorId: "telegram-webhook",
+    eventType: "telegram.message_deferred",
+    resourceType: "telegram_message",
+    resourceId: input.claim.id,
+    metadata: {
+      telegramUserId: input.event.telegramUser.id,
+      chatId: input.event.chatId,
+      messageId: input.event.messageId,
+      mediaKind: input.event.mediaKind,
+      reason: input.reason,
+    },
+  });
+
+  await sendTelegramReply(deps, input.event, input.replyText);
 }
 
 async function sendTelegramReply(
@@ -1528,40 +1863,269 @@ function buildTelegramTextArtifactContent(
   ].join("\n");
 }
 
+function buildTelegramLinkArtifactContent(
+  event: Extract<TelegramInboundEvent, { kind: "capture_text" }>,
+  urls: URL[],
+) {
+  const username = event.telegramUser.username ? `@${event.telegramUser.username}` : "no username";
+
+  return [
+    "Telegram link",
+    `From: ${event.telegramUser.displayName} (${username})`,
+    `Telegram user id: ${event.telegramUser.id}`,
+    `Chat id: ${event.chatId}`,
+    `Message id: ${event.messageId}`,
+    `Sent at: ${event.sentAt}`,
+    `Primary URL: ${urls[0]?.toString() ?? ""}`,
+    "URLs:",
+    ...urls.map((url) => `- ${url.toString()}`),
+    "",
+    event.text,
+  ].join("\n");
+}
+
+function buildTelegramMediaArtifactContent(
+  sourceType: SupportedArtifactSourceType,
+  bytes: Buffer,
+) {
+  return isTelegramBinarySourceType(sourceType)
+    ? bytes.toString("base64")
+    : new TextDecoder().decode(bytes);
+}
+
+export function extractTelegramUrls(text: string): URL[] {
+  const matches = text.match(/[a-z][a-z0-9+.-]*:\/\/[^\s<>"')\]]+/giu) ?? [];
+
+  return matches.flatMap((raw) => {
+    const cleaned = raw.replace(/[),.;\]]+$/u, "");
+    try {
+      const url = new URL(cleaned);
+      return url.protocol === "http:" || url.protocol === "https:" ? [url] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function resolveTelegramMediaSource(
+  event: Extract<TelegramInboundEvent, { kind: "capture_media" }>,
+): TelegramMediaSourceResolution {
+  if (event.mediaKind === "voice") {
+    return {
+      status: "deferred",
+      reason: "voice_not_supported",
+      replyText: TELEGRAM_REPLY.voiceDeferred,
+    };
+  }
+
+  if (event.mediaKind === "photo") {
+    return supportedTelegramMediaSource("image", "image", "base64");
+  }
+
+  const fileName = event.fileName?.trim() ?? "";
+  const extension = readTelegramFileExtension(fileName);
+  const mimeType = event.mimeType?.toLowerCase() ?? "";
+
+  if (extension === "pdf" || mimeType === "application/pdf") {
+    return supportedTelegramMediaSource("pdf", "PDF", "base64");
+  }
+
+  if (
+    mimeType.startsWith("image/") ||
+    ["png", "jpg", "jpeg", "webp", "tif", "tiff"].includes(extension)
+  ) {
+    return supportedTelegramMediaSource("image", "image", "base64");
+  }
+
+  if (
+    extension === "docx" ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    return supportedTelegramMediaSource("docx", "DOCX", "base64");
+  }
+
+  if (extension === "csv" || mimeType === "text/csv" || mimeType === "application/csv") {
+    return supportedTelegramMediaSource("csv", "CSV", "utf8");
+  }
+
+  if (["md", "markdown"].includes(extension) || mimeType === "text/markdown" || mimeType === "text/x-markdown") {
+    return supportedTelegramMediaSource("markdown", "Markdown", "utf8");
+  }
+
+  if (extension === "txt" || mimeType === "text/plain") {
+    return supportedTelegramMediaSource("upload", "text file", "utf8");
+  }
+
+  return {
+    status: "deferred",
+    reason: "unsupported_media_type",
+    replyText: TELEGRAM_REPLY.unsupportedMedia,
+  };
+}
+
+function supportedTelegramMediaSource(
+  sourceType: Extract<SupportedArtifactSourceType, "pdf" | "image" | "docx" | "csv" | "markdown" | "upload">,
+  label: string,
+  encoding: "base64" | "utf8",
+): Extract<TelegramMediaSourceResolution, { status: "supported" }> {
+  return {
+    status: "supported",
+    sourceType,
+    label,
+    encoding,
+    maxBytes: TELEGRAM_MEDIA_SIZE_LIMITS[sourceType] ?? 2 * 1024 * 1024,
+  };
+}
+
+export function telegramResolvedMediaFileType(
+  event: Extract<TelegramInboundEvent, { kind: "capture_media" }>,
+  filePath: string | null,
+) {
+  const explicitMimeType = event.mimeType?.trim().toLowerCase();
+  if (explicitMimeType) {
+    return explicitMimeType;
+  }
+
+  const extension = readTelegramFileExtension(filePath ?? "");
+  if (extension === "jpg" || extension === "jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === "png") {
+    return "image/png";
+  }
+  if (extension === "webp") {
+    return "image/webp";
+  }
+  if (extension === "tif" || extension === "tiff") {
+    return "image/tiff";
+  }
+  if (extension === "pdf") {
+    return "application/pdf";
+  }
+  if (extension === "docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (extension === "csv") {
+    return "text/csv";
+  }
+  if (extension === "md" || extension === "markdown") {
+    return "text/markdown";
+  }
+  if (extension === "txt") {
+    return "text/plain";
+  }
+
+  return null;
+}
+
+function telegramResolvedMediaMetadata(
+  event: Extract<TelegramInboundEvent, { kind: "capture_media" }>,
+  filePath: string,
+) {
+  const fileType = telegramResolvedMediaFileType(event, filePath);
+
+  return fileType
+    ? {
+        fileType,
+        telegramResolvedMimeType: fileType,
+      }
+    : {};
+}
+
+function isTelegramBinarySourceType(sourceType: SupportedArtifactSourceType) {
+  return sourceType === "pdf" || sourceType === "image" || sourceType === "docx";
+}
+
+function readTelegramFileExtension(fileName: string) {
+  const match = /\.([a-z0-9]+)$/iu.exec(fileName.trim());
+  return match?.[1]?.toLowerCase() ?? "";
+}
+
+function telegramLinkDisplayName(url: URL) {
+  return `Link: ${url.hostname}`;
+}
+
+function telegramMediaArtifactTitle(
+  event: Extract<TelegramInboundEvent, { kind: "capture_media" }>,
+  resolution: Extract<TelegramMediaSourceResolution, { status: "supported" }> | null,
+) {
+  if (event.fileName?.trim()) {
+    return event.fileName.trim();
+  }
+
+  const username = event.telegramUser.username ? `@${event.telegramUser.username}` : event.telegramUser.displayName;
+  const label = resolution?.label ?? event.mediaKind;
+
+  return `Telegram ${label} from ${username}`;
+}
+
+function formatTelegramCapturedMediaReply(
+  resolution: Extract<TelegramMediaSourceResolution, { status: "supported" }>,
+) {
+  return `Captured ${resolution.label}. I'll process it into your Twin shortly.`;
+}
+
 function buildTelegramCaptureMetadata(
   event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" }>,
   messageKind: string,
+  options: {
+    sourceKind?: string;
+    sourceDisplayName?: string;
+    extraMetadata?: Record<string, unknown>;
+  } = {},
 ) {
+  const forwardOrigin = event.forwardOrigin ? readRecord(event.forwardOrigin) : {};
+
   return sanitizeSafeMetadata({
-    sourceDisplayName: telegramArtifactTitle(event.telegramUser),
-    sourceKind: "telegram_message",
-    telegram: {
-      updateId: event.updateId,
-      user: telegramUserMetadata(event.telegramUser),
-      chatId: event.chatId,
-      messageId: event.messageId,
-      messageKind,
-      sentAt: event.sentAt,
-      uri: telegramMessageUri(event.chatId, event.messageId),
-      ...(event.kind === "capture_media"
-        ? {
-            fileId: event.fileId,
-            fileName: event.fileName,
-            mimeType: event.mimeType,
-            captionPresent: Boolean(event.caption),
-          }
-        : {}),
-      ...(event.forwardOrigin ? { forwardOrigin: event.forwardOrigin } : {}),
-    },
+    sourceDisplayName: options.sourceDisplayName ?? telegramArtifactTitle(event.telegramUser),
+    sourceKind: options.sourceKind ?? "telegram_message",
+    telegramUpdateId: event.updateId,
+    telegramUserId: event.telegramUser.id,
+    telegramUsername: event.telegramUser.username,
+    telegramUserFirstName: event.telegramUser.firstName,
+    telegramUserLastName: event.telegramUser.lastName,
+    telegramUserDisplayName: event.telegramUser.displayName,
+    telegramChatId: event.chatId,
+    telegramMessageId: event.messageId,
+    telegramMessageKind: messageKind,
+    telegramSentAt: event.sentAt,
+    telegramUri: telegramMessageUri(event.chatId, event.messageId),
+    ...(event.kind === "capture_media"
+      ? {
+          telegramFileId: event.fileId,
+          telegramFileUniqueId: event.fileUniqueId,
+          telegramFileSize: event.fileSize,
+          telegramFileName: event.fileName,
+          telegramMimeType: event.mimeType,
+          telegramCaptionPresent: Boolean(event.caption),
+        }
+      : {}),
+    ...(event.forwardOrigin
+      ? {
+          forwardOriginType: valueToString(forwardOrigin["type"]),
+          forwardSenderUserId: valueToString(forwardOrigin["senderUserId"]),
+          forwardSenderUserName: valueToString(forwardOrigin["senderUserName"]),
+          forwardSenderUserFirstName: valueToString(forwardOrigin["senderUserFirstName"]),
+          forwardSenderChatId: valueToString(forwardOrigin["senderChatId"]),
+          forwardSenderChatTitle: valueToString(forwardOrigin["senderChatTitle"]),
+          forwardOriginDate: valueToString(forwardOrigin["date"]),
+        }
+      : {}),
+    ...(options.extraMetadata ?? {}),
   });
 }
 
 export function buildTelegramArtifactStorageMetadata(
-  event: Extract<TelegramInboundEvent, { kind: "capture_text" }>,
+  event: Extract<TelegramInboundEvent, { kind: "capture_text" | "capture_media" }>,
   messageKind: string,
+  options?: {
+    sourceKind?: string;
+    sourceDisplayName?: string;
+    extraMetadata?: Record<string, unknown>;
+  },
 ) {
   return {
-    ...buildTelegramCaptureMetadata(event, messageKind),
+    ...buildTelegramCaptureMetadata(event, messageKind, options),
     storageMode: ENCRYPTED_WALRUS_STORAGE_MODE,
     sensitivity: DEFAULT_MANUAL_MEMORY_SENSITIVITY,
     encryptedPayload: {

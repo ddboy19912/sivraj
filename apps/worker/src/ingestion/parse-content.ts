@@ -11,6 +11,7 @@ import {
   parsePlainText,
   parseSlackExport,
   parseTextPdf,
+  parseUrl,
   parseWhatsAppExport,
 } from "@sivraj/ingestion";
 import type { ParsedProcessableContent, PrivateSourcePayload, QueuedArtifact } from "../types/ingestion.types.js";
@@ -90,6 +91,10 @@ const SOURCE_PARSERS: Record<string, SourceParser> = {
   },
   browser_history: (payload) => {
     const parsed = parseBrowserHistory({ content: payload.content, title: payload.title });
+    return { content: parsed.content, parser: parsed.parser };
+  },
+  url: async (payload) => {
+    const parsed = await parseUrl({ content: payload.content, title: payload.title });
     return { content: parsed.content, parser: parsed.parser };
   },
   chat_export: (payload) => {

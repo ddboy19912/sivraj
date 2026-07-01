@@ -21,7 +21,7 @@ const CHAT_MEMORY_CONTEXT_CHAR_LIMIT = 900;
 const DOCUMENT_CHUNK_CHARS = 1_800;
 const DOCUMENT_CHUNK_OVERLAP_CHARS = 220;
 const DOCUMENT_EMBEDDING_BATCH_SIZE = 32;
-const DOCUMENT_SOURCE_TYPES = new Set(["pdf", "ocr_pdf", "docx", "markdown", "upload"]);
+const DOCUMENT_SOURCE_TYPES = new Set(["pdf", "ocr_pdf", "docx", "markdown", "upload", "url", "image"]);
 const DOCUMENT_EMBEDDING_REQUIRED_REASON = "document_embedding_required";
 const DOCUMENT_EMBEDDING_FAILED_REASON = "document_embedding_failed";
 

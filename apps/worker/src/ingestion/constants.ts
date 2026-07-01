@@ -14,6 +14,7 @@ export const PARSED_CSV_EMPTY = "parsed_csv_empty";
 export const PARSED_EMAIL_EMPTY = "parsed_email_empty";
 export const PARSED_OCR_PDF_EMPTY = "parsed_ocr_pdf_empty";
 export const PARSED_IMAGE_EMPTY = "parsed_image_empty";
+export const PARSED_URL_EMPTY = "parsed_url_empty";
 export const PARSED_GITHUB_EMPTY = "parsed_github_empty";
 export const PARSED_BROWSER_HISTORY_EMPTY = "parsed_browser_history_empty";
 export const PARSED_CHAT_EXPORT_EMPTY = "parsed_chat_export_empty";

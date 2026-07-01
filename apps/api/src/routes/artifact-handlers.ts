@@ -41,6 +41,7 @@ import {
 
 const RETRYABLE_FILE_SOURCE_TYPES = [
   "upload",
+  "url",
   "pdf",
   "ocr_pdf",
   "markdown",
@@ -803,7 +804,9 @@ function isDocumentSourceType(sourceType: string) {
     sourceType === "ocr_pdf" ||
     sourceType === "docx" ||
     sourceType === "markdown" ||
-    sourceType === "upload";
+    sourceType === "upload" ||
+    sourceType === "url" ||
+    sourceType === "image";
 }
 
 async function readArtifactPrivateSourcePayload(

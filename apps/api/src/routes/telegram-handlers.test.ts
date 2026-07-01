@@ -6,9 +6,12 @@ import { createTelegramRoutes } from "./telegram.js";
 import {
   buildTelegramArtifactStorageMetadata,
   buildTelegramTransientCiphertext,
+  extractTelegramUrls,
   formatTelegramAccountStatusReply,
   isTelegramWebhookAuthorized,
   resolveTelegramLinkedAccount,
+  resolveTelegramMediaSource,
+  telegramResolvedMediaFileType,
   telegramRevokeChatIds,
 } from "./telegram-handlers.js";
 import type { TelegramInboundEvent } from "../types/telegram.types.js";
@@ -99,6 +102,12 @@ describe("Telegram webhook helpers", () => {
     expect(metadata).toMatchObject({
       sourceKind: "telegram_message",
       sourceDisplayName: "Telegram message from @f_ogunsusi",
+      telegramUpdateId: "update-1",
+      telegramUserId: "user-1",
+      telegramUsername: "f_ogunsusi",
+      telegramChatId: "chat-1",
+      telegramMessageId: "message-1",
+      telegramMessageKind: "text",
       storageMode: "encrypted_walrus",
       sensitivity: "private",
       encryptedPayload: {
@@ -107,6 +116,122 @@ describe("Telegram webhook helpers", () => {
         encryptionBoundary: "api",
       },
     });
+    expect(metadata).not.toHaveProperty("telegram");
+    expect(metadata).not.toHaveProperty("text");
+  });
+
+  it("preserves safe-rich forwarded provenance without raw text fields", () => {
+    const metadata = buildTelegramArtifactStorageMetadata({
+      ...telegramTextEvent(),
+      forwardOrigin: {
+        type: "user",
+        senderUserId: "forward-user-1",
+        senderUserName: "grace",
+        senderUserFirstName: "Grace",
+        date: "2026-06-27T15:00:00.000Z",
+      },
+    }, "text");
+
+    expect(metadata).toMatchObject({
+      forwardOriginType: "user",
+      forwardSenderUserId: "forward-user-1",
+      forwardSenderUserName: "grace",
+      forwardSenderUserFirstName: "Grace",
+      forwardOriginDate: "2026-06-27T15:00:00.000Z",
+    });
+    expect(metadata).not.toHaveProperty("message");
+    expect(metadata).not.toHaveProperty("content");
+  });
+
+  it("extracts Telegram link drops with the first URL as primary", () => {
+    expect(extractTelegramUrls(
+      "Read https://example.com/a, then https://sivraj.ai/b.",
+    ).map((url) => url.toString())).toEqual([
+      "https://example.com/a",
+      "https://sivraj.ai/b",
+    ]);
+  });
+
+  it("resolves supported Telegram media source types", () => {
+    expect(resolveTelegramMediaSource(telegramMediaEvent({
+      mediaKind: "document",
+      fileName: "Launch Notes.pdf",
+      mimeType: "application/pdf",
+    }))).toMatchObject({
+      status: "supported",
+      sourceType: "pdf",
+      encoding: "base64",
+      maxBytes: 20 * 1024 * 1024,
+    });
+    expect(resolveTelegramMediaSource(telegramMediaEvent({
+      mediaKind: "document",
+      fileName: "notes.md",
+      mimeType: "text/markdown",
+    }))).toMatchObject({
+      status: "supported",
+      sourceType: "markdown",
+      encoding: "utf8",
+    });
+    expect(resolveTelegramMediaSource(telegramMediaEvent({
+      mediaKind: "photo",
+      fileName: null,
+      mimeType: null,
+    }))).toMatchObject({
+      status: "supported",
+      sourceType: "image",
+    });
+  });
+
+  it("infers resolved media file type for Telegram photos without MIME metadata", () => {
+    expect(telegramResolvedMediaFileType(telegramMediaEvent({
+      mediaKind: "photo",
+      fileName: null,
+      mimeType: null,
+    }), "photos/file_123.jpg")).toBe("image/jpeg");
+    expect(telegramResolvedMediaFileType(telegramMediaEvent({
+      mediaKind: "document",
+      fileName: "notes.md",
+      mimeType: "text/markdown",
+    }), "documents/file")).toBe("text/markdown");
+  });
+
+  it("defers voice and unsupported Telegram media", () => {
+    expect(resolveTelegramMediaSource(telegramMediaEvent({
+      mediaKind: "voice",
+      mimeType: "audio/ogg",
+    }))).toMatchObject({
+      status: "deferred",
+      reason: "voice_not_supported",
+    });
+    expect(resolveTelegramMediaSource(telegramMediaEvent({
+      mediaKind: "document",
+      fileName: "archive.zip",
+      mimeType: "application/zip",
+    }))).toMatchObject({
+      status: "deferred",
+      reason: "unsupported_media_type",
+    });
+  });
+
+  it("marks Telegram media metadata as safe flattened provenance", () => {
+    const metadata = buildTelegramArtifactStorageMetadata(telegramMediaEvent({
+      mediaKind: "document",
+      fileName: "Launch Notes.pdf",
+      mimeType: "application/pdf",
+      caption: "raw private caption",
+    }), "document", {
+      sourceDisplayName: "Launch Notes.pdf",
+      sourceKind: "telegram_file",
+    });
+
+    expect(metadata).toMatchObject({
+      sourceKind: "telegram_file",
+      sourceDisplayName: "Launch Notes.pdf",
+      telegramFileName: "Launch Notes.pdf",
+      telegramMimeType: "application/pdf",
+      telegramCaptionPresent: true,
+    });
+    expect(metadata).not.toHaveProperty("caption");
   });
 
   it("attaches transient ciphertext for Telegram artifact processing", () => {
@@ -171,6 +296,33 @@ function createEmptyTelegramStatusDb() {
     select: () => ({
       from: () => query,
     }),
+  };
+}
+
+function telegramMediaEvent(
+  overrides: Partial<Extract<TelegramInboundEvent, { kind: "capture_media" }>> = {},
+): Extract<TelegramInboundEvent, { kind: "capture_media" }> {
+  return {
+    kind: "capture_media",
+    updateId: "update-2",
+    telegramUser: {
+      id: "user-1",
+      username: "f_ogunsusi",
+      firstName: "F",
+      lastName: "Ogunsusi",
+      displayName: "F Ogunsusi",
+    },
+    chatId: "chat-1",
+    messageId: "message-2",
+    mediaKind: "document",
+    fileId: "file-1",
+    fileUniqueId: "unique-1",
+    fileSize: 1234,
+    fileName: "Launch Notes.pdf",
+    mimeType: "application/pdf",
+    caption: null,
+    sentAt: "2026-06-27T15:52:00.000Z",
+    ...overrides,
   };
 }
 

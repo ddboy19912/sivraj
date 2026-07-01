@@ -98,6 +98,7 @@ export type AppDependencies = {
 
 export type SupportedArtifactSourceType =
   | "note"
+  | "url"
   | "browser_history"
   | "markdown"
   | "upload"
